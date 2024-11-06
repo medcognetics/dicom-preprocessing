@@ -1,0 +1,30 @@
+#[package]
+#name = "rust-template" # the name of the package
+#version = "0.1.0"    # the current version, obeying semver
+#authors = ["Scott Chase Waggener <chase.waggener@icloud.com>"]
+#edition = "2021"
+
+#[dependencies]
+#dicom = "0.7.0"
+#indicatif = { version= "0.17", features= ["rayon"] }
+#arrow = "51.0.0"
+#parquet = "51.0.0"
+#clap = { version = "4.5", features = ["derive"] }
+#rayon = "1.10"
+#rust_search = "2.1"
+#xxhash-rust = { version = "0.8", features = ["xxh3"] }
+#log = "0.4"
+#thiserror = "1.0"
+#env_logger = "0.11"
+#
+#[dev-dependencies]
+#tempfile = "3.10"
+#dicom-test-files = "0.3"
+#rstest = "0.19"
+
+
+[workspace]
+members = [
+    "core",
+]
+resolver = "2"

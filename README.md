@@ -43,3 +43,4 @@ Options:
 
 This tool currently has the following limitations:
 - Only 16-bit monochrome DICOM images are supported.
+- Outputs will be 16-bit monochrome TIFF images compressed using packbits.

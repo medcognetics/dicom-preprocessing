@@ -256,12 +256,13 @@ fn run(args: Args) -> Result<(), Error> {
     } else {
         vec![args.source]
     };
+
     tracing::info!("Number of sources found: {}", source.len());
 
     // Validate the output path
     let dest = match (source.len(), args.output.is_dir()) {
         // No sources
-        (0, _) => InvalidSourcePathSnafu { path: args.output }.fail(),
+        (0, _) => NoSourcesSnafu { path: args.output }.fail(),
         // Single source
         (1, _) => Ok(args.output),
         // Multiple sources, target not a directory. Cannot continue.

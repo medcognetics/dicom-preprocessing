@@ -311,12 +311,11 @@ mod tests {
     use dicom_preprocessing::crop::{DEFAULT_CROP_ORIGIN, DEFAULT_CROP_SIZE};
     use dicom_preprocessing::pad::ACTIVE_AREA;
     use dicom_preprocessing::resize::DEFAULT_SCALE;
-    use image::codecs::tiff::TiffDecoder;
-    use image::ImageDecoder;
+
     use std::fs::File;
     use std::io::BufReader;
     use tiff::decoder::Decoder;
-    use tiff::encoder::Rational;
+
     use tiff::tags::ResolutionUnit;
     use tiff::tags::Tag;
 

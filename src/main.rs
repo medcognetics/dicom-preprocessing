@@ -13,7 +13,7 @@ use tracing::{error, Level};
 use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::preprocess;
 use dicom_preprocessing::resize::DisplayFilterType;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;
@@ -157,7 +157,7 @@ fn main() {
 
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
-            .with_max_level(Level::INFO)
+            .with_max_level(Level::ERROR)
             .finish(),
     )
     .whatever_context("Could not set up global logging subscriber")
@@ -261,16 +261,31 @@ fn run(args: Args) -> Result<(), Error> {
         _ => Ok(args.output),
     }?;
 
-    source.par_iter().try_for_each(|file| {
-        process(
-            file,
-            &dest,
-            args.crop,
-            args.size,
-            args.filter,
-            args.padding_direction,
-        )
-    })?;
+    // Create progress bar
+    let pb = ProgressBar::new(source.len() as u64);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg} {spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta} @ {per_sec})",
+            )
+            .unwrap(),
+    );
+    pb.set_message("Preprocessing DICOM files");
+
+    // Process each file in parallel
+    source
+        .into_par_iter()
+        .progress_with(pb)
+        .try_for_each(|file| {
+            process(
+                &file,
+                &dest,
+                args.crop,
+                args.size,
+                args.filter,
+                args.padding_direction,
+            )
+        })?;
 
     Ok(())
 }

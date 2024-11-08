@@ -1,5 +1,5 @@
 use crate::traits::{Transform, WriteTags};
-use image::{DynamicImage, GenericImage, GenericImageView, Pixel, Rgba};
+use image::{DynamicImage, GenericImage, GenericImageView, Pixel};
 use std::fmt;
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;

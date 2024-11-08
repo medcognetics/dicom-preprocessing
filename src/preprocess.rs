@@ -1,31 +1,22 @@
-use clap::builder::styling::Color;
-use clap::ValueEnum;
-use dicom::core::prelude::*;
-use image::{DynamicImage, GenericImageView};
-use log::error;
-use std::ffi::CString;
+use image::GenericImageView;
 use std::fs::File;
 use std::io::{Seek, Write};
-use std::{borrow::Cow, path::PathBuf, str::FromStr};
+use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::{Compression, CompressionAlgorithm, Compressor};
+use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, Rational, TiffEncoder, TiffKind};
-use tiff::tags::CompressionMethod;
 use tiff::tags::Tag;
 use tiff::TiffError;
 
-use clap::error::ErrorKind;
-use clap::Parser;
-use dicom::core::prelude::*;
-use dicom::dictionary_std::{tags, uids};
-use dicom::object::{open_file, FileDicomObject, InMemDicomObject, ReadError};
-use dicom::pixeldata::{ConvertOptions, DecodedPixelData, PixelDecoder};
+use dicom::dictionary_std::tags;
+use dicom::object::{FileDicomObject, InMemDicomObject, ReadError};
+use dicom::pixeldata::PixelDecoder;
 use image::imageops::FilterType;
-use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
+use snafu::{ResultExt, Snafu};
 
 use crate::crop::Crop;
 use crate::pad::{Padding, PaddingDirection};
-use crate::resize::{DisplayFilterType, Resize};
+use crate::resize::Resize;
 use crate::traits::{Transform, WriteTags};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
@@ -175,26 +166,6 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
     }
 }
 
-pub struct PreprocessingOptions {
-    crop: bool,
-    size: Option<(u32, u32)>,
-    filter: FilterType,
-    padding_direction: PaddingDirection,
-    compression: Compressor,
-}
-
-pub trait Preprocessing {
-    fn preprocess(
-        &self,
-        output: PathBuf,
-        crop: bool,
-        size: Option<(u32, u32)>,
-        filter: FilterType,
-        padding_direction: PaddingDirection,
-        compression: impl Compression,
-    ) -> Result<(), Error>;
-}
-
 pub fn preprocess<C>(
     file: &FileDicomObject<InMemDicomObject>,
     output: PathBuf,
@@ -209,8 +180,6 @@ where
 {
     // Decode the pixel data and extract the dimensions
     let decoded = file.decode_pixel_data().context(DecodePixelDataSnafu)?;
-    let mut rows = decoded.rows();
-    let mut columns = decoded.columns();
     let number_of_frames = decoded.number_of_frames();
 
     // Try to determine the resolution from pixel spacing attributes

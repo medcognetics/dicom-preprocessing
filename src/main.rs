@@ -1,31 +1,12 @@
-use clap::builder::styling::Color;
-use clap::ValueEnum;
-use dicom::core::prelude::*;
-use image::{DynamicImage, GenericImageView};
-use log::error;
-use std::ffi::CString;
-use std::fs::File;
-use std::{borrow::Cow, path::PathBuf, str::FromStr};
-use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::{Compression, Compressor};
-use tiff::encoder::TiffEncoder;
-use tiff::tags::CompressionMethod;
-use tiff::tags::Tag;
-use tiff::TiffError;
+use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 use clap::Parser;
-use dicom::core::prelude::*;
-use dicom::dictionary_std::{tags, uids};
-use dicom::object::{open_file, FileDicomObject, InMemDicomObject, ReadError};
-use dicom::pixeldata::{ConvertOptions, DecodedPixelData, PixelDecoder};
-use image::imageops::FilterType;
-use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
+use dicom::object::open_file;
 
-use dicom_preprocessing::crop::Crop;
-use dicom_preprocessing::pad::{Padding, PaddingDirection};
+use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::preprocess;
-use dicom_preprocessing::resize::{DisplayFilterType, Resize};
+use dicom_preprocessing::resize::DisplayFilterType;
 
 #[derive(Parser, Debug)]
 #[command(author = "Scott Chase Waggener", version = "0.1.0", about = "Preprocess DICOM files", long_about = None)]

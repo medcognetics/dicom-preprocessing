@@ -1,7 +1,6 @@
 use crate::traits::{Transform, WriteTags};
-use clap::ValueEnum;
 use image::imageops::FilterType;
-use image::{DynamicImage, GenericImage, GenericImageView, Pixel, Rgba};
+use image::{DynamicImage, GenericImageView};
 use std::fmt;
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;

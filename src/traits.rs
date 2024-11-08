@@ -1,13 +1,9 @@
-use clap::ValueEnum;
-use image::imageops::FilterType;
-use image::{DynamicImage, GenericImage, GenericImageView, Pixel, Rgba};
-use std::fmt;
+use image::DynamicImage;
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
-use tiff::tags::Tag;
 use tiff::TiffError;
 
 pub trait Transform {

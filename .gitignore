@@ -139,3 +139,5 @@ coverage.xml
 **/version.py
 .pdm-python
 .vscode/*.code-workspace
+*.dcm
+*.tiff

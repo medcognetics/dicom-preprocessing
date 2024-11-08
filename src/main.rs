@@ -2,18 +2,18 @@ use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 use clap::Parser;
-use dicom::dictionary_std::{tags, uids};
+use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::ReadError;
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use tracing::{error, warn, Level};
+use tracing::{error, Level};
 
 use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::preprocess;
 use dicom_preprocessing::resize::DisplayFilterType;
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;

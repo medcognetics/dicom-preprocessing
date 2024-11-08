@@ -104,6 +104,46 @@ fn find_dicom_files(dir: &PathBuf) -> impl Iterator<Item = PathBuf> {
         .filter(move |file| is_dicom_file(file) && file.is_file())
 }
 
+fn check_filelist(filelist: &PathBuf, strict: bool) -> Result<Vec<PathBuf>, Error> {
+    let filelist = std::fs::read_to_string(filelist)
+        .map_err(|_| Error::InvalidSourcePath {
+            path: filelist.clone(),
+        })?
+        .lines()
+        .map(PathBuf::from)
+        .collect::<Vec<PathBuf>>();
+
+    // Set up spinner, checking files may take some time
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_message("Checking input paths from text file");
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.blue} {msg}")
+            .unwrap(),
+    );
+
+    // Check each path
+    let result = filelist
+        .into_par_iter()
+        .inspect(move |_| spinner.tick())
+        .map(|path| match is_dicom_file(&path) {
+            true => Ok(path),
+            false => Err(Error::InvalidSourcePath { path }),
+        });
+
+    // For strict mode, return the errors
+    if strict {
+        result.collect::<Result<Vec<_>, _>>()
+    // For non-strict mode, return the valid paths
+    } else {
+        Ok(result
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter_map(|path| path.ok())
+            .collect())
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author = "Scott Chase Waggener", version = "0.1.0", about = "Preprocess DICOM files", long_about = None)]
 struct Args {
@@ -159,6 +199,13 @@ struct Args {
         default_value_t = PaddingDirection::default(),
     )]
     padding_direction: PaddingDirection,
+
+    #[arg(
+        help = "Fail on input paths that are not DICOM files",
+        long = "--strict",
+        default_value_t = false
+    )]
+    strict: bool,
 }
 
 fn main() {
@@ -246,14 +293,7 @@ fn run(args: Args) -> Result<(), Error> {
     let source = if args.source.is_dir() {
         find_dicom_files(&args.source).collect()
     } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
-        std::fs::read_to_string(&args.source)
-            .map_err(|_| Error::InvalidSourcePath {
-                path: args.source.clone(),
-            })?
-            .lines()
-            .map(PathBuf::from)
-            .filter(|path| is_dicom_file(path))
-            .collect()
+        check_filelist(&args.source, args.strict)?
     } else {
         vec![args.source.clone()]
     };
@@ -356,6 +396,7 @@ mod tests {
             size: Some((64, 64)),
             filter: DisplayFilterType::default(),
             padding_direction: PaddingDirection::default(),
+            strict: true,
         };
         run(args).unwrap();
 

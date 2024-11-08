@@ -312,6 +312,7 @@ mod tests {
     use dicom_preprocessing::pad::ACTIVE_AREA;
     use dicom_preprocessing::resize::DEFAULT_SCALE;
 
+    use rstest::rstest;
     use std::fs::File;
     use std::io::BufReader;
     use tiff::decoder::Decoder;
@@ -319,8 +320,11 @@ mod tests {
     use tiff::tags::ResolutionUnit;
     use tiff::tags::Tag;
 
-    #[test]
-    fn test_main() {
+    #[rstest]
+    #[case("path")]
+    #[case("text")]
+    #[case("dir")]
+    fn test_main(#[case] input_type: &str) {
         // Get the expected SOPInstanceUID from the DICOM
         let dicom_file_path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
 
@@ -332,9 +336,21 @@ mod tests {
         // Create a temp directory to hold the output
         let output_dir = tempfile::tempdir().unwrap();
 
+        // Decide the source based on the input type
+        let source = match input_type {
+            "path" => temp_dicom_path,
+            "text" => {
+                let paths_file_path = temp_dir.path().join("paths.txt");
+                std::fs::write(&paths_file_path, temp_dicom_path.to_str().unwrap()).unwrap();
+                paths_file_path
+            }
+            "dir" => temp_dir.path().to_path_buf(),
+            _ => unreachable!(),
+        };
+
         // Run the main function
         let args = Args {
-            source: temp_dir.path().to_path_buf(),
+            source: source,
             output: output_dir.path().to_path_buf(),
             crop: true,
             size: Some((64, 64)),

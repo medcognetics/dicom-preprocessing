@@ -9,8 +9,8 @@ use tiff::TiffError;
 
 use crate::traits::{Transform, WriteTags};
 
-const DEFAULT_CROP_ORIGIN: u16 = 50719;
-const DEFAULT_CROP_SIZE: u16 = 50720;
+pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
+pub const DEFAULT_CROP_SIZE: u16 = 50720;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Crop {

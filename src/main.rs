@@ -214,10 +214,9 @@ fn process(
                 name: "SOP Instance UID",
             })?
             .into_owned();
-        let filepath = dest
-            .join(study_instance_uid)
-            .join(sop_instance_uid)
-            .with_extension("tiff");
+        let filename = format!("{}.tiff", sop_instance_uid);
+
+        let filepath = dest.join(study_instance_uid).join(filename);
 
         // Create the parents
         let parent = filepath.parent().unwrap();
@@ -248,13 +247,15 @@ fn run(args: Args) -> Result<(), Error> {
         find_dicom_files(&args.source).collect()
     } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
         std::fs::read_to_string(&args.source)
-            .map_err(|_| Error::InvalidSourcePath { path: args.source })?
+            .map_err(|_| Error::InvalidSourcePath {
+                path: args.source.clone(),
+            })?
             .lines()
             .map(PathBuf::from)
             .filter(|path| is_dicom_file(path))
             .collect()
     } else {
-        vec![args.source]
+        vec![args.source.clone()]
     };
 
     tracing::info!("Number of sources found: {}", source.len());
@@ -262,7 +263,7 @@ fn run(args: Args) -> Result<(), Error> {
     // Validate the output path
     let dest = match (source.len(), args.output.is_dir()) {
         // No sources
-        (0, _) => NoSourcesSnafu { path: args.output }.fail(),
+        (0, _) => NoSourcesSnafu { path: args.source }.fail(),
         // Single source
         (1, _) => Ok(args.output),
         // Multiple sources, target not a directory. Cannot continue.
@@ -302,16 +303,127 @@ fn run(args: Args) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{run, Args};
+    use crate::DisplayFilterType;
+    use crate::PaddingDirection;
+    use dicom::dictionary_std::tags;
+    use dicom::object::open_file;
+    use dicom_preprocessing::crop::{DEFAULT_CROP_ORIGIN, DEFAULT_CROP_SIZE};
+    use dicom_preprocessing::pad::ACTIVE_AREA;
+    use dicom_preprocessing::resize::DEFAULT_SCALE;
+    use image::codecs::tiff::TiffDecoder;
+    use image::ImageDecoder;
+    use std::fs::File;
+    use std::io::BufReader;
+    use tiff::decoder::Decoder;
+    use tiff::encoder::Rational;
+    use tiff::tags::ResolutionUnit;
+    use tiff::tags::Tag;
 
     #[test]
-    fn test_main_output() {
-        // Capture the output of the main function
-        let output = std::panic::catch_unwind(|| {
-            main();
-        });
+    fn test_main() {
+        // Get the expected SOPInstanceUID from the DICOM
+        let dicom_file_path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
 
-        // Ensure the main function runs without panicking
-        assert!(output.is_ok());
+        // Create a temp directory and copy the test file to it
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dicom_path = temp_dir.path().join("CT_small.dcm");
+        std::fs::copy(&dicom_file_path, &temp_dicom_path).unwrap();
+
+        // Create a temp directory to hold the output
+        let output_dir = tempfile::tempdir().unwrap();
+
+        // Run the main function
+        let args = Args {
+            source: temp_dir.path().to_path_buf(),
+            output: output_dir.path().to_path_buf(),
+            crop: true,
+            size: Some((64, 64)),
+            filter: DisplayFilterType::default(),
+            padding_direction: PaddingDirection::default(),
+        };
+        run(args).unwrap();
+
+        // Get the StudyInstanceUID and SOPInstanceUID from the DICOM
+        let dicom_file = open_file(&dicom_file_path).unwrap();
+        let study_instance_uid = dicom_file
+            .get(tags::STUDY_INSTANCE_UID)
+            .unwrap()
+            .value()
+            .to_str()
+            .unwrap()
+            .into_owned();
+        let sop_instance_uid = dicom_file
+            .get(tags::SOP_INSTANCE_UID)
+            .unwrap()
+            .value()
+            .to_str()
+            .unwrap()
+            .into_owned();
+
+        // Build the expected output file path
+        let filename = format!("{}.tiff", sop_instance_uid);
+        let output_file_path = output_dir.path().join(study_instance_uid).join(filename);
+
+        // Open the output file as a TIFF and check the dimensions
+        let mut tiff_decoder =
+            Decoder::new(BufReader::new(File::open(output_file_path).unwrap())).unwrap();
+        let (width, height) = tiff_decoder.dimensions().unwrap();
+        assert_eq!(width, 64);
+        assert_eq!(height, 64);
+
+        // Check the augmentation tags
+        let area = tiff_decoder
+            .get_tag(Tag::Unknown(ACTIVE_AREA))
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        assert_eq!(area, &[0, 0, 0, 0]);
+
+        let origin = tiff_decoder
+            .get_tag(Tag::Unknown(DEFAULT_CROP_ORIGIN))
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        assert_eq!(origin, &[64, 64]);
+
+        let size = tiff_decoder
+            .get_tag(Tag::Unknown(DEFAULT_CROP_SIZE))
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        assert_eq!(size, &[128, 128]);
+
+        let scale = tiff_decoder
+            .get_tag(Tag::Unknown(DEFAULT_SCALE))
+            .unwrap()
+            .into_f32_vec()
+            .unwrap();
+        assert_eq!(scale, &[0.5, 0.5]);
+
+        // Check the extra tags
+        let resolution_unit = ResolutionUnit::from_u16(
+            tiff_decoder
+                .get_tag(Tag::ResolutionUnit)
+                .unwrap()
+                .into_u16()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(resolution_unit, ResolutionUnit::Centimeter);
+
+        let resolution_x = tiff_decoder
+            .get_tag(Tag::XResolution)
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        assert_eq!(resolution_x, &[15, 1]);
+
+        let resolution_y = tiff_decoder
+            .get_tag(Tag::YResolution)
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        assert_eq!(resolution_y, &[15, 1]);
     }
 }

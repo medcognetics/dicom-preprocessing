@@ -10,7 +10,7 @@ use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 use tiff::TiffError;
 
-const DEFAULT_SCALE: u16 = 50718;
+pub const DEFAULT_SCALE: u16 = 50718;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DisplayFilterType {

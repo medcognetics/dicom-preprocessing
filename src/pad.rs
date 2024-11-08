@@ -9,7 +9,7 @@ use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 use tiff::TiffError;
 
-const ACTIVE_AREA: u16 = 50829;
+pub const ACTIVE_AREA: u16 = 50829;
 
 #[derive(Clone, Debug, clap::ValueEnum, Default, Copy)]
 pub enum PaddingDirection {

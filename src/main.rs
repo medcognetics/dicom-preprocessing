@@ -54,16 +54,25 @@ pub enum Error {
 }
 
 fn is_dicom_file(path: &Path) -> bool {
-    let has_extension = path
+    let has_extension = path.extension().is_some();
+    let ext_is_dicom = path
         .extension()
         .map(|ext| ext.to_ascii_lowercase())
         .map(|ext| ext == "dcm" || ext == "dicom")
         .unwrap_or(false);
 
-    if has_extension {
+    // Try to check only the extension if possible
+    if has_extension && ext_is_dicom {
         return path.is_file();
+    } else if has_extension {
+        return false;
     }
 
+    if path.is_dir() {
+        return false;
+    }
+
+    // Extensionless file, we must check the DICM prefix
     const DICM_PREFIX: &[u8; 4] = b"DICM";
     let has_prefix = File::open(path)
         .and_then(|mut file| {
@@ -117,7 +126,7 @@ struct Args {
     crop: bool,
 
     #[arg(
-        help = "Target size",
+        help = "Target size (width,height)",
         long = "size",
         short = 's',
         value_parser = clap::builder::ValueParser::new(|s: &str| {

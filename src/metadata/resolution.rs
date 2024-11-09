@@ -1,17 +1,11 @@
-use image::GenericImageView;
-use std::fs::File;
 use std::io::{Seek, Write};
-use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
-use tiff::encoder::{ImageEncoder, Rational, TiffEncoder, TiffKind};
-use tiff::tags::Tag;
+use tiff::encoder::{ImageEncoder, Rational, TiffKind};
 use tiff::TiffError;
 
 use dicom::dictionary_std::tags;
-use dicom::object::{FileDicomObject, InMemDicomObject, ReadError};
-use dicom::pixeldata::PixelDecoder;
-use image::imageops::FilterType;
+use dicom::object::{FileDicomObject, InMemDicomObject};
 use snafu::{ResultExt, Snafu};
 
 use crate::metadata::WriteTags;
@@ -130,10 +124,11 @@ mod tests {
     use dicom::object::open_file;
     use rstest::rstest;
     use std::fs::File;
-    use std::io::Write;
+
     use tempfile::tempdir;
     use tiff::decoder::Decoder as TiffDecoder;
-    use tiff::tags::ResolutionUnit;
+    use tiff::encoder::TiffEncoder;
+    use tiff::tags::{ResolutionUnit, Tag};
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888 })]
@@ -174,13 +169,27 @@ mod tests {
 
         // Read the TIFF back
         let mut tiff = TiffDecoder::new(File::open(temp_file_path).unwrap()).unwrap();
-        let x_resolution = tiff.get_tag(Tag::XResolution).unwrap();
-        let y_resolution = tiff.get_tag(Tag::YResolution).unwrap();
-        let resolution_unit = tiff.get_tag(Tag::ResolutionUnit).unwrap();
+        let actual_x_resolution = tiff
+            .get_tag(Tag::XResolution)
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        let actual_y_resolution = tiff
+            .get_tag(Tag::YResolution)
+            .unwrap()
+            .into_u32_vec()
+            .unwrap();
+        let actual_resolution_unit = tiff
+            .get_tag(Tag::ResolutionUnit)
+            .unwrap()
+            .into_u16()
+            .unwrap();
 
-        assert_eq!(x_resolution, x_resolution);
-        assert_eq!(y_resolution, y_resolution);
-        assert_eq!(resolution_unit, resolution_unit);
+        assert_eq!(x_resolution.n, actual_x_resolution[0]);
+        assert_eq!(x_resolution.d, actual_x_resolution[1]);
+        assert_eq!(y_resolution.n, actual_y_resolution[0]);
+        assert_eq!(y_resolution.d, actual_y_resolution[1]);
+        assert_eq!(actual_resolution_unit, resolution_unit.to_u16());
     }
 
     #[rstest]

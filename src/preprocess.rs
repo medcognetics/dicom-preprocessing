@@ -1,4 +1,3 @@
-use dicom_pixeldata::DecodedPixelData;
 use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
@@ -6,7 +5,7 @@ use std::io::{Seek, Write};
 use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor};
-use tiff::encoder::{ImageEncoder, Rational, TiffEncoder, TiffKind};
+use tiff::encoder::{ImageEncoder, TiffEncoder, TiffKind};
 use tiff::tags::Tag;
 use tiff::TiffError;
 

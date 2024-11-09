@@ -21,7 +21,6 @@ use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;
 
 use dicom_preprocessing::preprocess::Error as PreprocessingError;
-use dicom_preprocessing::preprocess::PreprocessingMetadata;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -387,7 +386,6 @@ mod tests {
     use std::fs::File;
     use std::io::BufReader;
     use tiff::decoder::Decoder;
-    use tiff::encoder::compression::Compressor;
 
     use tiff::tags::ResolutionUnit;
     use tiff::tags::Tag;

@@ -1,4 +1,3 @@
-use image::DynamicImage;
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;

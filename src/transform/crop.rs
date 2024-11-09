@@ -7,7 +7,8 @@ use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 use tiff::TiffError;
 
-use crate::traits::{Transform, WriteTags};
+use crate::metadata::WriteTags;
+use crate::transform::Transform;
 
 pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
 pub const DEFAULT_CROP_SIZE: u16 = 50720;
@@ -129,7 +130,7 @@ impl From<&[&DynamicImage]> for Crop {
     }
 }
 
-impl Transform for Crop {
+impl Transform<DynamicImage> for Crop {
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         image.crop_imm(self.left, self.top, self.width, self.height)
     }

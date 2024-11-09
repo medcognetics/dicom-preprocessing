@@ -6,16 +6,8 @@ use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::TiffError;
 
-pub trait Transform {
-    fn apply(&self, image: &DynamicImage) -> DynamicImage;
-
-    fn apply_iter(
-        &self,
-        images: impl Iterator<Item = DynamicImage>,
-    ) -> impl Iterator<Item = DynamicImage> {
-        images.map(|img| self.apply(&img))
-    }
-}
+pub mod resolution;
+pub use resolution::*;
 
 pub trait WriteTags {
     /// Write tags describing the transform to a TIFF encoder.

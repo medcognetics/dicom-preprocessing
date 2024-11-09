@@ -1,4 +1,3 @@
-use crate::traits::{Transform, WriteTags};
 use image::{DynamicImage, GenericImage, GenericImageView, Pixel};
 use std::fmt;
 use std::io::{Seek, Write};
@@ -8,6 +7,9 @@ use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 use tiff::TiffError;
+
+use crate::metadata::WriteTags;
+use crate::transform::Transform;
 
 pub const ACTIVE_AREA: u16 = 50829;
 
@@ -110,7 +112,7 @@ impl Padding {
     }
 }
 
-impl Transform for Padding {
+impl Transform<DynamicImage> for Padding {
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         let (width, height) = image.dimensions();
         let mut padded_image = DynamicImage::new(

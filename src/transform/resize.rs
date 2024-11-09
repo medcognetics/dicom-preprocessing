@@ -1,4 +1,3 @@
-use crate::traits::{Transform, WriteTags};
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 use std::fmt;
@@ -9,6 +8,9 @@ use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 use tiff::TiffError;
+
+use crate::metadata::{Resolution, WriteTags};
+use crate::transform::Transform;
 
 pub const DEFAULT_SCALE: u16 = 50718;
 
@@ -91,12 +93,23 @@ impl Resize {
     }
 }
 
-impl Transform for Resize {
+impl Transform<DynamicImage> for Resize {
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         let (width, height) = image.dimensions();
         let target_width = (width as f32 * self.scale_x) as u32;
         let target_height = (height as f32 * self.scale_y) as u32;
         image.resize(target_width, target_height, self.filter)
+    }
+}
+
+impl Transform<Resolution> for Resize {
+    fn apply(&self, resolution: &Resolution) -> Resolution {
+        assert_eq!(
+            self.scale_x, self.scale_y,
+            "Expected scale_x and scale_y to be equal"
+        );
+        let scale = self.scale_x;
+        resolution.scale(scale)
     }
 }
 

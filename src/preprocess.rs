@@ -1,23 +1,26 @@
+use dicom_pixeldata::DecodedPixelData;
+use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
 use std::io::{Seek, Write};
 use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::Compression;
+use tiff::encoder::compression::{Compression, Compressor};
 use tiff::encoder::{ImageEncoder, Rational, TiffEncoder, TiffKind};
 use tiff::tags::Tag;
 use tiff::TiffError;
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject, ReadError};
+use dicom::pixeldata::PhotometricInterpretation;
 use dicom::pixeldata::PixelDecoder;
 use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
+use tiff::encoder::colortype::{Gray16, RGB8};
+use tiff::encoder::compression::{Lzw, Packbits, Uncompressed};
 
-use crate::crop::Crop;
-use crate::pad::{Padding, PaddingDirection};
-use crate::resize::Resize;
-use crate::traits::{Transform, WriteTags};
+use crate::metadata::{Resolution, WriteTags};
+use crate::transform::{Crop, Padding, PaddingDirection, Resize, Transform};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -48,6 +51,11 @@ pub enum Error {
         #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
         source: Box<dicom::core::value::ConvertValueError>,
     },
+    CastPropertyValue {
+        name: &'static str,
+        #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
+        source: Box<dicom::core::value::CastValueError>,
+    },
     /// pixel data of frame #{frame_number} is out of bounds
     FrameOutOfBounds {
         frame_number: u32,
@@ -62,37 +70,34 @@ pub enum Error {
         source: Box<TiffError>,
         path: PathBuf,
     },
+    WriteToTiff {
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+    },
+    ConvertImageToBytes,
     SaveData {
         source: std::io::Error,
     },
     UnexpectedPixelData,
-    /// failed to parse pixel spacing value
-    ParsePixelSpacingError {
-        #[snafu(source(from(std::num::ParseFloatError, Box::new)))]
-        source: Box<std::num::ParseFloatError>,
-    },
     WriteTags {
-        name: &'static str,
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
+    #[snafu(display("unsupported photometric interpretation {photometric_interpretation} for {bits_allocated} bits allocated"))]
+    UnsupportedPhotometricInterpretation {
+        bits_allocated: u16,
+        photometric_interpretation: PhotometricInterpretation,
+    },
 }
 
-pub struct Resolution {
-    pub pixels_per_mm_x: f32,
-    pub pixels_per_mm_y: f32,
+pub struct PreprocessingMetadata {
+    crop: Option<Crop>,
+    resize: Option<Resize>,
+    padding: Option<Padding>,
+    resolution: Option<Resolution>,
 }
 
-impl Resolution {
-    pub fn scale(&self, value: f32) -> Self {
-        Resolution {
-            pixels_per_mm_x: self.pixels_per_mm_x * value,
-            pixels_per_mm_y: self.pixels_per_mm_y * value,
-        }
-    }
-}
-
-impl WriteTags for Resolution {
+impl WriteTags for PreprocessingMetadata {
     fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
     where
         W: Write + Seek,
@@ -100,212 +105,296 @@ impl WriteTags for Resolution {
         K: TiffKind,
         D: Compression,
     {
-        tiff.x_resolution(Rational {
-            n: (self.pixels_per_mm_x * 10.0) as u32,
-            d: 1,
-        });
-        tiff.y_resolution(Rational {
-            n: (self.pixels_per_mm_y * 10.0) as u32,
-            d: 1,
-        });
-        tiff.resolution_unit(tiff::tags::ResolutionUnit::Centimeter);
+        // Write the resolution tag
+        if let Some(resolution) = &self.resolution {
+            resolution.write_tags(tiff)?;
+        }
+        // Write metadata software tag
+        tiff.encoder()
+            .write_tag(Tag::Software, VERSION.as_bytes())?;
+
+        // Write transform related tags
+        if let Some(resolution) = &self.resolution {
+            resolution.write_tags(tiff)?;
+        }
+        if let Some(crop_config) = &self.crop {
+            crop_config.write_tags(tiff)?;
+        }
+        if let Some(resize_config) = &self.resize {
+            resize_config.write_tags(tiff)?;
+        }
+        if let Some(padding_config) = &self.padding {
+            padding_config.write_tags(tiff)?;
+        }
         Ok(())
     }
 }
 
-impl From<Resolution> for (f32, f32) {
-    fn from(resolution: Resolution) -> Self {
-        (resolution.pixels_per_mm_x, resolution.pixels_per_mm_y)
-    }
+pub struct Preprocessor {
+    pub crop: bool,
+    pub size: Option<(u32, u32)>,
+    pub filter: FilterType,
+    pub padding_direction: PaddingDirection,
+    pub compressor: Compressor,
 }
 
-impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
-    type Error = Error;
-
-    // Extract
-    fn try_from(file: &FileDicomObject<InMemDicomObject>) -> Result<Self, Self::Error> {
-        // Read the spacing
-        let spacing = file
-            .get(tags::PIXEL_SPACING)
-            .or_else(|| file.get(tags::IMAGER_PIXEL_SPACING))
+impl Preprocessor {
+    pub fn preprocess(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+        output: PathBuf,
+    ) -> Result<(), Error> {
+        let bits_allocated = file
+            .get(tags::BITS_ALLOCATED)
             .ok_or(Error::MissingProperty {
-                name: "Pixel Spacing",
+                name: "Bits Allocated",
             })?
             .value()
-            .to_str()
-            .context(InvalidPropertyValueSnafu {
-                name: "Pixel Spacing",
+            .uint16()
+            .context(CastPropertyValueSnafu {
+                name: "Bits Allocated",
             })?;
-
-        // Parse spacing into x and y. First value is row spacing (y)
-        let mut spacing_iter = spacing.split('\\');
-        let pixel_spacing_mm_y = spacing_iter
-            .next()
+        let photometric_interpretation = file
+            .get(tags::PHOTOMETRIC_INTERPRETATION)
             .ok_or(Error::MissingProperty {
-                name: "Pixel Spacing",
+                name: "Photometric Interpretation",
             })?
-            .parse::<f32>()
-            .map_err(|e| Error::ParsePixelSpacingError {
-                source: Box::new(e),
+            .value()
+            .string()
+            .context(CastPropertyValueSnafu {
+                name: "Photometric Interpretation",
             })?;
-        let pixel_spacing_mm_x = spacing_iter
-            .next()
-            .ok_or(Error::MissingProperty {
-                name: "Pixel Spacing",
-            })?
-            .parse::<f32>()
-            .map_err(|e| Error::ParsePixelSpacingError {
-                source: Box::new(e),
-            })?;
+        let photometric_interpretation =
+            PhotometricInterpretation::from(photometric_interpretation.trim());
 
-        // Convert to pixels per mm
-        Ok(Resolution {
-            pixels_per_mm_x: 1.0 / pixel_spacing_mm_x,
-            pixels_per_mm_y: 1.0 / pixel_spacing_mm_y,
-        })
+        let (frames, metadata) = self.prepare_image(file)?;
+
+        // Use the metadata to determine the correct implementation of Preprocess
+        match (bits_allocated, photometric_interpretation, &self.compressor) {
+            (16, PhotometricInterpretation::Monochrome1, Compressor::Uncompressed(_)) => {
+                <Preprocessor as Preprocess<Gray16, Uncompressed>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (16, PhotometricInterpretation::Monochrome2, Compressor::Uncompressed(_)) => {
+                <Preprocessor as Preprocess<Gray16, Uncompressed>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (16, PhotometricInterpretation::Monochrome1, Compressor::Packbits(_)) => {
+                <Preprocessor as Preprocess<Gray16, Packbits>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (16, PhotometricInterpretation::Monochrome2, Compressor::Packbits(_)) => {
+                <Preprocessor as Preprocess<Gray16, Packbits>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (16, PhotometricInterpretation::Monochrome1, Compressor::Lzw(_)) => {
+                <Preprocessor as Preprocess<Gray16, Lzw>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (16, PhotometricInterpretation::Monochrome2, Compressor::Lzw(_)) => {
+                <Preprocessor as Preprocess<Gray16, Lzw>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (8, PhotometricInterpretation::Rgb, Compressor::Uncompressed(_)) => {
+                <Preprocessor as Preprocess<RGB8, Uncompressed>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (8, PhotometricInterpretation::Rgb, Compressor::Packbits(_)) => {
+                <Preprocessor as Preprocess<RGB8, Packbits>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (8, PhotometricInterpretation::Rgb, Compressor::Lzw(_)) => {
+                <Preprocessor as Preprocess<RGB8, Lzw>>::preprocess_frames(
+                    self, frames, metadata, output,
+                )
+            }
+            (bits_allocated, photometric_interpretation, _) => {
+                Err(Error::UnsupportedPhotometricInterpretation {
+                    bits_allocated,
+                    photometric_interpretation,
+                })
+            }
+        }
+    }
+
+    // Decodes the pixel data and applies transformations
+    fn prepare_image(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), Error> {
+        // Decode the pixel data and extract the dimensions
+        let decoded = file.decode_pixel_data().context(DecodePixelDataSnafu)?;
+        let number_of_frames = decoded.number_of_frames();
+
+        // Try to determine the resolution from pixel spacing attributes
+        let resolution = Resolution::try_from(file).ok();
+
+        // Determine and apply crop
+        let (image_data, crop_config) = match number_of_frames {
+            // For single frame images, we can determine the crop directly from the image
+            1 => {
+                let img = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
+                let crop_config = match self.crop {
+                    true => Some(Crop::from(&img)),
+                    false => None,
+                };
+                (vec![img].into_iter(), crop_config)
+            }
+            // For multi-frame images we need to scan all frames and choose the largest crop
+            _ => {
+                let mut image_data = Vec::with_capacity(number_of_frames as usize);
+                for frame_number in 0..number_of_frames {
+                    image_data.push(
+                        decoded
+                            .to_dynamic_image(frame_number)
+                            .context(DecodePixelDataSnafu)?,
+                    );
+                }
+                let crop_config = match self.crop {
+                    true => Some(Crop::from(&image_data.iter().collect::<Vec<_>>()[..])),
+                    false => None,
+                };
+                (image_data.into_iter(), crop_config)
+            }
+        };
+        let image_data = image_data
+            .map(|img| match &crop_config {
+                Some(config) => config.apply(&img),
+                None => img,
+            })
+            .collect::<Vec<_>>();
+
+        // Determine and apply resize, ensuring we also update the resolution
+        let resize_config = match self.size {
+            Some((target_width, target_height)) => {
+                let first_image = image_data.first().unwrap();
+                let config = Resize::new(&first_image, target_width, target_height, self.filter);
+                Some(config)
+            }
+            None => None,
+        };
+        let image_data = image_data
+            .into_iter()
+            .map(|img| match &resize_config {
+                Some(config) => config.apply(&img),
+                None => img,
+            })
+            .collect::<Vec<_>>();
+        let resolution = match (resolution, &resize_config) {
+            (Some(res), Some(config)) => Some(config.apply(&res)),
+            _ => None,
+        };
+
+        // Determine and apply padding
+        let padding_config = match self.size {
+            Some((target_width, target_height)) => {
+                let first_image = image_data.first().unwrap();
+                let config = Padding::new(
+                    &first_image,
+                    target_width,
+                    target_height,
+                    self.padding_direction,
+                );
+                Some(config)
+            }
+            None => None,
+        };
+        let image_data = image_data
+            .into_iter()
+            .map(|img| match &padding_config {
+                Some(config) => config.apply(&img),
+                None => img,
+            })
+            .collect::<Vec<_>>();
+
+        Ok((
+            image_data,
+            PreprocessingMetadata {
+                crop: crop_config,
+                resize: resize_config,
+                padding: padding_config,
+                resolution,
+            },
+        ))
     }
 }
 
-pub fn preprocess<C>(
-    file: &FileDicomObject<InMemDicomObject>,
-    output: PathBuf,
-    crop: bool,
-    size: Option<(u32, u32)>,
-    filter: FilterType,
-    padding_direction: PaddingDirection,
-    compression: C,
-) -> Result<(), Error>
+trait Preprocess<C, D>
 where
-    C: Compression + Copy,
+    C: ColorType,
+    D: Compression,
 {
-    // Decode the pixel data and extract the dimensions
-    let decoded = file.decode_pixel_data().context(DecodePixelDataSnafu)?;
-    let number_of_frames = decoded.number_of_frames();
+    fn preprocess_frame(
+        &self,
+        encoder: &mut TiffEncoder<File>,
+        image: &DynamicImage,
+        metadata: &PreprocessingMetadata,
+    ) -> Result<(), Error>;
 
-    // Try to determine the resolution from pixel spacing attributes
-    let resolution = Resolution::try_from(file).ok();
-
-    // Read each frame and scan the frames to determine the crop
-    let (image_data, crop_config) = match number_of_frames {
-        1 => {
-            let img = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
-            let crop_config = match crop {
-                true => Some(Crop::from(&img)),
-                false => None,
-            };
-            (vec![img].into_iter(), crop_config)
-        }
-        _ => {
-            let mut image_data = Vec::with_capacity(number_of_frames as usize);
-            for frame_number in 0..number_of_frames {
-                image_data.push(
-                    decoded
-                        .to_dynamic_image(frame_number)
-                        .context(DecodePixelDataSnafu)?,
-                );
-            }
-            let crop_config = match crop {
-                true => Some(Crop::from(&image_data.iter().collect::<Vec<_>>()[..])),
-                false => None,
-            };
-            (image_data.into_iter(), crop_config)
-        }
-    };
-
-    // Apply crop
-    let image_data = image_data
-        .map(|img| match &crop_config {
-            Some(config) => config.apply(&img),
-            None => img,
-        })
-        .collect::<Vec<_>>();
-
-    // Determine and apply resize
-    let resize_config = match size {
-        Some((target_width, target_height)) => {
-            let first_image = image_data.first().unwrap();
-            let config = Resize::new(&first_image, target_width, target_height, filter);
-            Some(config)
-        }
-        None => None,
-    };
-    let image_data = image_data
-        .into_iter()
-        .map(|img| match &resize_config {
-            Some(config) => config.apply(&img),
-            None => img,
-        })
-        .collect::<Vec<_>>();
-
-    // Determine and apply padding
-    let padding_config = match size {
-        Some((target_width, target_height)) => {
-            let first_image = image_data.first().unwrap();
-            let config = Padding::new(&first_image, target_width, target_height, padding_direction);
-            Some(config)
-        }
-        None => None,
-    };
-    let image_data = image_data
-        .into_iter()
-        .map(|img| match &padding_config {
-            Some(config) => config.apply(&img),
-            None => img,
-        })
-        .collect::<Vec<_>>();
-
-    // Open the TIFF file
-    let mut tiff_encoder = TiffEncoder::new(File::create(&output).context(SaveDataSnafu)?)
-        .context(OpenTiffSnafu {
-            path: output.clone(),
-        })?;
-
-    // Preprocess each frame
-    for img in image_data.iter() {
-        // Create the TIFF encoder for single frame
-        let (columns, rows) = img.dimensions();
-        let mut tiff = tiff_encoder
-            .new_image_with_compression::<tiff::encoder::colortype::Gray16, _>(
-                columns,
-                rows,
-                compression,
-            )
+    fn preprocess_frames(
+        &self,
+        frames: Vec<DynamicImage>,
+        metadata: PreprocessingMetadata,
+        output: PathBuf,
+    ) -> Result<(), Error> {
+        // Open the TIFF file
+        let mut tiff_encoder = TiffEncoder::new(File::create(&output).context(SaveDataSnafu)?)
             .context(OpenTiffSnafu {
                 path: output.clone(),
             })?;
 
-        // Write some tags
-        tiff.encoder()
-            .write_tag(Tag::Software, VERSION.as_bytes())
-            .context(WriteTagsSnafu { name: "Software" })?;
-
-        // Write transform related tags
-        if let Some(resolution) = &resolution {
-            resolution
-                .write_tags(&mut tiff)
-                .context(WriteTagsSnafu { name: "Resolution" })?;
+        for img in frames.iter() {
+            self.preprocess_frame(&mut tiff_encoder, img, &metadata)?;
         }
-        if let Some(crop_config) = &crop_config {
-            crop_config
-                .write_tags(&mut tiff)
-                .context(WriteTagsSnafu { name: "Crop" })?;
-        }
-        if let Some(resize_config) = &resize_config {
-            resize_config
-                .write_tags(&mut tiff)
-                .context(WriteTagsSnafu { name: "Resize" })?;
-        }
-        if let Some(padding_config) = &padding_config {
-            padding_config
-                .write_tags(&mut tiff)
-                .context(WriteTagsSnafu { name: "Padding" })?;
-        }
-
-        // Write the image data
-        let bytes = img.as_luma16().unwrap();
-        tiff.write_data(bytes).context(OpenTiffSnafu {
-            path: output.clone(),
-        })?
+        Ok(())
     }
-    Ok(())
 }
+
+macro_rules! impl_preprocess_frame {
+    ($color_type:ty, $compression:ty, $as_fn:ident, $error_variant:ident) => {
+        impl Preprocess<$color_type, $compression> for Preprocessor {
+            fn preprocess_frame(
+                &self,
+                encoder: &mut TiffEncoder<File>,
+                image: &DynamicImage,
+                metadata: &PreprocessingMetadata,
+            ) -> Result<(), Error> {
+                let (columns, rows) = image.dimensions();
+                let mut tiff = encoder
+                    .new_image_with_compression::<$color_type, _>(
+                        columns,
+                        rows,
+                        <$compression>::default(),
+                    )
+                    .context(WriteToTiffSnafu)?;
+
+                metadata
+                    .write_tags(&mut tiff)
+                    .map_err(|e| Error::WriteTags {
+                        source: Box::new(e),
+                    })?;
+                let bytes = image.$as_fn().ok_or(Error::$error_variant)?;
+                tiff.write_data(bytes).context(WriteToTiffSnafu)?;
+                Ok(())
+            }
+        }
+    };
+}
+
+// Implementations for Gray16
+impl_preprocess_frame!(Gray16, Uncompressed, as_luma16, ConvertImageToBytes);
+impl_preprocess_frame!(Gray16, Packbits, as_luma16, ConvertImageToBytes);
+impl_preprocess_frame!(Gray16, Lzw, as_luma16, ConvertImageToBytes);
+
+// Implementations for RGB8
+impl_preprocess_frame!(RGB8, Uncompressed, as_rgb8, ConvertImageToBytes);
+impl_preprocess_frame!(RGB8, Packbits, as_rgb8, ConvertImageToBytes);
+impl_preprocess_frame!(RGB8, Lzw, as_rgb8, ConvertImageToBytes);

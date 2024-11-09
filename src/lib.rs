@@ -1,11 +1,7 @@
-pub mod crop;
-pub mod pad;
+pub mod metadata;
 pub mod preprocess;
-pub mod resize;
-pub mod traits;
+pub mod transform;
 
-pub use crop::*;
-pub use pad::*;
+pub use metadata::*;
 pub use preprocess::*;
-pub use resize::*;
-pub use traits::*;
+pub use transform::*;

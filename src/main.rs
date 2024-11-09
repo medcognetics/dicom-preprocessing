@@ -6,12 +6,14 @@ use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::ReadError;
 use rayon::prelude::*;
+use std::fmt;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use tiff::encoder::compression::Compressor;
 use tracing::{error, Level};
 
 use dicom_preprocessing::pad::PaddingDirection;
-use dicom_preprocessing::preprocess::preprocess;
+use dicom_preprocessing::preprocess::Preprocessor;
 use dicom_preprocessing::resize::DisplayFilterType;
 use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
@@ -19,6 +21,7 @@ use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;
 
 use dicom_preprocessing::preprocess::Error as PreprocessingError;
+use dicom_preprocessing::preprocess::PreprocessingMetadata;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -51,6 +54,39 @@ pub enum Error {
         #[snafu(source(from(std::io::Error, Box::new)))]
         source: Box<std::io::Error>,
     },
+}
+
+#[derive(Debug, Clone, clap::ValueEnum, Default)]
+enum SupportedCompressor {
+    #[default]
+    Packbits,
+    Lzw,
+    Uncompressed,
+}
+
+impl From<SupportedCompressor> for Compressor {
+    fn from(value: SupportedCompressor) -> Self {
+        match value {
+            SupportedCompressor::Packbits => {
+                Compressor::Packbits(tiff::encoder::compression::Packbits)
+            }
+            SupportedCompressor::Lzw => Compressor::Lzw(tiff::encoder::compression::Lzw),
+            SupportedCompressor::Uncompressed => {
+                Compressor::Uncompressed(tiff::encoder::compression::Uncompressed)
+            }
+        }
+    }
+}
+
+impl fmt::Display for SupportedCompressor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let direction_str = match self {
+            SupportedCompressor::Packbits => "packbits",
+            SupportedCompressor::Lzw => "lzw",
+            SupportedCompressor::Uncompressed => "none",
+        };
+        write!(f, "{}", direction_str)
+    }
 }
 
 fn is_dicom_file(path: &Path) -> bool {
@@ -201,8 +237,17 @@ struct Args {
     padding_direction: PaddingDirection,
 
     #[arg(
+        help = "Compression type",
+        long = "compressor",
+        short = 'z',
+        value_parser = clap::value_parser!(SupportedCompressor),
+        default_value_t = SupportedCompressor::default(),
+    )]
+    compressor: SupportedCompressor,
+
+    #[arg(
         help = "Fail on input paths that are not DICOM files",
-        long = "--strict",
+        long = "strict",
         default_value_t = false
     )]
     strict: bool,
@@ -227,14 +272,7 @@ fn main() {
     });
 }
 
-fn process(
-    source: &PathBuf,
-    dest: &PathBuf,
-    crop: bool,
-    size: Option<(u32, u32)>,
-    filter: DisplayFilterType,
-    padding_direction: PaddingDirection,
-) -> Result<(), Error> {
+fn process(source: &PathBuf, dest: &PathBuf, preprocessor: &Preprocessor) -> Result<(), Error> {
     let file = open_file(&source).context(DicomReadSnafu { path: source })?;
 
     let dest = if dest.is_dir() {
@@ -274,17 +312,9 @@ fn process(
     };
 
     tracing::info!("Processing {} -> {}", source.display(), dest.display());
-    preprocess(
-        &file,
-        dest,
-        crop,
-        size,
-        filter.into(),
-        padding_direction,
-        // TODO: Make this configurable
-        tiff::encoder::compression::Packbits,
-    )
-    .context(PreprocessingSnafu)?;
+    preprocessor
+        .preprocess(&file, dest)
+        .context(PreprocessingSnafu)?;
     Ok(())
 }
 
@@ -312,6 +342,15 @@ fn run(args: Args) -> Result<(), Error> {
         _ => Ok(args.output),
     }?;
 
+    // Build the preprocessor
+    let preprocessor = Preprocessor {
+        crop: args.crop,
+        size: args.size,
+        filter: args.filter.into(),
+        padding_direction: args.padding_direction,
+        compressor: Compressor::from(args.compressor),
+    };
+
     // Create progress bar
     let pb = ProgressBar::new(source.len() as u64);
     pb.set_style(
@@ -327,16 +366,7 @@ fn run(args: Args) -> Result<(), Error> {
     source
         .into_par_iter()
         .progress_with(pb)
-        .try_for_each(|file| {
-            process(
-                &file,
-                &dest,
-                args.crop,
-                args.size,
-                args.filter,
-                args.padding_direction,
-            )
-        })?;
+        .try_for_each(|file| process(&file, &dest, &preprocessor))?;
 
     Ok(())
 }
@@ -352,10 +382,12 @@ mod tests {
     use dicom_preprocessing::pad::ACTIVE_AREA;
     use dicom_preprocessing::resize::DEFAULT_SCALE;
 
+    use crate::SupportedCompressor;
     use rstest::rstest;
     use std::fs::File;
     use std::io::BufReader;
     use tiff::decoder::Decoder;
+    use tiff::encoder::compression::Compressor;
 
     use tiff::tags::ResolutionUnit;
     use tiff::tags::Tag;
@@ -397,6 +429,7 @@ mod tests {
             filter: DisplayFilterType::default(),
             padding_direction: PaddingDirection::default(),
             strict: true,
+            compressor: SupportedCompressor::default(),
         };
         run(args).unwrap();
 
@@ -473,13 +506,13 @@ mod tests {
             .unwrap()
             .into_u32_vec()
             .unwrap();
-        assert_eq!(resolution_x, &[15, 1]);
+        assert_eq!(resolution_x, &[7, 1]);
 
         let resolution_y = tiff_decoder
             .get_tag(Tag::YResolution)
             .unwrap()
             .into_u32_vec()
             .unwrap();
-        assert_eq!(resolution_y, &[15, 1]);
+        assert_eq!(resolution_y, &[7, 1]);
     }
 }

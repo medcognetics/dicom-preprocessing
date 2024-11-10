@@ -31,10 +31,13 @@ Arguments:
   <OUTPUT>  Output path. Can be a directory (for multiple files) or a file (for a single file)
 
 Options:
-  -c, --crop                         Crop the image
+  -c, --crop                         Crop the image. Pixels with value equal to zero are cropped away.
+  -m, --crop-max                     Also include pixels with value equal to the data type's maximum value in the crop calculation
   -s, --size <SIZE>                  Target size (width,height)
-  -f, --filter <FILTER>              Filter type 
-  -p, --padding <PADDING_DIRECTION>  Padding direction 
+  -f, --filter <FILTER>              Filter type [default: triangle] [possible values: triangle, nearest, catmull-rom, gaussian, lanczos3]
+  -p, --padding <PADDING_DIRECTION>  Padding direction [default: zero] [possible values: zero, top-left, bottom-right, center]
+  -z, --compressor <COMPRESSOR>      Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
+      --strict                       Fail on input paths that are not DICOM files
   -h, --help                         Print help
   -V, --version                      Print version
 ```

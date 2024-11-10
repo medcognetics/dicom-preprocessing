@@ -16,7 +16,7 @@ use tracing::{error, Level};
 use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::Preprocessor;
 use dicom_preprocessing::resize::DisplayFilterType;
-use indicatif::{ParallelProgressIterator, ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;
@@ -181,7 +181,7 @@ fn check_filelist(filelist: &PathBuf, strict: bool) -> Result<Vec<PathBuf>, Erro
 }
 
 #[derive(Parser, Debug)]
-#[command(author = "Scott Chase Waggener", version = "0.1.0", about = "Preprocess DICOM files", long_about = None)]
+#[command(author = "Scott Chase Waggener", version = "0.1.0", about = "Preprocess DICOM files into (multi-frame) TIFFs", long_about = None)]
 struct Args {
     #[arg(
         help = "Source path. Can be a DICOM file, directory, or a text file with DICOM file paths"
@@ -372,10 +372,11 @@ fn run(args: Args) -> Result<(), Error> {
     pb.set_message("Preprocessing DICOM files");
 
     // Process each file in parallel
-    source
-        .into_par_iter()
-        .progress_with(pb)
-        .try_for_each(|file| process(&file, &dest, &preprocessor))?;
+    source.into_par_iter().try_for_each(|file| {
+        let result = process(&file, &dest, &preprocessor);
+        pb.inc(1);
+        result
+    })?;
 
     Ok(())
 }

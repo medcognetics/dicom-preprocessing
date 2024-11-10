@@ -1,5 +1,4 @@
 use image::{DynamicImage, GenericImageView, Pixel};
-use num::traits::{Bounded, Num};
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;

@@ -1,7 +1,6 @@
 # Dicom Preprocessing
 
-Implements a tool that preprocesses DICOM files into TIFF images.
-DICOM files are opened and any applicable LUT transformations are applied.
+Implements a tool that preprocesses DICOM files into TIFF images. The primary motivation is to prepare DICOM images for use in computer vision tasks, with a focus on efficient storage and minimization of decode processing time.
 
 ### Transformation Sequence
 
@@ -22,7 +21,7 @@ To enable mapping coordinates from the original image to the output image, the f
 ### Command Line Interface
 
 ```
-Preprocess DICOM files
+Preprocess DICOM files into (multi-frame) TIFFs
 
 Usage: dicom-preprocess [OPTIONS] <SOURCE> <OUTPUT>
 
@@ -42,8 +41,14 @@ Options:
   -V, --version                      Print version
 ```
 
-### Limitations
 
-This tool currently has the following limitations:
-- Only 16-bit monochrome DICOM images are supported.
-- Outputs will be 16-bit monochrome TIFF images compressed using packbits.
+### Example Images
+
+Below are example images demonstrating the effects of different cropping options (resized to 512x384):
+
+| Original Image | Cropped (Zero Pixels) | Cropped (Zero + Maximum Pixels) |
+|----------------|----------------|----------------------|
+| ![Original Image](docs/nocrop.png) | ![Cropped (Zero)](docs/zerocrop.png) | ![Cropped (Zero + Max)](docs/zeromaxcrop.png) |
+
+The maximum pixel cropping option (`-m`, `--crop-max`) prevents certain image watermarks from impacting the cropping calculation. Effective cropping can maximize the information extracted from the image at a given
+resolution budget.

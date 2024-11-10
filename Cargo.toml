@@ -19,6 +19,7 @@ tiff = "0.9"
 snafu = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+num = "0.4"
 
 [dev-dependencies]
 tempfile = "3.10"

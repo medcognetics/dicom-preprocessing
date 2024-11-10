@@ -1,4 +1,5 @@
 use image::{DynamicImage, GenericImageView, Pixel};
+use num::traits::{Bounded, Num};
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
@@ -12,6 +13,7 @@ use crate::transform::Transform;
 
 pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
 pub const DEFAULT_CROP_SIZE: u16 = 50720;
+const DEFAULT_CHECK_MAX: bool = false;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Crop {
@@ -22,6 +24,63 @@ pub struct Crop {
 }
 
 impl Crop {
+    pub fn new(image: &DynamicImage, check_max: bool) -> Self {
+        let (width, height) = image.dimensions();
+        let mut left = 0;
+        let mut top = 0;
+        let mut right = width - 1;
+        let mut bottom = height - 1;
+
+        // Find the left boundary
+        for x in 0..width {
+            if (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)) {
+                left = x;
+                break;
+            }
+        }
+
+        // Find the right boundary
+        for x in (0..width).rev() {
+            if (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)) {
+                right = x;
+                break;
+            }
+        }
+
+        // Find the top boundary
+        for y in 0..height {
+            if (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)) {
+                top = y;
+                break;
+            }
+        }
+
+        // Find the bottom boundary
+        for y in (0..height).rev() {
+            if (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)) {
+                bottom = y;
+                break;
+            }
+        }
+
+        let width = right - left + 1;
+        let height = bottom - top + 1;
+        Crop {
+            left,
+            top,
+            width,
+            height,
+        }
+    }
+
+    pub fn new_from_images(images: &[&DynamicImage], check_max: bool) -> Self {
+        images
+            .iter()
+            .map(|&image| Crop::new(image, check_max))
+            .reduce(|a, b| a.union(&b))
+            .unwrap()
+    }
+
     pub fn xyxy(&self) -> (u32, u32, u32, u32) {
         (
             self.left,
@@ -66,57 +125,53 @@ impl Crop {
     }
 }
 
+fn is_uncroppable_pixel(x: u32, y: u32, image: &DynamicImage, check_max: bool) -> bool {
+    let croppable = match image {
+        DynamicImage::ImageLuma8(image) => {
+            let pixel = image.get_pixel(x, y).channels()[0];
+            pixel == 0 || (check_max && pixel == u8::max_value())
+        }
+        DynamicImage::ImageLumaA8(image) => {
+            let pixel = image.get_pixel(x, y).channels()[0];
+            pixel == 0 || (check_max && pixel == u8::max_value())
+        }
+        DynamicImage::ImageLuma16(image) => {
+            let pixel = image.get_pixel(x, y).channels()[0];
+            pixel == 0 || (check_max && pixel == u16::max_value())
+        }
+        DynamicImage::ImageLumaA16(image) => {
+            let pixel = image.get_pixel(x, y).channels()[0];
+            pixel == 0 || (check_max && pixel == u16::max_value())
+        }
+        DynamicImage::ImageRgb8(image) => {
+            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
+            pixel == 0 || (check_max && pixel == u8::max_value())
+        }
+        DynamicImage::ImageRgba8(image) => {
+            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
+            pixel == 0 || (check_max && pixel == u8::max_value())
+        }
+        DynamicImage::ImageRgb16(image) => {
+            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
+            pixel == 0 || (check_max && pixel == u16::max_value())
+        }
+        DynamicImage::ImageRgba16(image) => {
+            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
+            pixel == 0 || (check_max && pixel == u16::max_value())
+        }
+        // On fallback we can only check for zero. Only floating point types should hit this
+        // branch.
+        _ => {
+            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
+            pixel == 0
+        }
+    };
+    !croppable
+}
+
 impl From<&DynamicImage> for Crop {
     fn from(image: &DynamicImage) -> Self {
-        let (width, height) = image.dimensions();
-        let mut left = 0;
-        let mut top = 0;
-        let mut right = width - 1;
-        let mut bottom = height - 1;
-
-        // Function to check if a pixel is non-zero by its luma value
-        let is_nonzero = |x, y| image.get_pixel(x, y).to_luma().channels()[0] != 0;
-
-        // Find the left boundary
-        for x in 0..width {
-            if (0..height).any(|y| is_nonzero(x, y)) {
-                left = x;
-                break;
-            }
-        }
-
-        // Find the right boundary
-        for x in (0..width).rev() {
-            if (0..height).any(|y| is_nonzero(x, y)) {
-                right = x;
-                break;
-            }
-        }
-
-        // Find the top boundary
-        for y in 0..height {
-            if (0..width).any(|x| is_nonzero(x, y)) {
-                top = y;
-                break;
-            }
-        }
-
-        // Find the bottom boundary
-        for y in (0..height).rev() {
-            if (0..width).any(|x| is_nonzero(x, y)) {
-                bottom = y;
-                break;
-            }
-        }
-
-        let width = right - left + 1;
-        let height = bottom - top + 1;
-        Crop {
-            left,
-            top,
-            width,
-            height,
-        }
+        Crop::new(image, DEFAULT_CHECK_MAX)
     }
 }
 
@@ -170,6 +225,7 @@ mod tests {
             vec![0, 1, 1, 0],
             vec![0, 0, 0, 0],
         ],
+        false,
         (1, 1, 2, 2)
     )]
     #[case(
@@ -179,6 +235,7 @@ mod tests {
             vec![0, 0, 0, 0],
             vec![0, 0, 0, 0],
         ],
+        false,
         (0, 0, 4, 4)
     )]
     #[case(
@@ -188,10 +245,22 @@ mod tests {
             vec![1, 1, 1, 1],
             vec![1, 1, 1, 1],
         ],
+        false,
         (0, 0, 4, 4)
+    )]
+    #[case(
+        vec![
+            vec![255, 0, 0, 0],
+            vec![0, 1, 1, 0],
+            vec![0, 1, 1, 0],
+            vec![0, 0, 0, 255],
+        ],
+        true,
+        (1, 1, 2, 2)
     )]
     fn test_find_non_zero_boundaries(
         #[case] pixels: Vec<Vec<u8>>,
+        #[case] crop_max: bool,
         #[case] expected_crop: (u32, u32, u32, u32),
     ) {
         // Create a new image from the pixel data
@@ -205,7 +274,7 @@ mod tests {
         }
         let dynamic_image = DynamicImage::ImageRgba8(img);
 
-        let crop = Crop::from(&dynamic_image);
+        let crop = Crop::new(&dynamic_image, crop_max);
         let expected_crop = Crop {
             left: expected_crop.0,
             top: expected_crop.1,

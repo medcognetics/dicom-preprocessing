@@ -135,6 +135,7 @@ pub struct Preprocessor {
     pub filter: FilterType,
     pub padding_direction: PaddingDirection,
     pub compressor: Compressor,
+    pub crop_max: bool,
 }
 
 impl Preprocessor {
@@ -242,7 +243,7 @@ impl Preprocessor {
             1 => {
                 let img = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
                 let crop_config = match self.crop {
-                    true => Some(Crop::from(&img)),
+                    true => Some(Crop::new(&img, self.crop_max)),
                     false => None,
                 };
                 (vec![img].into_iter(), crop_config)
@@ -258,7 +259,10 @@ impl Preprocessor {
                     );
                 }
                 let crop_config = match self.crop {
-                    true => Some(Crop::from(&image_data.iter().collect::<Vec<_>>()[..])),
+                    true => Some(Crop::new_from_images(
+                        &image_data.iter().collect::<Vec<_>>()[..],
+                        self.crop_max,
+                    )),
                     false => None,
                 };
                 (image_data.into_iter(), crop_config)

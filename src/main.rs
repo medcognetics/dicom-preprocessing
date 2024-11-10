@@ -194,12 +194,20 @@ struct Args {
     output: PathBuf,
 
     #[arg(
-        help = "Crop the image",
+        help = "Crop the image. Pixels with value equal to zero are cropped away.",
         long = "crop",
         short = 'c',
         default_value_t = false
     )]
     crop: bool,
+
+    #[arg(
+        help = "Also include pixels with value equal to the data type's maximum value in the crop calculation",
+        long = "crop-max",
+        short = 'm',
+        default_value_t = false
+    )]
+    crop_max: bool,
 
     #[arg(
         help = "Target size (width,height)",
@@ -349,6 +357,7 @@ fn run(args: Args) -> Result<(), Error> {
         filter: args.filter.into(),
         padding_direction: args.padding_direction,
         compressor: Compressor::from(args.compressor),
+        crop_max: args.crop_max,
     };
 
     // Create progress bar
@@ -429,6 +438,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             strict: true,
             compressor: SupportedCompressor::default(),
+            crop_max: false,
         };
         run(args).unwrap();
 

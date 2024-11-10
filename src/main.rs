@@ -5,6 +5,7 @@ use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::ReadError;
+use indicatif::ProgressFinish;
 use rayon::prelude::*;
 use std::fmt;
 use std::fs::File;
@@ -351,7 +352,7 @@ fn run(args: Args) -> Result<(), Error> {
     };
 
     // Create progress bar
-    let pb = ProgressBar::new(source.len() as u64);
+    let pb = ProgressBar::new(source.len() as u64).with_finish(ProgressFinish::AndLeave);
     pb.set_style(
         ProgressStyle::default_bar()
             .template(

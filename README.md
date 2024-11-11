@@ -1,4 +1,4 @@
-# Dicom Preprocessing
+# DICOM Preprocessing
 
 Implements a tool that preprocesses DICOM files into TIFF images. The primary motivation is to prepare DICOM images for use in computer vision tasks, with a focus on efficient storage and minimization of decode processing time.
 
@@ -52,3 +52,8 @@ Below are example images demonstrating the effects of different cropping options
 
 The maximum pixel cropping option (`-m`, `--crop-max`) prevents certain image watermarks from impacting the cropping calculation. Effective cropping can maximize the information extracted from the image at a given
 resolution budget.
+
+Below are example images demonstrating various volume handling options:
+| Central Slice | Maximum Intensity |
+|----------------|-------------------|
+| ![Central Slice](docs/central_slice.png) | ![Maximum Intensity](docs/max_intensity.png) |

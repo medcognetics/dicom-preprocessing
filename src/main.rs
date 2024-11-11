@@ -154,13 +154,14 @@ fn check_filelist(filelist: &PathBuf, strict: bool) -> Result<Vec<PathBuf>, Erro
     );
 
     // Check each path
-    let result = filelist
-        .into_par_iter()
-        .inspect(move |_| spinner.tick())
-        .map(|path| match is_dicom_file(&path) {
-            true => Ok(path),
-            false => Err(Error::InvalidSourcePath { path }),
-        });
+    let result =
+        filelist
+            .into_par_iter()
+            .inspect(|_| spinner.tick())
+            .map(|path| match is_dicom_file(&path) {
+                true => Ok(path),
+                false => Err(Error::InvalidSourcePath { path }),
+            });
 
     // For strict mode, return the errors
     if strict {

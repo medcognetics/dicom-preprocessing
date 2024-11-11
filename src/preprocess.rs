@@ -12,14 +12,16 @@ use tiff::TiffError;
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject, ReadError};
 use dicom::pixeldata::PhotometricInterpretation;
-use dicom::pixeldata::PixelDecoder;
 use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
 use tiff::encoder::colortype::{Gray16, RGB8};
 use tiff::encoder::compression::{Lzw, Packbits, Uncompressed};
 
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::{Crop, Padding, PaddingDirection, Resize, Transform};
+use crate::transform::volume::VolumeError;
+use crate::transform::{
+    Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
+};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -33,8 +35,8 @@ pub enum Error {
     },
     /// failed to decode pixel data
     DecodePixelData {
-        #[snafu(source(from(dicom::pixeldata::Error, Box::new)))]
-        source: Box<dicom::pixeldata::Error>,
+        #[snafu(source(from(VolumeError, Box::new)))]
+        source: Box<VolumeError>,
     },
     /// missing offset table entry for frame #{frame_number}
     MissingOffsetEntry {
@@ -136,6 +138,7 @@ pub struct Preprocessor {
     pub padding_direction: PaddingDirection,
     pub compressor: Compressor,
     pub crop_max: bool,
+    pub volume_handler: VolumeHandler,
 }
 
 impl Preprocessor {
@@ -230,45 +233,25 @@ impl Preprocessor {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), Error> {
-        // Decode the pixel data and extract the dimensions
-        let decoded = file.decode_pixel_data().context(DecodePixelDataSnafu)?;
-        let number_of_frames = decoded.number_of_frames();
+        // Decode the pixel data, applying volume handling
+        let image_data = self
+            .volume_handler
+            .decode_volume(file)
+            .context(DecodePixelDataSnafu)?;
 
         // Try to determine the resolution from pixel spacing attributes
         let resolution = Resolution::try_from(file).ok();
 
         // Determine and apply crop
-        let (image_data, crop_config) = match number_of_frames {
-            // For single frame images, we can determine the crop directly from the image
-            1 => {
-                let img = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
-                let crop_config = match self.crop {
-                    true => Some(Crop::new(&img, self.crop_max)),
-                    false => None,
-                };
-                (vec![img].into_iter(), crop_config)
-            }
-            // For multi-frame images we need to scan all frames and choose the largest crop
-            _ => {
-                let mut image_data = Vec::with_capacity(number_of_frames as usize);
-                for frame_number in 0..number_of_frames {
-                    image_data.push(
-                        decoded
-                            .to_dynamic_image(frame_number)
-                            .context(DecodePixelDataSnafu)?,
-                    );
-                }
-                let crop_config = match self.crop {
-                    true => Some(Crop::new_from_images(
-                        &image_data.iter().collect::<Vec<_>>()[..],
-                        self.crop_max,
-                    )),
-                    false => None,
-                };
-                (image_data.into_iter(), crop_config)
-            }
+        let crop_config = match self.crop {
+            true => Some(Crop::new_from_images(
+                &image_data.iter().collect::<Vec<_>>(),
+                self.crop_max,
+            )),
+            false => None,
         };
         let image_data = image_data
+            .into_iter()
             .map(|img| match &crop_config {
                 Some(config) => config.apply(&img),
                 None => img,

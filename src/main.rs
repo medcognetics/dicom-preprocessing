@@ -22,7 +22,7 @@ use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;
 
 use dicom_preprocessing::preprocess::Error as PreprocessingError;
-
+use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Invalid source path: {}", path.display()))]
@@ -254,6 +254,15 @@ struct Args {
     compressor: SupportedCompressor,
 
     #[arg(
+        help = "How to handle volumes",
+        long = "volume-handler",
+        short = 'v',
+        value_parser = clap::value_parser!(DisplayVolumeHandler),
+        default_value_t = DisplayVolumeHandler::default(),
+    )]
+    volume_handler: DisplayVolumeHandler,
+
+    #[arg(
         help = "Fail on input paths that are not DICOM files",
         long = "strict",
         default_value_t = false
@@ -358,6 +367,7 @@ fn run(args: Args) -> Result<(), Error> {
         padding_direction: args.padding_direction,
         compressor: Compressor::from(args.compressor),
         crop_max: args.crop_max,
+        volume_handler: args.volume_handler.into(),
     };
 
     // Create progress bar
@@ -386,13 +396,14 @@ mod tests {
     use super::{run, Args};
     use crate::DisplayFilterType;
     use crate::PaddingDirection;
+    use crate::SupportedCompressor;
     use dicom::dictionary_std::tags;
     use dicom::object::open_file;
     use dicom_preprocessing::crop::{DEFAULT_CROP_ORIGIN, DEFAULT_CROP_SIZE};
     use dicom_preprocessing::pad::ACTIVE_AREA;
     use dicom_preprocessing::resize::DEFAULT_SCALE;
 
-    use crate::SupportedCompressor;
+    use dicom_preprocessing::DisplayVolumeHandler;
     use rstest::rstest;
     use std::fs::File;
     use std::io::BufReader;
@@ -440,6 +451,7 @@ mod tests {
             strict: true,
             compressor: SupportedCompressor::default(),
             crop_max: false,
+            volume_handler: DisplayVolumeHandler::default(),
         };
         run(args).unwrap();
 

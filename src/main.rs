@@ -177,7 +177,7 @@ fn check_filelist(filelist: &PathBuf, strict: bool) -> Result<Vec<PathBuf>, Erro
 }
 
 #[derive(Parser, Debug)]
-#[command(author = "Scott Chase Waggener", version = "0.1.0", about = "Preprocess DICOM files into (multi-frame) TIFFs", long_about = None)]
+#[command(author = "Scott Chase Waggener", version = env!("CARGO_PKG_VERSION"), about = "Preprocess DICOM files into (multi-frame) TIFFs", long_about = None)]
 struct Args {
     #[arg(
         help = "Source path. Can be a DICOM file, directory, or a text file with DICOM file paths"

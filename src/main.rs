@@ -89,36 +89,31 @@ impl fmt::Display for SupportedCompressor {
     }
 }
 
-fn is_dicom_file(path: &Path) -> bool {
-    let has_extension = path.extension().is_some();
-    let ext_is_dicom = path
-        .extension()
-        .map(|ext| ext.to_ascii_lowercase())
-        .map(|ext| ext == "dcm" || ext == "dicom")
-        .unwrap_or(false);
-
-    // Try to check only the extension if possible
-    if has_extension && ext_is_dicom {
-        return path.is_file();
-    } else if has_extension {
-        return false;
-    }
-
-    if path.is_dir() {
-        return false;
-    }
-
-    // Extensionless file, we must check the DICM prefix
+fn has_dicm_prefix(path: &Path) -> bool {
     const DICM_PREFIX: &[u8; 4] = b"DICM";
-    let has_prefix = File::open(path)
+    File::open(path)
         .and_then(|mut file| {
             file.seek(SeekFrom::Start(128))?;
             let mut buffer = [0; 4];
             file.read_exact(&mut buffer)?;
             Ok(buffer)
         })
-        .map_or(false, |buffer| &buffer == DICM_PREFIX);
-    has_prefix
+        .map_or(false, |buffer| &buffer == DICM_PREFIX)
+}
+
+fn is_dicom_file(path: &Path) -> bool {
+    // If the path has a .dcm or .dicom extension and is a file, it is a DICOM file
+    if let Some(ext) = path.extension().map(|ext| ext.to_ascii_lowercase()) {
+        return (ext == "dcm" || ext == "dicom") && path.is_file();
+    }
+    // Path is a directory, not a DICOM file
+    else if path.is_dir() {
+        return false;
+    }
+    // Extensionless file, we must check the DICM prefix
+    else {
+        has_dicm_prefix(path)
+    }
 }
 
 fn find_dicom_files(dir: &PathBuf) -> impl Iterator<Item = PathBuf> {

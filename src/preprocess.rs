@@ -115,9 +115,6 @@ impl WriteTags for PreprocessingMetadata {
             .write_tag(Tag::Software, VERSION.as_bytes())?;
 
         // Write transform related tags
-        if let Some(resolution) = &self.resolution {
-            resolution.write_tags(tiff)?;
-        }
         if let Some(crop_config) = &self.crop {
             crop_config.write_tags(tiff)?;
         }

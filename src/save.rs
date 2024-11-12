@@ -1,27 +1,18 @@
 use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
-use std::io::Write;
 use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
 use tiff::encoder::TiffEncoder;
 use tiff::TiffError;
 
-use dicom::dictionary_std::tags;
-use dicom::object::{FileDicomObject, InMemDicomObject, ReadError};
-use dicom::pixeldata::PhotometricInterpretation;
-use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
 use tiff::encoder::colortype::{Gray16, RGB8};
 use tiff::encoder::compression::{Lzw, Uncompressed};
 
-use crate::color::{ColorError, DicomColorType};
-use crate::metadata::{PreprocessingMetadata, Resolution, WriteTags};
-use crate::transform::volume::VolumeError;
-use crate::transform::{
-    Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
-};
+use crate::color::DicomColorType;
+use crate::metadata::{PreprocessingMetadata, WriteTags};
 
 #[derive(Debug, Snafu)]
 pub enum SaveError {
@@ -206,22 +197,15 @@ impl TiffSaver {
 
 #[cfg(test)]
 mod tests {
-    use super::{SaveToTiff, TiffSaver};
+    use super::TiffSaver;
     use crate::color::DicomColorType;
     use crate::metadata::PreprocessingMetadata;
-    use crate::DisplayFilterType;
-    use crate::PaddingDirection;
-    use dicom::dictionary_std::tags;
+
     use dicom::object::open_file;
     use dicom_pixeldata::PixelDecoder;
     use rstest::rstest;
-    use std::fs::File;
-    use std::io::BufReader;
-    use tiff::decoder::Decoder;
-    use tiff::encoder::compression::{Compressor, Uncompressed};
 
-    use tiff::tags::ResolutionUnit;
-    use tiff::tags::Tag;
+    use tiff::encoder::compression::{Compressor, Uncompressed};
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", Compressor::Uncompressed(Uncompressed))]

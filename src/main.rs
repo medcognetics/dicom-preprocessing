@@ -24,7 +24,7 @@ use std::path::Path;
 
 use dicom_preprocessing::color::ColorError;
 use dicom_preprocessing::preprocess::PreprocessError;
-use dicom_preprocessing::save::{SaveError, SaveToTiff, TiffSaver};
+use dicom_preprocessing::save::{SaveError, TiffSaver};
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 
 #[derive(Debug, Snafu)]

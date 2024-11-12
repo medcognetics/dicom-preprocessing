@@ -1,22 +1,9 @@
 use image::DynamicImage;
-use image::GenericImageView;
-use std::fs::File;
-use std::io::Write;
-use std::path::PathBuf;
-use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::{Compression, Compressor, Packbits};
-use tiff::encoder::TiffEncoder;
-use tiff::TiffError;
 
-use dicom::dictionary_std::tags;
-use dicom::object::{FileDicomObject, InMemDicomObject, ReadError};
-use dicom::pixeldata::PhotometricInterpretation;
+use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
-use tiff::encoder::colortype::{Gray16, RGB8};
-use tiff::encoder::compression::{Lzw, Uncompressed};
 
-use crate::color::{ColorError, DicomColorType};
 use crate::metadata::{PreprocessingMetadata, Resolution};
 use crate::transform::volume::VolumeError;
 use crate::transform::{

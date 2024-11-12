@@ -167,6 +167,7 @@ where
 {
     type Error = PaddingError;
 
+    /// Read the padding metadata from a TIFF file
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         let active_area = decoder
             .get_tag_u32_vec(Tag::Unknown(ACTIVE_AREA))

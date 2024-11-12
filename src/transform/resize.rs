@@ -149,6 +149,7 @@ where
 {
     type Error = ResizeError;
 
+    /// Read the resize metadata from a TIFF file
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         let scale = decoder
             .get_tag_f32_vec(Tag::Unknown(DEFAULT_SCALE))

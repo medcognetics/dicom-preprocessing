@@ -49,6 +49,12 @@ pub enum VolumeHandler {
     MaxIntensity(MaxIntensity),
 }
 
+impl Default for VolumeHandler {
+    fn default() -> Self {
+        VolumeHandler::Keep(KeepVolume)
+    }
+}
+
 #[derive(Default, Debug, Clone, Copy, clap::ValueEnum)]
 pub enum DisplayVolumeHandler {
     #[default]

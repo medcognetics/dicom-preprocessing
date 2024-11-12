@@ -1,8 +1,7 @@
-use std::io::Write;
-
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::PhotometricInterpretation;
+use image::{DynamicImage, ImageBuffer, Luma, Rgb};
 use snafu::{ResultExt, Snafu};
 use tiff::encoder::colortype::{Gray16, RGB8};
 
@@ -79,4 +78,8 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for DicomColorType {
 
         DicomColorType::try_new(bits_allocated, photometric_interpretation)
     }
+}
+
+trait TiffColorMap {
+    fn as_fn(&self) -> &'static str;
 }

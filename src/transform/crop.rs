@@ -231,6 +231,7 @@ where
 {
     type Error = CropError;
 
+    /// Read the crop metadata from a TIFF file
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         // Read and parse crop origin
         let origin = decoder

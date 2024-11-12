@@ -5,6 +5,7 @@ use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::ReadError;
+use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;
 use std::fmt;
@@ -21,8 +22,11 @@ use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::path::Path;
 
-use dicom_preprocessing::preprocess::Error as PreprocessingError;
+use dicom_preprocessing::color::ColorError;
+use dicom_preprocessing::preprocess::PreprocessError;
+use dicom_preprocessing::save::{SaveError, SaveToTiff, TiffSaver};
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
+
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Invalid source path: {}", path.display()))]
@@ -46,13 +50,21 @@ pub enum Error {
         source: Box<dicom::core::value::ConvertValueError>,
     },
     Preprocessing {
-        #[snafu(source(from(PreprocessingError, Box::new)))]
-        source: Box<PreprocessingError>,
+        #[snafu(source(from(PreprocessError, Box::new)))]
+        source: Box<PreprocessError>,
     },
     CreateDir {
         path: PathBuf,
         #[snafu(source(from(std::io::Error, Box::new)))]
         source: Box<std::io::Error>,
+    },
+    ColorType {
+        #[snafu(source(from(ColorError, Box::new)))]
+        source: Box<ColorError>,
+    },
+    SaveToTiff {
+        #[snafu(source(from(SaveError, Box::new)))]
+        source: Box<SaveError>,
     },
 }
 
@@ -285,7 +297,12 @@ fn main() {
     });
 }
 
-fn process(source: &PathBuf, dest: &PathBuf, preprocessor: &Preprocessor) -> Result<(), Error> {
+fn process(
+    source: &PathBuf,
+    dest: &PathBuf,
+    preprocessor: &Preprocessor,
+    compressor: SupportedCompressor,
+) -> Result<(), Error> {
     let file = open_file(&source).context(DicomReadSnafu { path: source })?;
 
     let dest = if dest.is_dir() {
@@ -325,9 +342,16 @@ fn process(source: &PathBuf, dest: &PathBuf, preprocessor: &Preprocessor) -> Res
     };
 
     tracing::info!("Processing {} -> {}", source.display(), dest.display());
-    preprocessor
-        .preprocess(&file, dest)
+    let (images, metadata) = preprocessor
+        .prepare_image(&file)
         .context(PreprocessingSnafu)?;
+    let color_type = DicomColorType::try_from(&file).context(ColorTypeSnafu)?;
+
+    let saver = TiffSaver::new(compressor.into(), color_type);
+    saver
+        .save_all(images, metadata, &dest)
+        .context(SaveToTiffSnafu)?;
+
     Ok(())
 }
 
@@ -355,16 +379,16 @@ fn run(args: Args) -> Result<(), Error> {
         _ => Ok(args.output),
     }?;
 
-    // Build the preprocessor
+    // Build the preprocessor and compressor
     let preprocessor = Preprocessor {
         crop: args.crop,
         size: args.size,
         filter: args.filter.into(),
         padding_direction: args.padding_direction,
-        compressor: Compressor::from(args.compressor),
         crop_max: args.crop_max,
         volume_handler: args.volume_handler.into(),
     };
+    let compressor = args.compressor;
 
     // Create progress bar
     let pb = ProgressBar::new(source.len() as u64).with_finish(ProgressFinish::AndLeave);
@@ -379,7 +403,7 @@ fn run(args: Args) -> Result<(), Error> {
 
     // Process each file in parallel
     source.into_par_iter().try_for_each(|file| {
-        let result = process(&file, &dest, &preprocessor);
+        let result = process(&file, &dest, &preprocessor, compressor.clone());
         pb.inc(1);
         result
     })?;

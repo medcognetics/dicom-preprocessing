@@ -4,7 +4,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::{Compression, Compressor};
+use tiff::encoder::compression::{Compression, Compressor, Packbits};
 use tiff::encoder::TiffEncoder;
 use tiff::TiffError;
 
@@ -14,182 +14,89 @@ use dicom::pixeldata::PhotometricInterpretation;
 use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
 use tiff::encoder::colortype::{Gray16, RGB8};
-use tiff::encoder::compression::{Lzw, Packbits, Uncompressed};
+use tiff::encoder::compression::{Lzw, Uncompressed};
 
-use crate::metadata::{PreprocessingMetadata, Resolution, WriteTags};
+use crate::color::{ColorError, DicomColorType};
+use crate::metadata::{PreprocessingMetadata, Resolution};
 use crate::transform::volume::VolumeError;
 use crate::transform::{
     Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
 
 #[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(display("could not read DICOM file {}", path.display()))]
-    ReadFile {
-        #[snafu(source(from(ReadError, Box::new)))]
-        source: Box<ReadError>,
-        path: PathBuf,
-    },
-    /// failed to decode pixel data
+pub enum PreprocessError {
     DecodePixelData {
         #[snafu(source(from(VolumeError, Box::new)))]
         source: Box<VolumeError>,
     },
-    /// missing offset table entry for frame #{frame_number}
-    MissingOffsetEntry {
-        frame_number: u32,
-    },
-    /// missing key property {name}
-    MissingProperty {
-        name: &'static str,
-    },
-    /// property {name} contains an invalid value
-    InvalidPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
-        source: Box<dicom::core::value::ConvertValueError>,
-    },
-    CastPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
-        source: Box<dicom::core::value::CastValueError>,
-    },
-    /// pixel data of frame #{frame_number} is out of bounds
-    FrameOutOfBounds {
-        frame_number: u32,
-    },
-    ConvertImage {
-        #[snafu(source(from(dicom::pixeldata::Error, Box::new)))]
-        source: Box<dicom::pixeldata::Error>,
-    },
-    #[snafu(display("could not open TIFF file {}", path.display()))]
-    OpenTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-        path: PathBuf,
-    },
-    WriteToTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    ConvertImageToBytes,
-    SaveData {
-        source: std::io::Error,
-    },
-    UnexpectedPixelData,
-    WriteTags {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    #[snafu(display("unsupported photometric interpretation {photometric_interpretation} for {bits_allocated} bits allocated"))]
-    UnsupportedPhotometricInterpretation {
-        bits_allocated: u16,
-        photometric_interpretation: PhotometricInterpretation,
-    },
 }
 
+// Responsible for preprocessing image data before saving
 pub struct Preprocessor {
     pub crop: bool,
     pub size: Option<(u32, u32)>,
     pub filter: FilterType,
     pub padding_direction: PaddingDirection,
-    pub compressor: Compressor,
     pub crop_max: bool,
     pub volume_handler: VolumeHandler,
 }
 
+impl Default for Preprocessor {
+    fn default() -> Self {
+        Preprocessor {
+            crop: true,
+            size: None,
+            filter: FilterType::Triangle,
+            padding_direction: PaddingDirection::Zero,
+            crop_max: true,
+            volume_handler: VolumeHandler::default(),
+        }
+    }
+}
+
 impl Preprocessor {
-    pub fn preprocess(
-        &self,
-        file: &FileDicomObject<InMemDicomObject>,
-        output: PathBuf,
-    ) -> Result<(), Error> {
-        let bits_allocated = file
-            .get(tags::BITS_ALLOCATED)
-            .ok_or(Error::MissingProperty {
-                name: "Bits Allocated",
-            })?
-            .value()
-            .uint16()
-            .context(CastPropertyValueSnafu {
-                name: "Bits Allocated",
-            })?;
-        let photometric_interpretation = file
-            .get(tags::PHOTOMETRIC_INTERPRETATION)
-            .ok_or(Error::MissingProperty {
-                name: "Photometric Interpretation",
-            })?
-            .value()
-            .string()
-            .context(CastPropertyValueSnafu {
-                name: "Photometric Interpretation",
-            })?;
-        let photometric_interpretation =
-            PhotometricInterpretation::from(photometric_interpretation.trim());
+    fn get_crop(&self, images: &Vec<DynamicImage>) -> Option<Crop> {
+        match self.crop {
+            true => Some(Crop::new_from_images(
+                &images.iter().collect::<Vec<_>>(),
+                self.crop_max,
+            )),
+            false => None,
+        }
+    }
 
-        let (frames, metadata) = self.prepare_image(file)?;
+    fn get_resize(&self, images: &Vec<DynamicImage>) -> Option<Resize> {
+        match self.size {
+            Some((target_width, target_height)) => {
+                let first_image = images.first().unwrap();
+                let config = Resize::new(&first_image, target_width, target_height, self.filter);
+                Some(config)
+            }
+            None => None,
+        }
+    }
 
-        // Use the metadata to determine the correct implementation of Preprocess
-        match (bits_allocated, photometric_interpretation, &self.compressor) {
-            (16, PhotometricInterpretation::Monochrome1, Compressor::Uncompressed(_)) => {
-                <Preprocessor as Preprocess<Gray16, Uncompressed>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
+    fn get_padding(&self, images: &Vec<DynamicImage>) -> Option<Padding> {
+        match self.size {
+            Some((target_width, target_height)) => {
+                let first_image = images.first().unwrap();
+                let config = Padding::new(
+                    &first_image,
+                    target_width,
+                    target_height,
+                    self.padding_direction,
+                );
+                Some(config)
             }
-            (16, PhotometricInterpretation::Monochrome2, Compressor::Uncompressed(_)) => {
-                <Preprocessor as Preprocess<Gray16, Uncompressed>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (16, PhotometricInterpretation::Monochrome1, Compressor::Packbits(_)) => {
-                <Preprocessor as Preprocess<Gray16, Packbits>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (16, PhotometricInterpretation::Monochrome2, Compressor::Packbits(_)) => {
-                <Preprocessor as Preprocess<Gray16, Packbits>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (16, PhotometricInterpretation::Monochrome1, Compressor::Lzw(_)) => {
-                <Preprocessor as Preprocess<Gray16, Lzw>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (16, PhotometricInterpretation::Monochrome2, Compressor::Lzw(_)) => {
-                <Preprocessor as Preprocess<Gray16, Lzw>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (8, PhotometricInterpretation::Rgb, Compressor::Uncompressed(_)) => {
-                <Preprocessor as Preprocess<RGB8, Uncompressed>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (8, PhotometricInterpretation::Rgb, Compressor::Packbits(_)) => {
-                <Preprocessor as Preprocess<RGB8, Packbits>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (8, PhotometricInterpretation::Rgb, Compressor::Lzw(_)) => {
-                <Preprocessor as Preprocess<RGB8, Lzw>>::preprocess_frames(
-                    self, frames, metadata, output,
-                )
-            }
-            (bits_allocated, photometric_interpretation, _) => {
-                Err(Error::UnsupportedPhotometricInterpretation {
-                    bits_allocated,
-                    photometric_interpretation,
-                })
-            }
+            None => None,
         }
     }
 
     // Decodes the pixel data and applies transformations
-    fn prepare_image(
+    pub fn prepare_image(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), Error> {
+    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), PreprocessError> {
         // Decode the pixel data, applying volume handling
         let image_data = self
             .volume_handler
@@ -200,63 +107,31 @@ impl Preprocessor {
         let resolution = Resolution::try_from(file).ok();
 
         // Determine and apply crop
-        let crop_config = match self.crop {
-            true => Some(Crop::new_from_images(
-                &image_data.iter().collect::<Vec<_>>(),
-                self.crop_max,
-            )),
-            false => None,
+        let crop_config = self.get_crop(&image_data);
+        let image_data = match &crop_config {
+            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
+            None => image_data,
         };
-        let image_data = image_data
-            .into_iter()
-            .map(|img| match &crop_config {
-                Some(config) => config.apply(&img),
-                None => img,
-            })
-            .collect::<Vec<_>>();
 
         // Determine and apply resize, ensuring we also update the resolution
-        let resize_config = match self.size {
-            Some((target_width, target_height)) => {
-                let first_image = image_data.first().unwrap();
-                let config = Resize::new(&first_image, target_width, target_height, self.filter);
-                Some(config)
-            }
-            None => None,
+        let resize_config = self.get_resize(&image_data);
+        let image_data = match &resize_config {
+            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
+            None => image_data,
         };
-        let image_data = image_data
-            .into_iter()
-            .map(|img| match &resize_config {
-                Some(config) => config.apply(&img),
-                None => img,
-            })
-            .collect::<Vec<_>>();
+
+        // Update the resolution if we resized
         let resolution = match (resolution, &resize_config) {
             (Some(res), Some(config)) => Some(config.apply(&res)),
             _ => None,
         };
 
         // Determine and apply padding
-        let padding_config = match self.size {
-            Some((target_width, target_height)) => {
-                let first_image = image_data.first().unwrap();
-                let config = Padding::new(
-                    &first_image,
-                    target_width,
-                    target_height,
-                    self.padding_direction,
-                );
-                Some(config)
-            }
-            None => None,
+        let padding_config = self.get_padding(&image_data);
+        let image_data = match &padding_config {
+            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
+            None => image_data,
         };
-        let image_data = image_data
-            .into_iter()
-            .map(|img| match &padding_config {
-                Some(config) => config.apply(&img),
-                None => img,
-            })
-            .collect::<Vec<_>>();
 
         Ok((
             image_data,
@@ -269,75 +144,3 @@ impl Preprocessor {
         ))
     }
 }
-
-trait Preprocess<C, D>
-where
-    C: ColorType,
-    D: Compression,
-{
-    fn preprocess_frame(
-        &self,
-        encoder: &mut TiffEncoder<File>,
-        image: &DynamicImage,
-        metadata: &PreprocessingMetadata,
-    ) -> Result<(), Error>;
-
-    fn preprocess_frames(
-        &self,
-        frames: Vec<DynamicImage>,
-        metadata: PreprocessingMetadata,
-        output: PathBuf,
-    ) -> Result<(), Error> {
-        // Open the TIFF file
-        let mut tiff_encoder = TiffEncoder::new(File::create(&output).context(SaveDataSnafu)?)
-            .context(OpenTiffSnafu {
-                path: output.clone(),
-            })?;
-
-        for img in frames.iter() {
-            self.preprocess_frame(&mut tiff_encoder, img, &metadata)?;
-        }
-        Ok(())
-    }
-}
-
-macro_rules! impl_preprocess_frame {
-    ($color_type:ty, $compression:ty, $as_fn:ident, $error_variant:ident) => {
-        impl Preprocess<$color_type, $compression> for Preprocessor {
-            fn preprocess_frame(
-                &self,
-                encoder: &mut TiffEncoder<File>,
-                image: &DynamicImage,
-                metadata: &PreprocessingMetadata,
-            ) -> Result<(), Error> {
-                let (columns, rows) = image.dimensions();
-                let mut tiff = encoder
-                    .new_image_with_compression::<$color_type, _>(
-                        columns,
-                        rows,
-                        <$compression>::default(),
-                    )
-                    .context(WriteToTiffSnafu)?;
-
-                metadata
-                    .write_tags(&mut tiff)
-                    .map_err(|e| Error::WriteTags {
-                        source: Box::new(e),
-                    })?;
-                let bytes = image.$as_fn().ok_or(Error::$error_variant)?;
-                tiff.write_data(bytes).context(WriteToTiffSnafu)?;
-                Ok(())
-            }
-        }
-    };
-}
-
-// Implementations for Gray16
-impl_preprocess_frame!(Gray16, Uncompressed, as_luma16, ConvertImageToBytes);
-impl_preprocess_frame!(Gray16, Packbits, as_luma16, ConvertImageToBytes);
-impl_preprocess_frame!(Gray16, Lzw, as_luma16, ConvertImageToBytes);
-
-// Implementations for RGB8
-impl_preprocess_frame!(RGB8, Uncompressed, as_rgb8, ConvertImageToBytes);
-impl_preprocess_frame!(RGB8, Packbits, as_rgb8, ConvertImageToBytes);
-impl_preprocess_frame!(RGB8, Lzw, as_rgb8, ConvertImageToBytes);

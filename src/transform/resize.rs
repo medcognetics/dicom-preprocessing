@@ -52,21 +52,9 @@ impl fmt::Display for DisplayFilterType {
     }
 }
 
-impl From<FilterType> for DisplayFilterType {
-    fn from(filter: FilterType) -> Self {
+impl From<DisplayFilterType> for FilterType {
+    fn from(filter: DisplayFilterType) -> Self {
         match filter {
-            FilterType::Nearest => DisplayFilterType::Nearest,
-            FilterType::Triangle => DisplayFilterType::Triangle,
-            FilterType::CatmullRom => DisplayFilterType::CatmullRom,
-            FilterType::Gaussian => DisplayFilterType::Gaussian,
-            FilterType::Lanczos3 => DisplayFilterType::Lanczos3,
-        }
-    }
-}
-
-impl Into<FilterType> for DisplayFilterType {
-    fn into(self) -> FilterType {
-        match self {
             DisplayFilterType::Nearest => FilterType::Nearest,
             DisplayFilterType::Triangle => FilterType::Triangle,
             DisplayFilterType::CatmullRom => FilterType::CatmullRom,
@@ -92,17 +80,11 @@ impl Resize {
     ) -> Self {
         // Determine scale factors
         let (width, height) = image.dimensions();
-        let scale_x = target_width as f32 / width as f32;
-        let scale_y = target_height as f32 / height as f32;
-
-        // Preserve aspect ratio by choosing the smaller scale factor
-        let scale = scale_x.min(scale_y);
-        let scale_x = scale;
-        let scale_y = scale;
+        let scale = (target_width as f32 / width as f32).min(target_height as f32 / height as f32);
 
         Resize {
-            scale_x,
-            scale_y,
+            scale_x: scale,
+            scale_y: scale,
             filter,
         }
     }
@@ -121,7 +103,8 @@ impl Transform<Resolution> for Resize {
     fn apply(&self, resolution: &Resolution) -> Resolution {
         assert_eq!(
             self.scale_x, self.scale_y,
-            "Expected scale_x and scale_y to be equal"
+            "Expected scale_x and scale_y to be equal: {} {}",
+            self.scale_x, self.scale_y
         );
         let scale = self.scale_x;
         resolution.scale(scale)

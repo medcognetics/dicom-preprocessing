@@ -1,6 +1,7 @@
 use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
+use std::io::BufWriter;
 use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
@@ -55,32 +56,11 @@ where
 {
     fn save(
         &self,
-        encoder: &mut TiffEncoder<File>,
+        encoder: &mut TiffEncoder<BufWriter<File>>,
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
         compression: D,
     ) -> Result<(), SaveError>;
-
-    fn save_all(
-        &self,
-        frames: Vec<DynamicImage>,
-        metadata: PreprocessingMetadata,
-        output: PathBuf,
-        compression: D,
-    ) -> Result<(), SaveError> {
-        // Open the TIFF file
-        let file = File::create(&output).context(CreateFileSnafu {
-            path: output.clone(),
-        })?;
-        let mut tiff_encoder = TiffEncoder::new(file).context(OpenTiffSnafu {
-            path: output.clone(),
-        })?;
-
-        for img in frames.iter() {
-            self.save(&mut tiff_encoder, img, &metadata, compression.clone())?;
-        }
-        Ok(())
-    }
 }
 
 pub struct TiffSaver {
@@ -94,7 +74,7 @@ macro_rules! impl_save_frame {
         impl SaveToTiff<$color_type, $compression> for TiffSaver {
             fn save(
                 &self,
-                encoder: &mut TiffEncoder<File>,
+                encoder: &mut TiffEncoder<BufWriter<File>>,
                 image: &DynamicImage,
                 metadata: &PreprocessingMetadata,
                 compression: $compression,
@@ -134,64 +114,50 @@ impl TiffSaver {
         Self { compressor, color }
     }
 
-    pub fn save(
-        &self,
-        encoder: &mut TiffEncoder<File>,
-        image: &DynamicImage,
-        metadata: &PreprocessingMetadata,
-    ) -> Result<(), SaveError> {
-        match (&self.color, &self.compressor) {
-            (DicomColorType::Gray16(_), Compressor::Uncompressed(c)) => {
-                <TiffSaver as SaveToTiff<Gray16, Uncompressed>>::save(
-                    self, encoder, image, metadata, *c,
-                )
-            }
-            (DicomColorType::Gray16(_), Compressor::Packbits(c)) => {
-                <TiffSaver as SaveToTiff<Gray16, Packbits>>::save(
-                    self, encoder, image, metadata, *c,
-                )
-            }
-            (DicomColorType::Gray16(_), Compressor::Lzw(c)) => {
-                <TiffSaver as SaveToTiff<Gray16, Lzw>>::save(self, encoder, image, metadata, *c)
-            }
-            (DicomColorType::Gray16(_), Compressor::Deflate(c)) => {
-                <TiffSaver as SaveToTiff<Gray16, Deflate>>::save(self, encoder, image, metadata, *c)
-            }
-            (DicomColorType::RGB8(_), Compressor::Uncompressed(c)) => {
-                <TiffSaver as SaveToTiff<RGB8, Uncompressed>>::save(
-                    self, encoder, image, metadata, *c,
-                )
-            }
-            (DicomColorType::RGB8(_), Compressor::Packbits(c)) => {
-                <TiffSaver as SaveToTiff<RGB8, Packbits>>::save(self, encoder, image, metadata, *c)
-            }
-            (DicomColorType::RGB8(_), Compressor::Lzw(c)) => {
-                <TiffSaver as SaveToTiff<RGB8, Lzw>>::save(self, encoder, image, metadata, *c)
-            }
-            (DicomColorType::RGB8(_), Compressor::Deflate(c)) => {
-                <TiffSaver as SaveToTiff<RGB8, Deflate>>::save(self, encoder, image, metadata, *c)
-            }
-        }
-    }
-
-    pub fn save_all(
-        &self,
-        frames: Vec<DynamicImage>,
-        metadata: PreprocessingMetadata,
-        output: PathBuf,
-    ) -> Result<(), SaveError> {
-        // Open the TIFF file
+    pub fn open_tiff(&self, output: PathBuf) -> Result<TiffEncoder<BufWriter<File>>, SaveError> {
         let file = File::create(&output).context(CreateFileSnafu {
             path: output.clone(),
         })?;
-        let mut tiff_encoder = TiffEncoder::new(file).context(OpenTiffSnafu {
+        let file = BufWriter::new(file);
+        TiffEncoder::new(file).context(OpenTiffSnafu {
             path: output.clone(),
-        })?;
+        })
+    }
 
-        for img in frames.iter() {
-            self.save(&mut tiff_encoder, img, &metadata)?;
+    pub fn save(
+        &self,
+        encoder: &mut TiffEncoder<BufWriter<File>>,
+        image: &DynamicImage,
+        metadata: &PreprocessingMetadata,
+    ) -> Result<(), SaveError> {
+        macro_rules! save_with {
+            ($color_type:ty, $compression:ty, $compressor:expr) => {
+                <TiffSaver as SaveToTiff<$color_type, $compression>>::save(
+                    self,
+                    encoder,
+                    image,
+                    metadata,
+                    $compressor,
+                )
+            };
         }
-        Ok(())
+
+        match (&self.color, &self.compressor) {
+            (DicomColorType::Gray16(_), Compressor::Uncompressed(c)) => {
+                save_with!(Gray16, Uncompressed, *c)
+            }
+            (DicomColorType::Gray16(_), Compressor::Packbits(c)) => {
+                save_with!(Gray16, Packbits, *c)
+            }
+            (DicomColorType::Gray16(_), Compressor::Lzw(c)) => save_with!(Gray16, Lzw, *c),
+            (DicomColorType::Gray16(_), Compressor::Deflate(c)) => save_with!(Gray16, Deflate, *c),
+            (DicomColorType::RGB8(_), Compressor::Uncompressed(c)) => {
+                save_with!(RGB8, Uncompressed, *c)
+            }
+            (DicomColorType::RGB8(_), Compressor::Packbits(c)) => save_with!(RGB8, Packbits, *c),
+            (DicomColorType::RGB8(_), Compressor::Lzw(c)) => save_with!(RGB8, Lzw, *c),
+            (DicomColorType::RGB8(_), Compressor::Deflate(c)) => save_with!(RGB8, Deflate, *c),
+        }
     }
 }
 
@@ -237,8 +203,11 @@ mod tests {
             resolution: None,
         };
 
-        saver
-            .save_all(vec![image], metadata, temp_path.clone())
+        let mut encoder = saver.open_tiff(temp_path.clone()).unwrap();
+        let image_vec = vec![image];
+        image_vec
+            .into_iter()
+            .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
             .unwrap();
 
         // Check the output file exists

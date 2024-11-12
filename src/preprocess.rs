@@ -131,3 +131,53 @@ impl Preprocessor {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dicom::object::open_file;
+
+    use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
+    use image::GenericImageView;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case(
+        "pydicom/CT_small.dcm", 
+        Preprocessor {
+            crop: true,
+            size: Some((64, 64)),
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+        }
+    )]
+    #[case(
+        "pydicom/MR_small.dcm", 
+        Preprocessor {
+            crop: false,
+            size: None,
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+        }
+    )]
+    fn test_preprocess(#[case] dicom_file_path: &str, #[case] config: Preprocessor) {
+        let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Run preprocessing
+        let (images, _) = config.prepare_image(&dicom_file).unwrap();
+        assert_eq!(images.len(), 1);
+
+        // Check the image size
+        if let Some((exp_width, exp_height)) = config.size {
+            for image in images.iter() {
+                let (width, height) = image.dimensions();
+                assert_eq!(width, exp_width);
+                assert_eq!(height, exp_height);
+            }
+        }
+    }
+}

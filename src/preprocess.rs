@@ -1,12 +1,11 @@
 use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
-use std::io::{Seek, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor};
-use tiff::encoder::{ImageEncoder, TiffEncoder, TiffKind};
-use tiff::tags::Tag;
+use tiff::encoder::TiffEncoder;
 use tiff::TiffError;
 
 use dicom::dictionary_std::tags;
@@ -17,13 +16,11 @@ use snafu::{ResultExt, Snafu};
 use tiff::encoder::colortype::{Gray16, RGB8};
 use tiff::encoder::compression::{Lzw, Packbits, Uncompressed};
 
-use crate::metadata::{Resolution, WriteTags};
+use crate::metadata::{PreprocessingMetadata, Resolution, WriteTags};
 use crate::transform::volume::VolumeError;
 use crate::transform::{
     Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
-
-const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -89,43 +86,6 @@ pub enum Error {
         bits_allocated: u16,
         photometric_interpretation: PhotometricInterpretation,
     },
-}
-
-pub struct PreprocessingMetadata {
-    crop: Option<Crop>,
-    resize: Option<Resize>,
-    padding: Option<Padding>,
-    resolution: Option<Resolution>,
-}
-
-impl WriteTags for PreprocessingMetadata {
-    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
-    where
-        W: Write + Seek,
-        C: ColorType,
-        K: TiffKind,
-        D: Compression,
-    {
-        // Write the resolution tag
-        if let Some(resolution) = &self.resolution {
-            resolution.write_tags(tiff)?;
-        }
-        // Write metadata software tag
-        tiff.encoder()
-            .write_tag(Tag::Software, VERSION.as_bytes())?;
-
-        // Write transform related tags
-        if let Some(crop_config) = &self.crop {
-            crop_config.write_tags(tiff)?;
-        }
-        if let Some(resize_config) = &self.resize {
-            resize_config.write_tags(tiff)?;
-        }
-        if let Some(padding_config) = &self.padding {
-            padding_config.write_tags(tiff)?;
-        }
-        Ok(())
-    }
 }
 
 pub struct Preprocessor {

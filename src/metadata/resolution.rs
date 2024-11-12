@@ -12,8 +12,8 @@ use snafu::{ResultExt, Snafu};
 
 use crate::metadata::WriteTags;
 
-const CM_PER_MM: f32 = 10.0;
-const IN_PER_MM: f32 = 25.4;
+const MM_PER_CM: f32 = 10.0;
+const MM_PER_IN: f32 = 25.4;
 
 #[derive(Debug, Snafu)]
 pub enum ResolutionError {
@@ -92,8 +92,8 @@ where
 
         // Convert to pixels per mm
         let (x_resolution, y_resolution) = match unit {
-            ResolutionUnit::Centimeter => (x_resolution / CM_PER_MM, y_resolution / CM_PER_MM),
-            ResolutionUnit::Inch => (x_resolution / IN_PER_MM, y_resolution / IN_PER_MM),
+            ResolutionUnit::Centimeter => (x_resolution / MM_PER_CM, y_resolution / MM_PER_CM),
+            ResolutionUnit::Inch => (x_resolution / MM_PER_IN, y_resolution / MM_PER_IN),
             _ => (x_resolution, y_resolution),
         };
 
@@ -122,11 +122,11 @@ impl WriteTags for Resolution {
         D: Compression,
     {
         tiff.x_resolution(Rational {
-            n: (self.pixels_per_mm_x * CM_PER_MM) as u32,
+            n: (self.pixels_per_mm_x * MM_PER_CM) as u32,
             d: 1,
         });
         tiff.y_resolution(Rational {
-            n: (self.pixels_per_mm_y * CM_PER_MM) as u32,
+            n: (self.pixels_per_mm_y * MM_PER_CM) as u32,
             d: 1,
         });
         tiff.resolution_unit(tiff::tags::ResolutionUnit::Centimeter);

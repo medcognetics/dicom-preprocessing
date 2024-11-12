@@ -1,7 +1,8 @@
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 use std::fmt;
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, Write};
+use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
@@ -11,8 +12,22 @@ use tiff::TiffError;
 
 use crate::metadata::{Resolution, WriteTags};
 use crate::transform::Transform;
+use snafu::{ResultExt, Snafu};
 
 pub const DEFAULT_SCALE: u16 = 50718;
+
+#[derive(Debug, Snafu)]
+pub enum ResizeError {
+    ReadTiffTag {
+        name: &'static str,
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+    },
+    InvalidTagLength {
+        name: &'static str,
+        size: usize,
+    },
+}
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DisplayFilterType {
@@ -128,11 +143,41 @@ impl WriteTags for Resize {
     }
 }
 
+impl<T> TryFrom<&mut Decoder<T>> for Resize
+where
+    T: Read + Seek,
+{
+    type Error = ResizeError;
+
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
+        let scale = decoder
+            .get_tag_f32_vec(Tag::Unknown(DEFAULT_SCALE))
+            .context(ReadTiffTagSnafu {
+                name: "DefaultScale",
+            })?;
+        if scale.len() != 2 {
+            return Err(ResizeError::InvalidTagLength {
+                name: "DefaultScale",
+                size: scale.len(),
+            });
+        }
+        let (scale_x, scale_y) = (scale[0], scale[1]);
+        Ok(Resize {
+            scale_x,
+            scale_y,
+            filter: FilterType::Nearest,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{DynamicImage, RgbaImage};
     use rstest::rstest;
+    use std::fs::File;
+    use tempfile::tempdir;
+    use tiff::encoder::TiffEncoder;
 
     #[rstest]
     #[case(
@@ -180,5 +225,29 @@ mod tests {
             FilterType::Nearest,
         );
         assert_eq!(resize.apply(&dynamic_image), expected_dynamic_image);
+    }
+
+    #[rstest]
+    #[case(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest })]
+    fn test_write_tags(#[case] resize: Resize) {
+        // Prepare the TIFF
+        let temp_dir = tempdir().unwrap();
+        let temp_file_path = temp_dir.path().join("temp.tif");
+        let mut tiff = TiffEncoder::new(File::create(temp_file_path.clone()).unwrap()).unwrap();
+        let mut img = tiff
+            .new_image::<tiff::encoder::colortype::Gray16>(1, 1)
+            .unwrap();
+
+        // Write the tags
+        resize.write_tags(&mut img).unwrap();
+
+        // Write some dummy image data
+        let data: Vec<u16> = vec![0; 2];
+        img.write_data(data.as_slice()).unwrap();
+
+        // Read the TIFF back
+        let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
+        let actual = Resize::try_from(&mut tiff).unwrap();
+        assert_eq!(resize, actual);
     }
 }

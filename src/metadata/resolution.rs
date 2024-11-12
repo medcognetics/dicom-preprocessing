@@ -1,7 +1,9 @@
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, Write};
+use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, Rational, TiffKind};
+use tiff::tags::ResolutionUnit;
 use tiff::TiffError;
 
 use dicom::dictionary_std::tags;
@@ -11,6 +13,7 @@ use snafu::{ResultExt, Snafu};
 use crate::metadata::WriteTags;
 
 const CM_PER_MM: f32 = 10.0;
+const IN_PER_MM: f32 = 25.4;
 
 #[derive(Debug, Snafu)]
 pub enum ResolutionError {
@@ -31,12 +34,74 @@ pub enum ResolutionError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
+    InvalidResolutionUnit {
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+    },
+    CastResolutionUnit {
+        val: u16,
+    },
+    InvalidResolution {
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+    },
 }
 
 #[derive(Debug, PartialEq)]
 pub struct Resolution {
     pub pixels_per_mm_x: f32,
     pub pixels_per_mm_y: f32,
+}
+
+impl<T> TryFrom<&mut Decoder<T>> for Resolution
+where
+    T: Read + Seek,
+{
+    type Error = ResolutionError;
+
+    // Extract resolution metadata from a TIFF decoder
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, ResolutionError> {
+        // Parse resolution unit
+        let unit = decoder
+            .get_tag(tiff::tags::Tag::ResolutionUnit)
+            .map_err(|_| ResolutionError::MissingProperty {
+                name: "Resolution Unit",
+            })?
+            .into_u16()
+            .map_err(|s| ResolutionError::InvalidResolutionUnit {
+                source: Box::new(s),
+            })?;
+        let unit = ResolutionUnit::from_u16(unit)
+            .ok_or(ResolutionError::CastResolutionUnit { val: unit })?;
+
+        // Parse x resolution
+        let x_resolution = decoder
+            .get_tag_u32_vec(tiff::tags::Tag::XResolution)
+            .map_err(|s| ResolutionError::InvalidResolution {
+                source: Box::new(s),
+            })?;
+        let x_resolution = x_resolution[0] as f32 / x_resolution[1] as f32;
+
+        // Parse y resolution
+        let y_resolution = decoder
+            .get_tag_u32_vec(tiff::tags::Tag::YResolution)
+            .map_err(|s| ResolutionError::InvalidResolution {
+                source: Box::new(s),
+            })?;
+        let y_resolution = y_resolution[0] as f32 / y_resolution[1] as f32;
+
+        // Convert to pixels per mm
+        let (x_resolution, y_resolution) = match unit {
+            ResolutionUnit::Centimeter => (x_resolution / CM_PER_MM, y_resolution / CM_PER_MM),
+            ResolutionUnit::Inch => (x_resolution / IN_PER_MM, y_resolution / IN_PER_MM),
+            _ => (x_resolution, y_resolution),
+        };
+
+        Ok(Resolution {
+            pixels_per_mm_x: x_resolution,
+            pixels_per_mm_y: y_resolution,
+        })
+    }
 }
 
 impl Resolution {
@@ -128,7 +193,6 @@ mod tests {
     use tempfile::tempdir;
     use tiff::decoder::Decoder as TiffDecoder;
     use tiff::encoder::TiffEncoder;
-    use tiff::tags::{ResolutionUnit, Tag};
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888 })]
@@ -142,15 +206,13 @@ mod tests {
     #[rstest]
     #[case(
         Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888 },
-        Rational { n: (1.5117888 * CM_PER_MM) as u32, d: 1 },
-        Rational { n: (1.5117888 * CM_PER_MM) as u32, d: 1 },
-        ResolutionUnit::Centimeter
+        1.5,
+        1.5,
     )]
     fn test_write_tags(
         #[case] resolution: Resolution,
-        #[case] x_resolution: Rational,
-        #[case] y_resolution: Rational,
-        #[case] resolution_unit: ResolutionUnit,
+        #[case] x_resolution: f32,
+        #[case] y_resolution: f32,
     ) {
         // Prepare the TIFF
         let temp_dir = tempdir().unwrap();
@@ -169,27 +231,9 @@ mod tests {
 
         // Read the TIFF back
         let mut tiff = TiffDecoder::new(File::open(temp_file_path).unwrap()).unwrap();
-        let actual_x_resolution = tiff
-            .get_tag(Tag::XResolution)
-            .unwrap()
-            .into_u32_vec()
-            .unwrap();
-        let actual_y_resolution = tiff
-            .get_tag(Tag::YResolution)
-            .unwrap()
-            .into_u32_vec()
-            .unwrap();
-        let actual_resolution_unit = tiff
-            .get_tag(Tag::ResolutionUnit)
-            .unwrap()
-            .into_u16()
-            .unwrap();
-
-        assert_eq!(x_resolution.n, actual_x_resolution[0]);
-        assert_eq!(x_resolution.d, actual_x_resolution[1]);
-        assert_eq!(y_resolution.n, actual_y_resolution[0]);
-        assert_eq!(y_resolution.d, actual_y_resolution[1]);
-        assert_eq!(actual_resolution_unit, resolution_unit.to_u16());
+        let actual = Resolution::try_from(&mut tiff).unwrap();
+        assert_eq!(x_resolution, actual.pixels_per_mm_x);
+        assert_eq!(y_resolution, actual.pixels_per_mm_y);
     }
 
     #[rstest]

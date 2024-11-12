@@ -40,42 +40,24 @@ pub struct Crop {
 impl Crop {
     pub fn new(image: &DynamicImage, check_max: bool) -> Self {
         let (width, height) = image.dimensions();
-        let mut left = 0;
-        let mut top = 0;
-        let mut right = width - 1;
-        let mut bottom = height - 1;
 
-        // Find the left boundary
-        for x in 0..width {
-            if (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)) {
-                left = x;
-                break;
-            }
-        }
+        let left = (0..width)
+            .find(|&x| (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)))
+            .unwrap_or(0);
 
-        // Find the right boundary
-        for x in (0..width).rev() {
-            if (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)) {
-                right = x;
-                break;
-            }
-        }
+        let right = (0..width)
+            .rev()
+            .find(|&x| (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)))
+            .unwrap_or(width - 1);
 
-        // Find the top boundary
-        for y in 0..height {
-            if (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)) {
-                top = y;
-                break;
-            }
-        }
+        let top = (0..height)
+            .find(|&y| (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)))
+            .unwrap_or(0);
 
-        // Find the bottom boundary
-        for y in (0..height).rev() {
-            if (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)) {
-                bottom = y;
-                break;
-            }
-        }
+        let bottom = (0..height)
+            .rev()
+            .find(|&y| (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)))
+            .unwrap_or(height - 1);
 
         let width = right - left + 1;
         let height = bottom - top + 1;
@@ -140,47 +122,30 @@ impl Crop {
 }
 
 fn is_uncroppable_pixel(x: u32, y: u32, image: &DynamicImage, check_max: bool) -> bool {
-    let croppable = match image {
+    let (max_value, pixel_value) = match image {
         DynamicImage::ImageLuma8(image) => {
-            let pixel = image.get_pixel(x, y).channels()[0];
-            pixel == 0 || (check_max && pixel == u8::max_value())
+            (u8::MAX as u16, image.get_pixel(x, y).channels()[0] as u16)
         }
         DynamicImage::ImageLumaA8(image) => {
-            let pixel = image.get_pixel(x, y).channels()[0];
-            pixel == 0 || (check_max && pixel == u8::max_value())
+            (u8::MAX as u16, image.get_pixel(x, y).channels()[1] as u16)
         }
-        DynamicImage::ImageLuma16(image) => {
-            let pixel = image.get_pixel(x, y).channels()[0];
-            pixel == 0 || (check_max && pixel == u16::max_value())
-        }
-        DynamicImage::ImageLumaA16(image) => {
-            let pixel = image.get_pixel(x, y).channels()[0];
-            pixel == 0 || (check_max && pixel == u16::max_value())
-        }
+        DynamicImage::ImageLuma16(image) => (u16::MAX, image.get_pixel(x, y).channels()[0]),
+        DynamicImage::ImageLumaA16(image) => (u16::MAX, image.get_pixel(x, y).channels()[1]),
         DynamicImage::ImageRgb8(image) => {
-            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
-            pixel == 0 || (check_max && pixel == u8::max_value())
+            (u8::MAX as u16, image.get_pixel(x, y).channels()[0] as u16)
         }
-        DynamicImage::ImageRgba8(image) => {
-            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
-            pixel == 0 || (check_max && pixel == u8::max_value())
-        }
-        DynamicImage::ImageRgb16(image) => {
-            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
-            pixel == 0 || (check_max && pixel == u16::max_value())
-        }
-        DynamicImage::ImageRgba16(image) => {
-            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
-            pixel == 0 || (check_max && pixel == u16::max_value())
-        }
-        // On fallback we can only check for zero. Only floating point types should hit this
-        // branch.
-        _ => {
-            let pixel = image.get_pixel(x, y).to_luma().channels()[0];
-            pixel == 0
-        }
+        DynamicImage::ImageRgba8(image) => (
+            u8::MAX as u16,
+            image.get_pixel(x, y).to_luma().channels()[0] as u16,
+        ),
+        DynamicImage::ImageRgb16(image) => (u16::MAX, image.get_pixel(x, y).channels()[0]),
+        DynamicImage::ImageRgba16(image) => (u16::MAX, image.get_pixel(x, y).channels()[1]),
+        _ => (
+            u16::MAX,
+            image.get_pixel(x, y).to_luma().channels()[0] as u16,
+        ),
     };
-    !croppable
+    pixel_value != 0 && !(check_max && pixel_value == max_value)
 }
 
 impl From<&DynamicImage> for Crop {

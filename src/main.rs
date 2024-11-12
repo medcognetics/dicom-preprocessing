@@ -338,7 +338,7 @@ fn process(
         std::fs::create_dir_all(parent).context(CreateDirSnafu { path: parent })?;
         filepath
     } else {
-        dest.clone()
+        dest.to_path_buf()
     };
 
     tracing::info!("Processing {} -> {}", source.display(), dest.display());
@@ -349,7 +349,7 @@ fn process(
 
     let saver = TiffSaver::new(compressor.into(), color_type);
     saver
-        .save_all(images, metadata, &dest)
+        .save_all(images, metadata, dest)
         .context(SaveToTiffSnafu)?;
 
     Ok(())

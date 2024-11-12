@@ -178,7 +178,7 @@ impl TiffSaver {
         &self,
         frames: Vec<DynamicImage>,
         metadata: PreprocessingMetadata,
-        output: &PathBuf,
+        output: PathBuf,
     ) -> Result<(), SaveError> {
         // Open the TIFF file
         let file = File::create(&output).context(CreateFileSnafu {
@@ -237,7 +237,9 @@ mod tests {
             resolution: None,
         };
 
-        saver.save_all(vec![image], metadata, &temp_path).unwrap();
+        saver
+            .save_all(vec![image], metadata, temp_path.clone())
+            .unwrap();
 
         // Check the output file exists
         assert!(temp_path.exists());

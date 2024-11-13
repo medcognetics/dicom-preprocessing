@@ -1,6 +1,8 @@
 use image::{DynamicImage, GenericImage, GenericImageView, Pixel};
+use snafu::{ResultExt, Snafu};
 use std::fmt;
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, Write};
+use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
@@ -12,6 +14,18 @@ use crate::metadata::WriteTags;
 use crate::transform::Transform;
 
 pub const ACTIVE_AREA: u16 = 50829;
+
+#[derive(Debug, Snafu)]
+pub enum PaddingError {
+    ReadTiffTag {
+        name: &'static str,
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+    },
+    InvalidLength {
+        size: usize,
+    },
+}
 
 #[derive(Clone, Debug, clap::ValueEnum, Default, Copy)]
 pub enum PaddingDirection {
@@ -43,6 +57,8 @@ pub struct Padding {
 }
 
 impl Padding {
+    const TAG_CARDINALITY: usize = 4;
+
     pub fn is_zero(&self) -> bool {
         self.left == 0 && self.top == 0 && self.right == 0 && self.bottom == 0
     }
@@ -146,11 +162,57 @@ impl WriteTags for Padding {
     }
 }
 
+impl<T> TryFrom<&mut Decoder<T>> for Padding
+where
+    T: Read + Seek,
+{
+    type Error = PaddingError;
+
+    /// Read the padding metadata from a TIFF file
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
+        let active_area = decoder
+            .get_tag_u32_vec(Tag::Unknown(ACTIVE_AREA))
+            .context(ReadTiffTagSnafu { name: "ActiveArea" })?;
+        Padding::try_from(active_area)
+    }
+}
+
+impl From<Padding> for (u32, u32, u32, u32) {
+    fn from(padding: Padding) -> Self {
+        (padding.left, padding.top, padding.right, padding.bottom)
+    }
+}
+
+impl From<(u32, u32, u32, u32)> for Padding {
+    fn from((left, top, right, bottom): (u32, u32, u32, u32)) -> Self {
+        Padding {
+            left,
+            top,
+            right,
+            bottom,
+        }
+    }
+}
+
+impl TryFrom<Vec<u32>> for Padding {
+    type Error = PaddingError;
+    fn try_from(vec: Vec<u32>) -> Result<Self, Self::Error> {
+        if vec.len() != Self::TAG_CARDINALITY {
+            return Err(PaddingError::InvalidLength { size: vec.len() });
+        }
+        Ok((vec[0], vec[1], vec[2], vec[3]).into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{DynamicImage, RgbaImage};
     use rstest::rstest;
+    use std::fs::File;
+    use tempfile::tempdir;
+    use tiff::decoder::Decoder;
+    use tiff::encoder::TiffEncoder;
 
     #[rstest]
     #[case(
@@ -294,5 +356,29 @@ mod tests {
             .collect();
 
         assert_eq!(padded_pixels, expected_pixels);
+    }
+
+    #[rstest]
+    #[case(Padding { left: 1, top: 1, right: 2, bottom: 2 })]
+    fn test_write_tags(#[case] padding: Padding) {
+        // Prepare the TIFF
+        let temp_dir = tempdir().unwrap();
+        let temp_file_path = temp_dir.path().join("temp.tif");
+        let mut tiff = TiffEncoder::new(File::create(temp_file_path.clone()).unwrap()).unwrap();
+        let mut img = tiff
+            .new_image::<tiff::encoder::colortype::Gray16>(1, 1)
+            .unwrap();
+
+        // Write the tags
+        padding.write_tags(&mut img).unwrap();
+
+        // Write some dummy image data
+        let data: Vec<u16> = vec![0; 2];
+        img.write_data(data.as_slice()).unwrap();
+
+        // Read the TIFF back
+        let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
+        let actual = Padding::try_from(&mut tiff).unwrap();
+        assert_eq!(padding, actual);
     }
 }

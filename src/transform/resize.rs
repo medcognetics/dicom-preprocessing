@@ -1,7 +1,8 @@
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView};
 use std::fmt;
-use std::io::{Seek, Write};
+use std::io::{Read, Seek, Write};
+use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
@@ -11,8 +12,21 @@ use tiff::TiffError;
 
 use crate::metadata::{Resolution, WriteTags};
 use crate::transform::Transform;
+use snafu::{ResultExt, Snafu};
 
 pub const DEFAULT_SCALE: u16 = 50718;
+
+#[derive(Debug, Snafu)]
+pub enum ResizeError {
+    ReadTiffTag {
+        name: &'static str,
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+    },
+    InvalidLength {
+        size: usize,
+    },
+}
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DisplayFilterType {
@@ -37,21 +51,9 @@ impl fmt::Display for DisplayFilterType {
     }
 }
 
-impl From<FilterType> for DisplayFilterType {
-    fn from(filter: FilterType) -> Self {
+impl From<DisplayFilterType> for FilterType {
+    fn from(filter: DisplayFilterType) -> Self {
         match filter {
-            FilterType::Nearest => DisplayFilterType::Nearest,
-            FilterType::Triangle => DisplayFilterType::Triangle,
-            FilterType::CatmullRom => DisplayFilterType::CatmullRom,
-            FilterType::Gaussian => DisplayFilterType::Gaussian,
-            FilterType::Lanczos3 => DisplayFilterType::Lanczos3,
-        }
-    }
-}
-
-impl Into<FilterType> for DisplayFilterType {
-    fn into(self) -> FilterType {
-        match self {
             DisplayFilterType::Nearest => FilterType::Nearest,
             DisplayFilterType::Triangle => FilterType::Triangle,
             DisplayFilterType::CatmullRom => FilterType::CatmullRom,
@@ -69,6 +71,9 @@ pub struct Resize {
 }
 
 impl Resize {
+    const TAG_CARDINALITY: usize = 2;
+    const DEFAULT_FILTER: FilterType = FilterType::Nearest;
+
     pub fn new(
         image: &DynamicImage,
         target_width: u32,
@@ -77,17 +82,11 @@ impl Resize {
     ) -> Self {
         // Determine scale factors
         let (width, height) = image.dimensions();
-        let scale_x = target_width as f32 / width as f32;
-        let scale_y = target_height as f32 / height as f32;
-
-        // Preserve aspect ratio by choosing the smaller scale factor
-        let scale = scale_x.min(scale_y);
-        let scale_x = scale;
-        let scale_y = scale;
+        let scale = (target_width as f32 / width as f32).min(target_height as f32 / height as f32);
 
         Resize {
-            scale_x,
-            scale_y,
+            scale_x: scale,
+            scale_y: scale,
             filter,
         }
     }
@@ -106,7 +105,8 @@ impl Transform<Resolution> for Resize {
     fn apply(&self, resolution: &Resolution) -> Resolution {
         assert_eq!(
             self.scale_x, self.scale_y,
-            "Expected scale_x and scale_y to be equal"
+            "Expected scale_x and scale_y to be equal: {} {}",
+            self.scale_x, self.scale_y
         );
         let scale = self.scale_x;
         resolution.scale(scale)
@@ -128,11 +128,57 @@ impl WriteTags for Resize {
     }
 }
 
+impl<T> TryFrom<&mut Decoder<T>> for Resize
+where
+    T: Read + Seek,
+{
+    type Error = ResizeError;
+
+    /// Read the resize metadata from a TIFF file
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
+        let scale = decoder
+            .get_tag_f32_vec(Tag::Unknown(DEFAULT_SCALE))
+            .context(ReadTiffTagSnafu {
+                name: "DefaultScale",
+            })?;
+        Resize::try_from(scale)
+    }
+}
+
+impl From<Resize> for (f32, f32) {
+    fn from(resize: Resize) -> Self {
+        (resize.scale_x, resize.scale_y)
+    }
+}
+
+impl From<(f32, f32)> for Resize {
+    fn from((scale_x, scale_y): (f32, f32)) -> Self {
+        Resize {
+            scale_x,
+            scale_y,
+            filter: Self::DEFAULT_FILTER,
+        }
+    }
+}
+
+impl TryFrom<Vec<f32>> for Resize {
+    type Error = ResizeError;
+    fn try_from(vec: Vec<f32>) -> Result<Self, Self::Error> {
+        if vec.len() != Self::TAG_CARDINALITY {
+            return Err(ResizeError::InvalidLength { size: vec.len() });
+        }
+        Ok((vec[0], vec[1]).into())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use image::{DynamicImage, RgbaImage};
     use rstest::rstest;
+    use std::fs::File;
+    use tempfile::tempdir;
+    use tiff::encoder::TiffEncoder;
 
     #[rstest]
     #[case(
@@ -180,5 +226,29 @@ mod tests {
             FilterType::Nearest,
         );
         assert_eq!(resize.apply(&dynamic_image), expected_dynamic_image);
+    }
+
+    #[rstest]
+    #[case(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest })]
+    fn test_write_tags(#[case] resize: Resize) {
+        // Prepare the TIFF
+        let temp_dir = tempdir().unwrap();
+        let temp_file_path = temp_dir.path().join("temp.tif");
+        let mut tiff = TiffEncoder::new(File::create(temp_file_path.clone()).unwrap()).unwrap();
+        let mut img = tiff
+            .new_image::<tiff::encoder::colortype::Gray16>(1, 1)
+            .unwrap();
+
+        // Write the tags
+        resize.write_tags(&mut img).unwrap();
+
+        // Write some dummy image data
+        let data: Vec<u16> = vec![0; 2];
+        img.write_data(data.as_slice()).unwrap();
+
+        // Read the TIFF back
+        let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
+        let actual = Resize::try_from(&mut tiff).unwrap();
+        assert_eq!(resize, actual);
     }
 }

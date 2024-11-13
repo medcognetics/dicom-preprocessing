@@ -51,11 +51,25 @@ pub enum LoadError {
     },
 }
 
+pub enum ChannelOrder {
+    First,
+    Last,
+}
 
 
-trait Load {
+struct LoadGray8;
+struct LoadGray16;
+struct LoadRgb8;
+struct LoadNormalizedF32;
 
-    fn load(path: PathBuf) -> Result<DynamicImage, LoadError> {
+
+trait Load<T> 
+where T: Clone + num::Zero
+{
+    const CHANNEL_ORDER: ChannelOrder;
+    const CHANNELS: usize;
+
+    fn load(path: PathBuf) -> Result<Array4<T>, LoadError> {
         let file = BufReader::new(File::open(path).context(OpenTiffSnafu { path })?);
         let mut decoder = Decoder::new(file).unwrap();
 
@@ -63,17 +77,17 @@ trait Load {
         let (width, height) = decoder.dimensions().unwrap();
         let color_type = decoder.colortype().unwrap();
         let mut frames: usize = 0;
-        while decoder.more_images() {
+        while decoder.mo() {
             frames += 1;
             decoder.next_image().unwrap();
         }
 
         // Pre-allocate array
-        let channels: usize = 3;
-        let mut image_data = Array4::<u8>::zeros((frames, height as usize, width as usize, channels));
+        let mut image_data = Array4::<T>::zeros((frames, height as usize, width as usize, Self::CHANNELS));
 
         // Reset decoder to first frame
         let mut decoder = Decoder::new(file).unwrap();
+
 
 
 
@@ -88,3 +102,10 @@ trait Load {
 
 }
 
+
+
+impl Load<f32> for LoadNormalizedF32 {
+    fn load(path: PathBuf) -> Result<Array4<f32>, LoadError> {
+        todo!()
+    }
+}

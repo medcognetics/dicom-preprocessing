@@ -348,8 +348,10 @@ fn process(
     let color_type = DicomColorType::try_from(&file).context(ColorTypeSnafu)?;
 
     let saver = TiffSaver::new(compressor.into(), color_type);
-    saver
-        .save_all(images, metadata, dest)
+    let mut encoder = saver.open_tiff(dest).unwrap();
+    images
+        .into_iter()
+        .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
         .context(SaveToTiffSnafu)?;
 
     Ok(())

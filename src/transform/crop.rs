@@ -23,6 +23,9 @@ pub enum CropError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
+    InvalidLength {
+        size: usize,
+    },
     InvalidTagLength {
         name: &'static str,
         size: usize,
@@ -38,6 +41,8 @@ pub struct Crop {
 }
 
 impl Crop {
+    const TAG_CARDINALITY: usize = 2;
+
     pub fn new(image: &DynamicImage, check_max: bool) -> Self {
         let (width, height) = image.dimensions();
 
@@ -218,7 +223,7 @@ where
             .context(ReadTiffTagSnafu {
                 name: "DefaultCropSize",
             })?;
-        if size.len() != 2 {
+        if size.len() != Self::TAG_CARDINALITY {
             return Err(CropError::InvalidTagLength {
                 name: "DefaultCropSize",
                 size: size.len(),
@@ -229,12 +234,24 @@ where
         // Build final result
         let top = origin_y - height / 2;
         let left = origin_x - width / 2;
-        Ok(Crop {
-            top,
+        Ok((left, top, width, height).into())
+    }
+}
+
+impl From<Crop> for (u32, u32, u32, u32) {
+    fn from(crop: Crop) -> Self {
+        (crop.left, crop.top, crop.width, crop.height)
+    }
+}
+
+impl From<(u32, u32, u32, u32)> for Crop {
+    fn from((left, top, width, height): (u32, u32, u32, u32)) -> Self {
+        Crop {
             left,
+            top,
             width,
             height,
-        })
+        }
     }
 }
 

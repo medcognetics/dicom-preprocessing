@@ -22,8 +22,7 @@ pub enum PaddingError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
-    InvalidTagLength {
-        name: &'static str,
+    InvalidLength {
         size: usize,
     },
 }
@@ -58,6 +57,8 @@ pub struct Padding {
 }
 
 impl Padding {
+    const TAG_CARDINALITY: usize = 4;
+
     pub fn is_zero(&self) -> bool {
         self.left == 0 && self.top == 0 && self.right == 0 && self.bottom == 0
     }
@@ -172,24 +173,34 @@ where
         let active_area = decoder
             .get_tag_u32_vec(Tag::Unknown(ACTIVE_AREA))
             .context(ReadTiffTagSnafu { name: "ActiveArea" })?;
-        if active_area.len() != 4 {
-            return Err(PaddingError::InvalidTagLength {
-                name: "ActiveArea",
-                size: active_area.len(),
-            });
-        }
-        let (left, top, right, bottom) = (
-            active_area[0],
-            active_area[1],
-            active_area[2],
-            active_area[3],
-        );
-        Ok(Padding {
+        Padding::try_from(active_area)
+    }
+}
+
+impl From<Padding> for (u32, u32, u32, u32) {
+    fn from(padding: Padding) -> Self {
+        (padding.left, padding.top, padding.right, padding.bottom)
+    }
+}
+
+impl From<(u32, u32, u32, u32)> for Padding {
+    fn from((left, top, right, bottom): (u32, u32, u32, u32)) -> Self {
+        Padding {
             left,
             top,
             right,
             bottom,
-        })
+        }
+    }
+}
+
+impl TryFrom<Vec<u32>> for Padding {
+    type Error = PaddingError;
+    fn try_from(vec: Vec<u32>) -> Result<Self, Self::Error> {
+        if vec.len() != Self::TAG_CARDINALITY {
+            return Err(PaddingError::InvalidLength { size: vec.len() });
+        }
+        Ok((vec[0], vec[1], vec[2], vec[3]).into())
     }
 }
 

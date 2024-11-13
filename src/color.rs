@@ -2,7 +2,7 @@ use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::PhotometricInterpretation;
 use snafu::{ResultExt, Snafu};
-use tiff::encoder::colortype::{Gray16, RGB8};
+use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 
 #[derive(Debug, Snafu)]
 pub enum ColorError {
@@ -22,6 +22,7 @@ pub enum ColorError {
 
 /// The color types we expect to encounter in DICOM files and support processing of
 pub enum DicomColorType {
+    Gray8(Gray8),
     Gray16(Gray16),
     RGB8(RGB8),
 }
@@ -33,9 +34,15 @@ impl DicomColorType {
         photometric_interpretation: PhotometricInterpretation,
     ) -> Result<Self, ColorError> {
         match (bits_allocated, photometric_interpretation) {
+            // Monochrome 16-bit
             (16, PhotometricInterpretation::Monochrome1)
             | (16, PhotometricInterpretation::Monochrome2) => Ok(DicomColorType::Gray16(Gray16)),
+            // Monochrome 8-bit
+            (8, PhotometricInterpretation::Monochrome1)
+            | (8, PhotometricInterpretation::Monochrome2) => Ok(DicomColorType::Gray8(Gray8)),
+            // RGB 8-bit
             (8, PhotometricInterpretation::Rgb) => Ok(DicomColorType::RGB8(RGB8)),
+            // Unsupported
             (bits_allocated, photometric_interpretation) => {
                 Err(ColorError::UnsupportedPhotometricInterpretation {
                     bits_allocated,

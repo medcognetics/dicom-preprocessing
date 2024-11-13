@@ -164,6 +164,39 @@ mod tests {
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
         }
     )]
+    #[case(
+        "pydicom/JPEG2000_UNC.dcm",
+        Preprocessor {
+            crop: false,
+            size: None,
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+        }
+    )]
+    #[case(
+        "pydicom/US1_J2KI.dcm",
+        Preprocessor {
+            crop: false,
+            size: None,
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+        }
+    )]
+    #[case(
+        "pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm",
+        Preprocessor {
+            crop: false,
+            size: None,
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+        }
+    )]
     fn test_preprocess(#[case] dicom_file_path: &str, #[case] config: Preprocessor) {
         let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 

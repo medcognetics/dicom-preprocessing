@@ -11,6 +11,109 @@ use crate::transform::{Crop, Padding, Resize};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
+#[derive(Debug, PartialEq)]
+pub struct Version(String);
+
+impl Default for Version {
+    fn default() -> Self {
+        Self(VERSION.to_string())
+    }
+}
+
+impl WriteTags for Version {
+    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    where
+        W: Write + Seek,
+        C: ColorType,
+        K: TiffKind,
+        D: Compression,
+    {
+        tiff.encoder().write_tag(Tag::Software, self.0.as_bytes())?;
+        Ok(())
+    }
+}
+
+impl From<String> for Version {
+    fn from(version: String) -> Self {
+        Self(version)
+    }
+}
+
+impl From<Version> for String {
+    fn from(version: Version) -> Self {
+        version.0
+    }
+}
+
+impl<T> TryFrom<&mut Decoder<T>> for Version
+where
+    T: Read + Seek,
+{
+    type Error = TiffError;
+
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
+        let software = decoder.get_tag(Tag::Software)?.into_string()?;
+        Ok(Version(software))
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FrameCount(u32);
+
+impl From<FrameCount> for u32 {
+    fn from(frame_count: FrameCount) -> Self {
+        frame_count.0
+    }
+}
+
+impl From<u32> for FrameCount {
+    fn from(num_frames: u32) -> Self {
+        Self(num_frames)
+    }
+}
+
+impl From<usize> for FrameCount {
+    fn from(num_frames: usize) -> Self {
+        Self(num_frames as u32)
+    }
+}
+
+impl<T> TryFrom<&mut Decoder<T>> for FrameCount
+where
+    T: Read + Seek,
+{
+    type Error = TiffError;
+
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
+        // First try to parse the image description as a u32
+        let num_frames = decoder.get_tag(Tag::ImageDescription)?.into_u32().ok();
+        if let Some(num_frames) = num_frames {
+            return Ok(FrameCount(num_frames));
+        }
+
+        // Otherwise, we scan the file for the number of frames
+        // This implementation should avoid having to read image data between frames
+        let mut num_frames = 0;
+        while decoder.seek_to_image(num_frames).is_ok() {
+            num_frames += 1;
+        }
+        Ok(num_frames.into())
+    }
+}
+
+impl WriteTags for FrameCount {
+    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    where
+        W: Write + Seek,
+        C: ColorType,
+        K: TiffKind,
+        D: Compression,
+    {
+        tiff.encoder().write_tag(Tag::ImageDescription, self.0)?;
+        Ok(())
+    }
+}
+
 /// Tracks all of the preprocessing metadata and augmentations
 #[derive(Debug, PartialEq)]
 pub struct PreprocessingMetadata {
@@ -18,6 +121,7 @@ pub struct PreprocessingMetadata {
     pub resize: Option<Resize>,
     pub padding: Option<Padding>,
     pub resolution: Option<Resolution>,
+    pub num_frames: FrameCount,
 }
 
 impl WriteTags for PreprocessingMetadata {
@@ -34,8 +138,9 @@ impl WriteTags for PreprocessingMetadata {
             resolution.write_tags(tiff)?;
         }
         // Write metadata software tag
-        tiff.encoder()
-            .write_tag(Tag::Software, VERSION.as_bytes())?;
+        Version::default().write_tags(tiff)?;
+        // Write the frame count into ImageDescription
+        self.num_frames.write_tags(tiff)?;
 
         // Write transform related tags
         if let Some(crop_config) = &self.crop {
@@ -51,24 +156,31 @@ impl WriteTags for PreprocessingMetadata {
     }
 }
 
-impl<T> From<&mut Decoder<T>> for PreprocessingMetadata
+impl<T> TryFrom<&mut Decoder<T>> for PreprocessingMetadata
 where
     T: Read + Seek,
 {
+    type Error = TiffError;
+
     /// Read the preprocessing metadata from the TIFF file
-    fn from(decoder: &mut Decoder<T>) -> Self {
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         // NOTE: We don't distinguish between an unexpected error and an expected missing/malformed tag.
         // The TIFF could be using these tags for another purpose, e.g. if it was created by a different software.
         let crop = Crop::try_from(&mut *decoder).ok();
         let resize = Resize::try_from(&mut *decoder).ok();
         let padding = Padding::try_from(&mut *decoder).ok();
         let resolution = Resolution::try_from(&mut *decoder).ok();
-        Self {
+
+        // This has a fallback to scanning the file, so it should never fail
+        let num_frames = FrameCount::try_from(&mut *decoder)?;
+
+        Ok(Self {
             crop,
             resize,
             padding,
             resolution,
-        }
+            num_frames,
+        })
     }
 }
 
@@ -89,6 +201,7 @@ mod tests {
             resize: Some(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest }),
             padding: Some(Padding { left: 0, top: 0, right: 1, bottom: 1 }),
             resolution: Some(Resolution { pixels_per_mm_x: 1.0, pixels_per_mm_y: 1.0 }),
+            num_frames: FrameCount(1),
         }
     )]
     fn test_write_tags(#[case] metadata: PreprocessingMetadata) {
@@ -109,7 +222,7 @@ mod tests {
 
         // Read the TIFF back
         let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
-        let actual = PreprocessingMetadata::from(&mut tiff);
+        let actual = PreprocessingMetadata::try_from(&mut tiff).unwrap();
         assert_eq!(metadata, actual);
     }
 }

@@ -120,6 +120,8 @@ impl Preprocessor {
             None => image_data,
         };
 
+        let num_frames = image_data.len().into();
+
         Ok((
             image_data,
             PreprocessingMetadata {
@@ -127,6 +129,7 @@ impl Preprocessor {
                 resize: resize_config,
                 padding: padding_config,
                 resolution,
+                num_frames,
             },
         ))
     }

@@ -9,7 +9,7 @@ use tiff::encoder::TiffEncoder;
 use tiff::TiffError;
 
 use snafu::{ResultExt, Snafu};
-use tiff::encoder::colortype::{Gray16, RGB8};
+use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::encoder::compression::{Lzw, Uncompressed};
 
 use crate::color::DicomColorType;
@@ -109,6 +109,12 @@ impl_save_frame!(RGB8, Packbits, as_rgb8);
 impl_save_frame!(RGB8, Lzw, as_rgb8);
 impl_save_frame!(RGB8, Deflate, as_rgb8);
 
+// Implementations for Gray8
+impl_save_frame!(Gray8, Uncompressed, as_luma8);
+impl_save_frame!(Gray8, Packbits, as_luma8);
+impl_save_frame!(Gray8, Lzw, as_luma8);
+impl_save_frame!(Gray8, Deflate, as_luma8);
+
 impl TiffSaver {
     pub fn new(compressor: Compressor, color: DicomColorType) -> Self {
         Self { compressor, color }
@@ -143,6 +149,7 @@ impl TiffSaver {
         }
 
         match (&self.color, &self.compressor) {
+            // Monochrome 16-bit
             (DicomColorType::Gray16(_), Compressor::Uncompressed(c)) => {
                 save_with!(Gray16, Uncompressed, *c)
             }
@@ -151,12 +158,20 @@ impl TiffSaver {
             }
             (DicomColorType::Gray16(_), Compressor::Lzw(c)) => save_with!(Gray16, Lzw, *c),
             (DicomColorType::Gray16(_), Compressor::Deflate(c)) => save_with!(Gray16, Deflate, *c),
+            // RGB 8-bit
             (DicomColorType::RGB8(_), Compressor::Uncompressed(c)) => {
                 save_with!(RGB8, Uncompressed, *c)
             }
             (DicomColorType::RGB8(_), Compressor::Packbits(c)) => save_with!(RGB8, Packbits, *c),
             (DicomColorType::RGB8(_), Compressor::Lzw(c)) => save_with!(RGB8, Lzw, *c),
             (DicomColorType::RGB8(_), Compressor::Deflate(c)) => save_with!(RGB8, Deflate, *c),
+            // Monochrome 8-bit
+            (DicomColorType::Gray8(_), Compressor::Uncompressed(c)) => {
+                save_with!(Gray8, Uncompressed, *c)
+            }
+            (DicomColorType::Gray8(_), Compressor::Packbits(c)) => save_with!(Gray8, Packbits, *c),
+            (DicomColorType::Gray8(_), Compressor::Lzw(c)) => save_with!(Gray8, Lzw, *c),
+            (DicomColorType::Gray8(_), Compressor::Deflate(c)) => save_with!(Gray8, Deflate, *c),
         }
     }
 }
@@ -175,6 +190,13 @@ mod tests {
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", Compressor::Uncompressed(Uncompressed))]
+    #[case("pydicom/MR_small.dcm", Compressor::Uncompressed(Uncompressed))]
+    #[case("pydicom/JPEG2000_UNC.dcm", Compressor::Uncompressed(Uncompressed))]
+    // 8-bit monochrome
+    #[case(
+        "pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm",
+        Compressor::Uncompressed(Uncompressed)
+    )]
     fn test_save(#[case] dicom_file: &str, #[case] compressor: Compressor) {
         // Open the DICOM file
         let dicom_file = dicom_test_files::path(dicom_file).unwrap();

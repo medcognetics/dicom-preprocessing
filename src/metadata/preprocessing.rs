@@ -14,6 +14,10 @@ const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION")
 #[derive(Debug, PartialEq)]
 pub struct Version(String);
 
+impl Version {
+    const TAG: Tag = Tag::Software;
+}
+
 impl Default for Version {
     fn default() -> Self {
         Self(VERSION.to_string())
@@ -28,7 +32,7 @@ impl WriteTags for Version {
         K: TiffKind,
         D: Compression,
     {
-        tiff.encoder().write_tag(Tag::Software, self.0.as_bytes())?;
+        tiff.encoder().write_tag(Self::TAG, self.0.as_bytes())?;
         Ok(())
     }
 }
@@ -52,29 +56,34 @@ where
     type Error = TiffError;
 
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
-        let software = decoder.get_tag(Tag::Software)?.into_string()?;
+        let software = decoder.get_tag(Self::TAG)?.into_string()?;
         Ok(Version(software))
     }
 }
 
 #[derive(Debug, PartialEq)]
-pub struct FrameCount(u32);
+pub struct FrameCount(u16);
 
-impl From<FrameCount> for u32 {
+impl FrameCount {
+    // PageNumber
+    const TAG: Tag = Tag::Unknown(297);
+}
+
+impl From<FrameCount> for u16 {
     fn from(frame_count: FrameCount) -> Self {
         frame_count.0
     }
 }
 
-impl From<u32> for FrameCount {
-    fn from(num_frames: u32) -> Self {
+impl From<u16> for FrameCount {
+    fn from(num_frames: u16) -> Self {
         Self(num_frames)
     }
 }
 
 impl From<usize> for FrameCount {
     fn from(num_frames: usize) -> Self {
-        Self(num_frames as u32)
+        Self(num_frames as u16)
     }
 }
 
@@ -85,10 +94,12 @@ where
     type Error = TiffError;
 
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
-        // First try to parse the image description as a u32
-        let num_frames = decoder.get_tag(Tag::ImageDescription)?.into_u32().ok();
-        if let Some(num_frames) = num_frames {
-            return Ok(FrameCount(num_frames));
+        // First try to parse the image description as a tuple of u16 (page, total)
+        let page_info = decoder.get_tag(Self::TAG)?.into_u16_vec().ok();
+        if let Some(page_info) = page_info {
+            if page_info.len() == 2 {
+                return Ok(FrameCount(page_info[1]));
+            }
         }
 
         // Otherwise, we scan the file for the number of frames
@@ -109,7 +120,8 @@ impl WriteTags for FrameCount {
         K: TiffKind,
         D: Compression,
     {
-        tiff.encoder().write_tag(Tag::ImageDescription, self.0)?;
+        let page_info = vec![0, self.0];
+        tiff.encoder().write_tag(Self::TAG, page_info.as_slice())?;
         Ok(())
     }
 }

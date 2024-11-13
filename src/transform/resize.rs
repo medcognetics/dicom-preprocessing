@@ -23,8 +23,7 @@ pub enum ResizeError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
-    InvalidTagLength {
-        name: &'static str,
+    InvalidLength {
         size: usize,
     },
 }
@@ -72,6 +71,9 @@ pub struct Resize {
 }
 
 impl Resize {
+    const TAG_CARDINALITY: usize = 2;
+    const DEFAULT_FILTER: FilterType = FilterType::Nearest;
+
     pub fn new(
         image: &DynamicImage,
         target_width: u32,
@@ -139,18 +141,33 @@ where
             .context(ReadTiffTagSnafu {
                 name: "DefaultScale",
             })?;
-        if scale.len() != 2 {
-            return Err(ResizeError::InvalidTagLength {
-                name: "DefaultScale",
-                size: scale.len(),
-            });
-        }
-        let (scale_x, scale_y) = (scale[0], scale[1]);
-        Ok(Resize {
+        Resize::try_from(scale)
+    }
+}
+
+impl From<Resize> for (f32, f32) {
+    fn from(resize: Resize) -> Self {
+        (resize.scale_x, resize.scale_y)
+    }
+}
+
+impl From<(f32, f32)> for Resize {
+    fn from((scale_x, scale_y): (f32, f32)) -> Self {
+        Resize {
             scale_x,
             scale_y,
-            filter: FilterType::Nearest,
-        })
+            filter: Self::DEFAULT_FILTER,
+        }
+    }
+}
+
+impl TryFrom<Vec<f32>> for Resize {
+    type Error = ResizeError;
+    fn try_from(vec: Vec<f32>) -> Result<Self, Self::Error> {
+        if vec.len() != Self::TAG_CARDINALITY {
+            return Err(ResizeError::InvalidLength { size: vec.len() });
+        }
+        Ok((vec[0], vec[1]).into())
     }
 }
 

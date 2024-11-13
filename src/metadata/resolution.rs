@@ -140,6 +140,15 @@ impl From<Resolution> for (f32, f32) {
     }
 }
 
+impl From<(f32, f32)> for Resolution {
+    fn from((pixels_per_mm_x, pixels_per_mm_y): (f32, f32)) -> Self {
+        Resolution {
+            pixels_per_mm_x,
+            pixels_per_mm_y,
+        }
+    }
+}
+
 impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
     type Error = ResolutionError;
 
@@ -176,10 +185,7 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
             .context(ParsePixelSpacingSnafu)?;
 
         // Convert to pixels per mm
-        Ok(Resolution {
-            pixels_per_mm_x: 1.0 / pixel_spacing_mm_x,
-            pixels_per_mm_y: 1.0 / pixel_spacing_mm_y,
-        })
+        Ok((1.0 / pixel_spacing_mm_x, 1.0 / pixel_spacing_mm_y).into())
     }
 }
 

@@ -2,10 +2,13 @@ use image::DynamicImage;
 
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::imageops::FilterType;
+use rayon::{ThreadPoolBuildError, ThreadPoolBuilder};
 use snafu::{ResultExt, Snafu};
+use std::num::NonZero;
+use std::thread::available_parallelism;
 
 use crate::metadata::{PreprocessingMetadata, Resolution};
-use crate::transform::volume::VolumeError;
+use crate::transform::volume::{get_number_of_frames, VolumeError};
 use crate::transform::{
     Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
@@ -15,6 +18,10 @@ pub enum PreprocessError {
     DecodePixelData {
         #[snafu(source(from(VolumeError, Box::new)))]
         source: Box<VolumeError>,
+    },
+    BuildThreadPool {
+        #[snafu(source(from(ThreadPoolBuildError, Box::new)))]
+        source: Box<ThreadPoolBuildError>,
     },
 }
 
@@ -79,16 +86,31 @@ impl Preprocessor {
         }
     }
 
-    // Decodes the pixel data and applies transformations
+    /// Decodes the pixel data and applies transformations
     pub fn prepare_image(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        parallelism: usize,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), PreprocessError> {
-        // Decode the pixel data, applying volume handling
-        let image_data = self
-            .volume_handler
-            .decode_volume(file)
-            .context(DecodePixelDataSnafu)?;
+        // Determine the number of threads to use for parallel processing across multiple frames.
+        // This is the minimum of the number of frames, the number of threads requested, and the
+        // number of threads available.
+        let num_frames = get_number_of_frames(file).context(DecodePixelDataSnafu)?;
+        let max_parallelism = available_parallelism()
+            .unwrap_or(NonZero::new(1).unwrap())
+            .get();
+        let parallelism = parallelism.min(max_parallelism).min(num_frames as usize);
+
+        // Run decoding and volume handling
+        let image_data = match parallelism {
+            0 | 1 => self.volume_handler.decode_volume(file),
+            p => ThreadPoolBuilder::new()
+                .num_threads(p)
+                .build()
+                .context(BuildThreadPoolSnafu)?
+                .install(|| self.volume_handler.par_decode_volume(file)),
+        }
+        .context(DecodePixelDataSnafu)?;
 
         // Try to determine the resolution from pixel spacing attributes
         let resolution = Resolution::try_from(file).ok();
@@ -201,7 +223,7 @@ mod tests {
         let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 
         // Run preprocessing
-        let (images, _) = config.prepare_image(&dicom_file).unwrap();
+        let (images, _) = config.prepare_image(&dicom_file, 1).unwrap();
         assert_eq!(images.len(), 1);
 
         // Check the image size

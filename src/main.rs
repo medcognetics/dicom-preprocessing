@@ -20,7 +20,9 @@ use dicom_preprocessing::resize::DisplayFilterType;
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
+use std::num::NonZero;
 use std::path::Path;
+use std::thread::available_parallelism;
 
 use dicom_preprocessing::color::ColorError;
 use dicom_preprocessing::preprocess::PreprocessError;
@@ -302,6 +304,7 @@ fn process(
     dest: &PathBuf,
     preprocessor: &Preprocessor,
     compressor: SupportedCompressor,
+    parallelism: usize,
 ) -> Result<(), Error> {
     let file = open_file(&source).context(DicomReadSnafu { path: source })?;
 
@@ -343,7 +346,7 @@ fn process(
 
     tracing::info!("Processing {} -> {}", source.display(), dest.display());
     let (images, metadata) = preprocessor
-        .prepare_image(&file)
+        .prepare_image(&file, parallelism)
         .context(PreprocessingSnafu)?;
     let color_type = DicomColorType::try_from(&file).context(ColorTypeSnafu)?;
 
@@ -355,6 +358,16 @@ fn process(
         .context(SaveToTiffSnafu)?;
 
     Ok(())
+}
+
+/// Determines the number of threads to use for parallel processing for multi-frame DICOM files.
+/// Frame parallelism will only be used when the number of inputs is small. Otherwise, it as assumed
+/// that file parallelism is desired and only a single thread is used for a given file.
+fn determine_parallelism(num_inputs: usize) -> usize {
+    let max_parallelism = available_parallelism()
+        .unwrap_or(NonZero::new(1).unwrap())
+        .get();
+    (max_parallelism / num_inputs).max(1)
 }
 
 fn run(args: Args) -> Result<(), Error> {
@@ -404,8 +417,9 @@ fn run(args: Args) -> Result<(), Error> {
     pb.set_message("Preprocessing DICOM files");
 
     // Process each file in parallel
+    let parallelism = determine_parallelism(source.len());
     source.into_par_iter().try_for_each(|file| {
-        let result = process(&file, &dest, &preprocessor, compressor.clone());
+        let result = process(&file, &dest, &preprocessor, compressor.clone(), parallelism);
         pb.inc(1);
         result
     })?;

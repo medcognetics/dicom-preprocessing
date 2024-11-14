@@ -16,6 +16,7 @@ To enable mapping coordinates from the original image to the output image, the f
 - `DefaultCropSize` - the size of the initial cropping step as `(width, height)`
 - `DefaultScale` - the floating point scale of the resizing step as `(x, y)`
 - `ActiveArea` - coordinates of the non-padded area of the image as `(left, top, right, bottom)`
+- `PageNumber` - tuple of `(0, total)` indicating the total number of frames in the file
 
 
 ### Command Line Interface

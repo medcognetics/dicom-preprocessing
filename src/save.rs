@@ -223,6 +223,7 @@ mod tests {
             resize: None,
             padding: None,
             resolution: None,
+            num_frames: (1 as u16).into(),
         };
 
         let mut encoder = saver.open_tiff(temp_path.clone()).unwrap();

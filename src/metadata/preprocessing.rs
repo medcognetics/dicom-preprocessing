@@ -98,8 +98,8 @@ where
         // The first value is ignored, and filled with 0 to satisfy the TIFF spec.
         let page_info = decoder.get_tag(Self::TAG)?.into_u16_vec().ok();
         if let Some(page_info) = page_info {
-            if page_info.len() == 2 {
-                return Ok(FrameCount(page_info[1]));
+            if let [_, total] = page_info.as_slice() {
+                return Ok(FrameCount(*total));
             }
         }
 

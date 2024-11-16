@@ -304,7 +304,7 @@ fn process(
     dest: &PathBuf,
     preprocessor: &Preprocessor,
     compressor: SupportedCompressor,
-    parallelism: usize,
+    parallelism: bool,
 ) -> Result<(), Error> {
     let file = open_file(&source).context(DicomReadSnafu { path: source })?;
 
@@ -363,11 +363,11 @@ fn process(
 /// Determines the number of threads to use for parallel processing for multi-frame DICOM files.
 /// Frame parallelism will only be used when the number of inputs is small. Otherwise, it as assumed
 /// that file parallelism is desired and only a single thread is used for a given file.
-fn determine_parallelism(num_inputs: usize) -> usize {
+fn determine_parallelism(num_inputs: usize) -> bool {
     let max_parallelism = available_parallelism()
         .unwrap_or(NonZero::new(1).unwrap())
         .get();
-    (max_parallelism / num_inputs).max(1)
+    (max_parallelism / num_inputs).max(1) > 1
 }
 
 fn run(args: Args) -> Result<(), Error> {

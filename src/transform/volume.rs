@@ -44,6 +44,7 @@ pub enum VolumeError {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum VolumeHandler {
     Keep(KeepVolume),
     CentralSlice(CentralSlice),
@@ -144,6 +145,7 @@ impl HandleVolume for VolumeHandler {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct KeepVolume;
 
 impl HandleVolume for KeepVolume {
@@ -182,6 +184,7 @@ impl HandleVolume for KeepVolume {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct CentralSlice;
 
 impl HandleVolume for CentralSlice {
@@ -207,6 +210,7 @@ impl HandleVolume for CentralSlice {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct MaxIntensity {
     skip_start: u32,
     skip_end: u32,

@@ -19,6 +19,7 @@ pub enum PreprocessError {
 }
 
 // Responsible for preprocessing image data before saving
+#[derive(Debug, Clone, Copy)]
 pub struct Preprocessor {
     pub crop: bool,
     pub size: Option<(u32, u32)>,
@@ -79,16 +80,19 @@ impl Preprocessor {
         }
     }
 
-    // Decodes the pixel data and applies transformations
+    /// Decodes the pixel data and applies transformations.
+    /// When `parallel` is true, the pixel data is decoded in parallel using rayon
     pub fn prepare_image(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        parallel: bool,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), PreprocessError> {
-        // Decode the pixel data, applying volume handling
-        let image_data = self
-            .volume_handler
-            .decode_volume(file)
-            .context(DecodePixelDataSnafu)?;
+        // Run decoding and volume handling
+        let image_data = match parallel {
+            false => self.volume_handler.decode_volume(file),
+            true => self.volume_handler.par_decode_volume(file),
+        }
+        .context(DecodePixelDataSnafu)?;
 
         // Try to determine the resolution from pixel spacing attributes
         let resolution = Resolution::try_from(file).ok();
@@ -120,6 +124,8 @@ impl Preprocessor {
             None => image_data,
         };
 
+        let num_frames = image_data.len().into();
+
         Ok((
             image_data,
             PreprocessingMetadata {
@@ -127,6 +133,7 @@ impl Preprocessor {
                 resize: resize_config,
                 padding: padding_config,
                 resolution,
+                num_frames,
             },
         ))
     }
@@ -151,7 +158,8 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
-        }
+        },
+        false
     )]
     #[case(
         "pydicom/MR_small.dcm", 
@@ -162,7 +170,8 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
-        }
+        },
+        true
     )]
     #[case(
         "pydicom/JPEG2000_UNC.dcm",
@@ -173,7 +182,8 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
-        }
+        },
+        false
     )]
     #[case(
         "pydicom/US1_J2KI.dcm",
@@ -184,7 +194,8 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
-        }
+        },
+        false
     )]
     #[case(
         "pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm",
@@ -195,13 +206,18 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
-        }
+        },
+        false
     )]
-    fn test_preprocess(#[case] dicom_file_path: &str, #[case] config: Preprocessor) {
+    fn test_preprocess(
+        #[case] dicom_file_path: &str,
+        #[case] config: Preprocessor,
+        #[case] parallel: bool,
+    ) {
         let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 
         // Run preprocessing
-        let (images, _) = config.prepare_image(&dicom_file).unwrap();
+        let (images, _) = config.prepare_image(&dicom_file, parallel).unwrap();
         assert_eq!(images.len(), 1);
 
         // Check the image size

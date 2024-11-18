@@ -1,22 +1,13 @@
-use image::DynamicImage;
-use image::GenericImageView;
-use image::ImageBuffer;
 use std::fs::File;
 use std::io::{BufReader, Read, Seek};
 use std::path::PathBuf;
 use tiff::decoder::{Decoder, DecodingResult};
-use tiff::encoder::colortype::ColorType as ColorTypeTrait;
-use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
-use tiff::encoder::TiffEncoder;
-use tiff::ColorType;
 use tiff::TiffError;
 
 use snafu::{ResultExt, Snafu};
-use tiff::encoder::colortype::{Gray16, RGB8};
-use tiff::encoder::compression::{Lzw, Uncompressed};
 
 use crate::color::{ColorError, DicomColorType};
-use crate::metadata::{FrameCount, PreprocessingMetadata, WriteTags};
+use crate::metadata::FrameCount;
 use ndarray::{s, Array, Array4};
 
 #[derive(Debug, Snafu)]
@@ -195,18 +186,16 @@ impl LoadFromTiff<u16> for Array4<u16> {
 mod tests {
     use super::*;
     use dicom::object::open_file;
-    use dicom_pixeldata::PixelDecoder;
     use tempfile;
 
     use crate::preprocess::Preprocessor;
     use crate::save::TiffSaver;
     use crate::transform::PaddingDirection;
-    use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
+    use crate::volume::{KeepVolume, VolumeHandler};
     use image::imageops::FilterType;
-    use image::GenericImageView;
     use image::Pixel;
     use rstest::rstest;
-    use tiff::encoder::compression::{Compressor, Deflate, Lzw};
+    use tiff::encoder::compression::{Compressor, Uncompressed};
 
     #[rstest]
     #[case("pydicom/CT_small.dcm")]

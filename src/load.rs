@@ -45,6 +45,16 @@ pub enum LoadError {
         input: DecodingResult,
         target: &'static str,
     },
+    InvalidFrameIndex {
+        frame: usize,
+        num_frames: usize,
+    },
+    SeekToFrame {
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
+        frame: usize,
+        num_frames: usize,
+    },
 }
 
 /// The order of the channels in the loaded image
@@ -121,26 +131,39 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         decoder: &mut Decoder<R>,
         frames: impl Iterator<Item = usize>,
     ) -> Result<Array4<T>, LoadError> {
+        let frames = frames.into_iter().collect::<Vec<_>>();
+
         // Determine dimensions of the loaded result, accounting for the selected frames subset
-        let frames = frames.collect::<Vec<_>>();
+        // TODO: Support channel-first
         let dimensions = Dimensions::try_from(&mut *decoder)?.with_num_frames(frames.len());
         let channel_order = ChannelOrder::Last;
 
-        let mut array = Array4::<T>::zeros(dimensions.shape(&channel_order));
+        // Validate that the requested frames are within the range of the TIFF file
+        let max_frame = frames.iter().max().unwrap().clone();
+        if max_frame >= dimensions.num_frames {
+            return Err(LoadError::InvalidFrameIndex {
+                frame: max_frame,
+                num_frames: dimensions.num_frames,
+            });
+        }
 
-        let mut frame = 0;
-        loop {
+        // Pre-allocate contiguous array and fill it with the decoded frames
+        let mut array = Array4::<T>::zeros(dimensions.shape(&channel_order));
+        for frame in frames {
+            decoder.seek_to_image(frame).context(SeekToFrameSnafu {
+                frame,
+                num_frames: dimensions.num_frames,
+            })?;
+            // TODO: It would be nice to decode directly into the array, without the intermediate vector.
+            // However, read_image() has a complex implementation so it is non-trivial to reimplement.
+            // Maybe revisit this in the future.
             let image = decoder.read_image().context(DecodeImageSnafu)?;
             let image = Self::to_vec(image)?;
             let mut slice = array.slice_mut(s![frame, .., .., ..]);
             let new = Array::from_shape_vec(dimensions.frame_shape(&channel_order), image).unwrap();
             slice.assign(&new);
-
-            frame += 1;
-            if !decoder.more_images() {
-                break;
-            }
         }
+
         Ok(array)
     }
 

@@ -16,11 +16,6 @@ pub enum LoadError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
-    CastPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
-        source: Box<dicom::core::value::CastValueError>,
-    },
     #[snafu(display("could not open TIFF file {}", path.display()))]
     OpenTiff {
         #[snafu(source(from(std::io::Error, Box::new)))]
@@ -37,15 +32,6 @@ pub enum LoadError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
-    WriteToTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    ConvertImageToBytes,
-    WriteTags {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
     DimensionsError {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
@@ -53,6 +39,11 @@ pub enum LoadError {
     UnsupportedColorType {
         #[snafu(source(from(ColorError, Box::new)))]
         source: Box<ColorError>,
+    },
+    #[snafu(display("could not convert color type from {:?} to {}", input, target))]
+    ConvertColorType {
+        input: DecodingResult,
+        target: &'static str,
     },
 }
 
@@ -72,13 +63,13 @@ struct Dimensions {
 impl Dimensions {
     pub fn shape(&self, channel_order: &ChannelOrder) -> (usize, usize, usize, usize) {
         match channel_order {
-            ChannelOrder::First => (
+            ChannelOrder::Last => (
                 self.num_frames,
                 self.height,
                 self.width,
                 self.color_type.channels(),
             ),
-            ChannelOrder::Last => (
+            ChannelOrder::First => (
                 self.num_frames,
                 self.color_type.channels(),
                 self.height,
@@ -89,8 +80,8 @@ impl Dimensions {
 
     pub fn frame_shape(&self, channel_order: &ChannelOrder) -> (usize, usize, usize) {
         match channel_order {
-            ChannelOrder::First => (self.height, self.width, self.color_type.channels()),
-            ChannelOrder::Last => (self.color_type.channels(), self.height, self.width),
+            ChannelOrder::Last => (self.height, self.width, self.color_type.channels()),
+            ChannelOrder::First => (self.color_type.channels(), self.height, self.width),
         }
     }
 
@@ -133,7 +124,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         // Determine dimensions of the loaded result, accounting for the selected frames subset
         let frames = frames.collect::<Vec<_>>();
         let dimensions = Dimensions::try_from(&mut *decoder)?.with_num_frames(frames.len());
-        let channel_order = ChannelOrder::First;
+        let channel_order = ChannelOrder::Last;
 
         let mut array = Array4::<T>::zeros(dimensions.shape(&channel_order));
 
@@ -164,7 +155,14 @@ impl LoadFromTiff<u8> for Array4<u8> {
     fn to_vec(decoded: DecodingResult) -> Result<Vec<u8>, LoadError> {
         match decoded {
             DecodingResult::U8(image) => Ok(image),
-            _ => panic!("Unsupported color type"),
+            DecodingResult::U16(image) => Ok(image
+                .iter()
+                .map(|&x| (x as u8) * (u8::MAX / u16::MAX as u8))
+                .collect()),
+            _ => Err(LoadError::ConvertColorType {
+                input: decoded,
+                target: "u8",
+            }),
         }
     }
 }
@@ -177,7 +175,10 @@ impl LoadFromTiff<u16> for Array4<u16> {
                 .map(|&x| (x as u16) * (u16::MAX / u8::MAX as u16))
                 .collect()),
             DecodingResult::U16(image) => Ok(image),
-            _ => panic!("Unsupported color type"),
+            _ => Err(LoadError::ConvertColorType {
+                input: decoded,
+                target: "u16",
+            }),
         }
     }
 }
@@ -193,16 +194,23 @@ mod tests {
     use crate::transform::PaddingDirection;
     use crate::volume::{KeepVolume, VolumeHandler};
     use image::imageops::FilterType;
+    use image::DynamicImage;
     use image::Pixel;
     use rstest::rstest;
     use tiff::encoder::compression::{Compressor, Uncompressed};
 
     #[rstest]
-    #[case("pydicom/CT_small.dcm")]
-    #[case("pydicom/MR_small.dcm")]
-    #[case("pydicom/JPEG2000_UNC.dcm")]
-    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm")] // Gray8
-    fn test_load_preprocessed(#[case] dicom_file_path: &str) {
+    #[case("pydicom/CT_small.dcm", 16, false)]
+    #[case("pydicom/MR_small.dcm", 16, false)]
+    #[case("pydicom/JPEG2000_UNC.dcm", 16, false)]
+    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 16, false)] // Gray8 -> u16 array
+    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 8, false)] // Gray8 -> u8 array
+    #[case("pydicom/SC_rgb.dcm", 8, true)] // RGB8 -> u8 array
+    fn test_load_preprocessed(
+        #[case] dicom_file_path: &str,
+        #[case] bits: usize,
+        #[case] rgb: bool,
+    ) {
         let config = Preprocessor {
             crop: true,
             size: Some((64, 64)),
@@ -214,7 +222,6 @@ mod tests {
 
         let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
         let color_type = DicomColorType::try_from(&dicom_file).unwrap();
-        println!("color_type: {:?}", color_type);
 
         // Run preprocessing
         let (images, metadata) = config.prepare_image(&dicom_file, false).unwrap();
@@ -235,9 +242,16 @@ mod tests {
         // Load from TIFF
         let file = BufReader::new(File::open(&path).unwrap());
         let mut decoder = Decoder::new(file).unwrap();
-        let array = Array4::<u16>::decode(&mut decoder).unwrap();
+        match (bits, rgb) {
+            (16, false) => exec_test_luma16(images, &mut decoder),
+            (8, false) => exec_test_luma8(images, &mut decoder),
+            (8, true) => exec_test_rgb8(images, &mut decoder),
+            _ => unreachable!(),
+        }
+    }
 
-        // Compare with DynamicImage still in memory
+    fn exec_test_luma16(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
+        let array = Array4::<u16>::decode(&mut *decoder).unwrap();
         assert_eq!(array.shape()[0], images.len());
         for i in 0..images.len() {
             let actual_frame = array.slice(s![i, .., .., ..]);
@@ -251,6 +265,46 @@ mod tests {
                     .get((y as usize, x as usize, 0 as usize))
                     .unwrap();
                 assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
+            }
+        }
+    }
+
+    fn exec_test_luma8(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
+        let array = Array4::<u8>::decode(&mut *decoder).unwrap();
+        assert_eq!(array.shape()[0], images.len());
+        for i in 0..images.len() {
+            let actual_frame = array.slice(s![i, .., .., ..]);
+            let expected_frame = images[i].clone().into_luma8();
+            assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
+            assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
+            assert_eq!(actual_frame.shape()[2], 1);
+            for (x, y, pixel) in expected_frame.enumerate_pixels() {
+                let expected_value = pixel.channels()[0];
+                let actual_value = actual_frame
+                    .get((y as usize, x as usize, 0 as usize))
+                    .unwrap();
+                assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
+            }
+        }
+    }
+
+    fn exec_test_rgb8(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
+        let array = Array4::<u8>::decode(&mut *decoder).unwrap();
+        assert_eq!(array.shape()[0], images.len());
+        for i in 0..images.len() {
+            let actual_frame = array.slice(s![i, .., .., ..]);
+            let expected_frame = images[i].clone().into_rgb8();
+            assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
+            assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
+            assert_eq!(actual_frame.shape()[2], 3);
+            for (x, y, pixel) in expected_frame.enumerate_pixels() {
+                for i in 0..3 {
+                    let expected_value = pixel.channels()[i];
+                    let actual_value = actual_frame
+                        .get((y as usize, x as usize, i as usize))
+                        .unwrap();
+                    assert_eq!(*actual_value, expected_value, "at ({}, {}, {})", x, y, i);
+                }
             }
         }
     }

@@ -209,6 +209,18 @@ mod tests {
         },
         false
     )]
+    #[case(
+        "pydicom/SC_rgb.dcm",
+        Preprocessor {
+            crop: false,
+            size: None,
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+        },
+        false
+    )]
     fn test_preprocess(
         #[case] dicom_file_path: &str,
         #[case] config: Preprocessor,

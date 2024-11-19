@@ -271,7 +271,7 @@ struct Args {
     volume_handler: DisplayVolumeHandler,
 
     #[arg(
-        help = "Fail on input paths that are not DICOM files",
+        help = "Fail on input paths that are not DICOM files, or if any file processing fails",
         long = "strict",
         default_value_t = false
     )]
@@ -403,12 +403,27 @@ fn run(args: Args) -> Result<(), Error> {
     );
     pb.set_message("Preprocessing DICOM files");
 
-    // Process each file in parallel
-    source.into_par_iter().try_for_each(|file| {
+    // Define function to process each file in parallel
+    let par_func = |file: PathBuf| {
         let result = process(&file, &dest, &preprocessor, compressor.clone());
         pb.inc(1);
-        result
-    })?;
+        match result {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                error!("Error processing file {}: {}", file.display(), Report::from_error(&e));
+                Err(e)
+            }
+        }
+    };
+
+    // Run processing in parallel
+    if args.strict {
+        // In strict mode, abort on first error
+        source.into_par_iter().try_for_each(par_func)?;
+    } else {
+        // In non-strict mode, only log errors and continue
+        source.into_par_iter().map(par_func).collect::<Vec<_>>();
+    }
 
     Ok(())
 }

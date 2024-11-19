@@ -411,7 +411,11 @@ fn run(args: Args) -> Result<(), Error> {
         match result {
             Ok(result) => Ok(result),
             Err(e) => {
-                error!("Error processing file {}: {}", file.display(), Report::from_error(&e));
+                error!(
+                    "Error processing file {}: {}",
+                    file.display(),
+                    Report::from_error(&e)
+                );
                 Err(e)
             }
         }

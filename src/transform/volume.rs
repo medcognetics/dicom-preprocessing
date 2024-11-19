@@ -1,3 +1,4 @@
+use dicom::core::header::HasLength;
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::PixelDecoder;
@@ -11,9 +12,7 @@ use std::fmt;
 #[derive(Debug, Snafu)]
 pub enum VolumeError {
     #[snafu(display("Missing property: {}", name))]
-    MissingProperty {
-        name: &'static str,
-    },
+    MissingProperty { name: &'static str },
     #[snafu(display("Invalid property value: {}", name))]
     InvalidPropertyValue {
         name: &'static str,
@@ -21,9 +20,7 @@ pub enum VolumeError {
         source: Box<dicom::core::value::ConvertValueError>,
     },
     #[snafu(display("Invalid number of frames: {}", value))]
-    InvalidNumberOfFrames {
-        value: i32,
-    },
+    InvalidNumberOfFrames { value: i32 },
     #[snafu(display("Invalid property value: {}", name))]
     CastPropertyValue {
         name: &'static str,
@@ -95,9 +92,11 @@ fn get_number_of_frames(file: &FileDicomObject<InMemDicomObject>) -> Result<u32,
     let number_of_frames = file.get(tags::NUMBER_OF_FRAMES);
 
     let number_of_frames = match number_of_frames {
-        Some(elem) => elem.to_int::<i32>().context(InvalidPropertyValueSnafu {
-            name: "Number of Frames",
-        })?,
+        Some(elem) if !elem.is_empty() => {
+            elem.to_int::<i32>().context(InvalidPropertyValueSnafu {
+                name: "Number of Frames",
+            })?
+        }
         _ => 1,
     };
 

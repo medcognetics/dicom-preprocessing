@@ -7,16 +7,18 @@ use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 #[derive(Debug, Snafu)]
 pub enum ColorError {
     #[snafu(display("Missing property: {}", name))]
-    MissingProperty {
-        name: &'static str,
-    },
+    MissingProperty { name: &'static str },
     #[snafu(display("Invalid property value: {}", name))]
     CastPropertyValue {
         name: &'static str,
         #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
         source: Box<dicom::core::value::CastValueError>,
     },
-    #[snafu(display("Unsupported photometric interpretation: {}, {}", bits_allocated, photometric_interpretation))]
+    #[snafu(display(
+        "Unsupported photometric interpretation: {}, {}",
+        bits_allocated,
+        photometric_interpretation
+    ))]
     UnsupportedPhotometricInterpretation {
         bits_allocated: u16,
         photometric_interpretation: PhotometricInterpretation,

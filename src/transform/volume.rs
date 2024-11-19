@@ -10,17 +10,21 @@ use std::fmt;
 
 #[derive(Debug, Snafu)]
 pub enum VolumeError {
+    #[snafu(display("Missing property: {}", name))]
     MissingProperty {
         name: &'static str,
     },
+    #[snafu(display("Invalid property value: {}", name))]
     InvalidPropertyValue {
         name: &'static str,
         #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
         source: Box<dicom::core::value::ConvertValueError>,
     },
+    #[snafu(display("Invalid number of frames: {}", value))]
     InvalidNumberOfFrames {
         value: i32,
     },
+    #[snafu(display("Invalid property value: {}", name))]
     CastPropertyValue {
         name: &'static str,
         #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]

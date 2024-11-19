@@ -41,9 +41,9 @@ pub enum Error {
         #[snafu(source(from(ReadError, Box::new)))]
         source: Box<ReadError>,
     },
-    /// missing key property {name}
+    #[snafu(display("Missing property: {}", name))]
     MissingProperty { name: &'static str },
-    /// property {name} contains an invalid value
+    #[snafu(display("Invalid property value: {}", name))]
     InvalidPropertyValue {
         name: &'static str,
         #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
@@ -53,6 +53,7 @@ pub enum Error {
         #[snafu(source(from(PreprocessError, Box::new)))]
         source: Box<PreprocessError>,
     },
+    #[snafu(display("Failed to create directory: {}", path.display()))]
     CreateDir {
         path: PathBuf,
         #[snafu(source(from(std::io::Error, Box::new)))]

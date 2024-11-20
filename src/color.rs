@@ -11,7 +11,9 @@ use tiff::TiffError;
 #[derive(Debug, Snafu)]
 pub enum ColorError {
     #[snafu(display("Missing property: {}", name))]
-    MissingProperty { name: &'static str },
+    MissingProperty {
+        name: &'static str,
+    },
     #[snafu(display("Invalid property value: {}", name))]
     CastPropertyValue {
         name: &'static str,

@@ -135,7 +135,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
 
         // Determine dimensions of the loaded result, accounting for the selected frames subset
         // TODO: Support channel-first
-        let dimensions = Dimensions::try_from(&mut *decoder)?.with_num_frames(frames.len());
+        let dimensions = Dimensions::try_from(&mut *decoder)?;
         let channel_order = ChannelOrder::NHWC;
 
         // Validate that the requested frames are within the range of the TIFF file
@@ -148,8 +148,9 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         }
 
         // Pre-allocate contiguous array and fill it with the decoded frames
+        let dimensions = dimensions.with_num_frames(frames.len());
         let mut array = Array4::<T>::zeros(dimensions.shape(&channel_order));
-        for frame in frames {
+        for (i, frame) in frames.into_iter().enumerate() {
             decoder.seek_to_image(frame).context(SeekToFrameSnafu {
                 frame,
                 num_frames: dimensions.num_frames,
@@ -159,7 +160,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
             // Maybe revisit this in the future.
             let image = decoder.read_image().context(DecodeImageSnafu)?;
             let image = Self::to_vec(image)?;
-            let mut slice = array.slice_mut(s![frame, .., .., ..]);
+            let mut slice = array.slice_mut(s![i, .., .., ..]);
             let new = Array::from_shape_vec(dimensions.frame_shape(&channel_order), image).unwrap();
             slice.assign(&new);
         }
@@ -232,6 +233,7 @@ mod tests {
     #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 16, false)] // Gray8 -> u16 array
     #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 8, false)] // Gray8 -> u8 array
     #[case("pydicom/SC_rgb.dcm", 8, true)] // RGB8 -> u8 array
+    #[case("pydicom/emri_small.dcm", 16, false)] // multi frame
     fn test_load_preprocessed(
         #[case] dicom_file_path: &str,
         #[case] bits: usize,
@@ -251,7 +253,6 @@ mod tests {
 
         // Run preprocessing
         let (images, metadata) = config.prepare_image(&dicom_file, false).unwrap();
-        assert_eq!(images.len(), 1);
 
         // Save to TIFF
         let saver = TiffSaver::new(Compressor::Uncompressed(Uncompressed), color_type);
@@ -332,6 +333,61 @@ mod tests {
                     assert_eq!(*actual_value, expected_value, "at ({}, {}, {})", x, y, i);
                 }
             }
+        }
+    }
+
+    #[test]
+    fn test_load_frame_subset() {
+        let config = Preprocessor {
+            crop: true,
+            size: Some((64, 64)),
+            filter: FilterType::Triangle,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+        };
+
+        let dicom_file_path = "pydicom/emri_small.dcm";
+        let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+        let color_type = DicomColorType::try_from(&dicom_file).unwrap();
+
+        // Run preprocessing
+        let (images, metadata) = config.prepare_image(&dicom_file, false).unwrap();
+
+        // Save to TIFF
+        let saver = TiffSaver::new(Compressor::Uncompressed(Uncompressed), color_type);
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("test.tiff");
+        let mut encoder = saver.open_tiff(path.clone()).unwrap();
+        images
+            .clone()
+            .into_iter()
+            .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
+            .unwrap();
+        drop(encoder);
+
+        // Load from TIFF
+        let file = BufReader::new(File::open(&path).unwrap());
+        let mut decoder = Decoder::new(file).unwrap();
+
+        // Choose frame N/2 to sample and put it in a vector
+        let frame: usize = metadata.num_frames.into();
+        let frame = frame / 2;
+        let frames = vec![frame];
+
+        let array = Array4::<u16>::decode_frames(&mut decoder, frames.into_iter()).unwrap();
+        assert_eq!(array.shape()[0], 1);
+        let actual_frame = array.slice(s![0, .., .., ..]);
+        let expected_frame = images[frame].clone().into_luma16();
+        assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
+        assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
+        assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
+        for (x, y, pixel) in expected_frame.enumerate_pixels() {
+            let expected_value = pixel.channels()[0];
+            let actual_value = actual_frame
+                .get((y as usize, x as usize, 0 as usize))
+                .unwrap();
+            assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
         }
     }
 }

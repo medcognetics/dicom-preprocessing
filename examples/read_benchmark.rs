@@ -1,17 +1,13 @@
-use clap::error::ErrorKind;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
-use ndarray::{Array4, Shape};
+use ndarray::Array4;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
 use rayon::prelude::*;
 use rust_search::SearchBuilder;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::time::Instant;
 use tiff::decoder::Decoder;
-use tiff::decoder::DecodingResult;
 use tiff::TiffError;
 
 use dicom_preprocessing::load::LoadFromTiff;

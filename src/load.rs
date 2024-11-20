@@ -222,6 +222,9 @@ mod tests {
     use rstest::rstest;
     use tiff::encoder::compression::{Compressor, Uncompressed};
 
+    const NUM_CHANNELS_MONO: usize = 1;
+    const NUM_CHANNELS_RGB: usize = 3;
+
     #[rstest]
     #[case("pydicom/CT_small.dcm", 16, false)]
     #[case("pydicom/MR_small.dcm", 16, false)]
@@ -281,7 +284,7 @@ mod tests {
             let expected_frame = images[i].clone().into_luma16();
             assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
             assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
-            assert_eq!(actual_frame.shape()[2], 1);
+            assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
                 let expected_value = pixel.channels()[0];
                 let actual_value = actual_frame
@@ -300,7 +303,7 @@ mod tests {
             let expected_frame = images[i].clone().into_luma8();
             assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
             assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
-            assert_eq!(actual_frame.shape()[2], 1);
+            assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
                 let expected_value = pixel.channels()[0];
                 let actual_value = actual_frame
@@ -319,9 +322,9 @@ mod tests {
             let expected_frame = images[i].clone().into_rgb8();
             assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
             assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
-            assert_eq!(actual_frame.shape()[2], 3);
+            assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_RGB);
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
-                for i in 0..3 {
+                for i in 0..NUM_CHANNELS_RGB {
                     let expected_value = pixel.channels()[i];
                     let actual_value = actual_frame
                         .get((y as usize, x as usize, i as usize))

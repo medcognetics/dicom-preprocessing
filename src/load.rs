@@ -59,8 +59,8 @@ pub enum LoadError {
 
 /// The order of the channels in the loaded image
 pub enum ChannelOrder {
-    First,
-    Last,
+    NHWC,
+    NCHW,
 }
 
 struct Dimensions {
@@ -73,13 +73,13 @@ struct Dimensions {
 impl Dimensions {
     pub fn shape(&self, channel_order: &ChannelOrder) -> (usize, usize, usize, usize) {
         match channel_order {
-            ChannelOrder::Last => (
+            ChannelOrder::NHWC => (
                 self.num_frames,
                 self.height,
                 self.width,
                 self.color_type.channels(),
             ),
-            ChannelOrder::First => (
+            ChannelOrder::NCHW => (
                 self.num_frames,
                 self.color_type.channels(),
                 self.height,
@@ -90,8 +90,8 @@ impl Dimensions {
 
     pub fn frame_shape(&self, channel_order: &ChannelOrder) -> (usize, usize, usize) {
         match channel_order {
-            ChannelOrder::Last => (self.height, self.width, self.color_type.channels()),
-            ChannelOrder::First => (self.color_type.channels(), self.height, self.width),
+            ChannelOrder::NHWC => (self.height, self.width, self.color_type.channels()),
+            ChannelOrder::NCHW => (self.color_type.channels(), self.height, self.width),
         }
     }
 
@@ -136,7 +136,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         // Determine dimensions of the loaded result, accounting for the selected frames subset
         // TODO: Support channel-first
         let dimensions = Dimensions::try_from(&mut *decoder)?.with_num_frames(frames.len());
-        let channel_order = ChannelOrder::Last;
+        let channel_order = ChannelOrder::NHWC;
 
         // Validate that the requested frames are within the range of the TIFF file
         let max_frame = frames.iter().max().unwrap().clone();

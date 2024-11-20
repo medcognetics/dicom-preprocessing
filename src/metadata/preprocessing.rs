@@ -87,6 +87,12 @@ impl From<usize> for FrameCount {
     }
 }
 
+impl From<FrameCount> for usize {
+    fn from(frame_count: FrameCount) -> Self {
+        frame_count.0 as usize
+    }
+}
+
 impl<T> TryFrom<&mut Decoder<T>> for FrameCount
 where
     T: Read + Seek,

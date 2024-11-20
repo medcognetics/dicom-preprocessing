@@ -106,5 +106,7 @@ fn main() {
             result.into_iter().reduce(|a, b| a * b).unwrap()
         })
         .sum();
+
+    pb.finish();
     println!("Total pixels read: {}", size);
 }

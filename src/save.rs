@@ -17,15 +17,17 @@ use crate::metadata::{PreprocessingMetadata, WriteTags};
 
 #[derive(Debug, Snafu)]
 pub enum SaveError {
+    #[snafu(display("Missing property: {}", name))]
     MissingProperty {
         name: &'static str,
     },
+    #[snafu(display("Invalid property value: {}", name))]
     CastPropertyValue {
         name: &'static str,
         #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
         source: Box<dicom::core::value::CastValueError>,
     },
-    #[snafu(display("could not open TIFF file {}", path.display()))]
+    #[snafu(display("could not create TIFF file {}", path.display()))]
     CreateFile {
         #[snafu(source(from(std::io::Error, Box::new)))]
         source: Box<std::io::Error>,

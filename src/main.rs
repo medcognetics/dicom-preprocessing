@@ -43,9 +43,9 @@ pub enum Error {
         #[snafu(source(from(ReadError, Box::new)))]
         source: Box<ReadError>,
     },
-    /// missing key property {name}
+    #[snafu(display("Missing property: {}", name))]
     MissingProperty { name: &'static str },
-    /// property {name} contains an invalid value
+    #[snafu(display("Invalid property value: {}", name))]
     InvalidPropertyValue {
         name: &'static str,
         #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
@@ -55,6 +55,7 @@ pub enum Error {
         #[snafu(source(from(PreprocessError, Box::new)))]
         source: Box<PreprocessError>,
     },
+    #[snafu(display("Failed to create directory: {}", path.display()))]
     CreateDir {
         path: PathBuf,
         #[snafu(source(from(std::io::Error, Box::new)))]
@@ -273,7 +274,7 @@ struct Args {
     volume_handler: DisplayVolumeHandler,
 
     #[arg(
-        help = "Fail on input paths that are not DICOM files",
+        help = "Fail on input paths that are not DICOM files, or if any file processing fails",
         long = "strict",
         default_value_t = false
     )]
@@ -416,13 +417,32 @@ fn run(args: Args) -> Result<(), Error> {
     );
     pb.set_message("Preprocessing DICOM files");
 
-    // Process each file in parallel
+    // Define function to process each file in parallel
     let parallelism = determine_parallelism(source.len());
-    source.into_par_iter().try_for_each(|file| {
+    let par_func = |file: PathBuf| {
         let result = process(&file, &dest, &preprocessor, compressor.clone(), parallelism);
         pb.inc(1);
-        result
-    })?;
+        match result {
+            Ok(result) => Ok(result),
+            Err(e) => {
+                error!(
+                    "Error processing file {}: {}",
+                    file.display(),
+                    Report::from_error(&e)
+                );
+                Err(e)
+            }
+        }
+    };
+
+    // Run processing in parallel
+    if args.strict {
+        // In strict mode, abort on first error
+        source.into_par_iter().try_for_each(par_func)?;
+    } else {
+        // In non-strict mode, only log errors and continue
+        source.into_par_iter().map(par_func).collect::<Vec<_>>();
+    }
 
     Ok(())
 }

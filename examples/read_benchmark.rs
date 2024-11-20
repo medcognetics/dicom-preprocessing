@@ -57,7 +57,6 @@ fn open_tiff(path: &PathBuf) -> Result<Vec<usize>, TiffError> {
 
     // Read metadata injected by the preprocessor
     let metadata = PreprocessingMetadata::try_from(&mut decoder)?;
-    //println!("{:?} -> {:?}", path.clone(), metadata.num_frames);
 
     // Choose a random frame
     let mut rng = rand::thread_rng();

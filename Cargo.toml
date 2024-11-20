@@ -21,12 +21,12 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 num = "0.4"
 ndarray = "0.16"
-rand = "0.8"
 
 [dev-dependencies]
 tempfile = "3.10"
 dicom-test-files = "0.3"
 rstest = "0.23"
+rand = "0.8"
 
 [workspace]
 resolver = "2"

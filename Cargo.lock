@@ -564,6 +564,7 @@ dependencies = [
  "log",
  "ndarray 0.16.1",
  "num",
+ "rand",
  "rayon",
  "rstest",
  "rust_search",

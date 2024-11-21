@@ -26,6 +26,7 @@ ndarray = "0.16"
 tempfile = "3.10"
 dicom-test-files = "0.3"
 rstest = "0.23"
+rand = "0.8"
 
 [workspace]
 resolver = "2"

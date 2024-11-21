@@ -119,6 +119,16 @@ where
     }
 }
 
+impl IntoIterator for FrameCount {
+    type Item = u16;
+    type IntoIter = std::vec::IntoIter<Self::Item>;
+
+    /// Returns an iterator over the frame indices
+    fn into_iter(self) -> Self::IntoIter {
+        (0..self.0).collect::<Vec<_>>().into_iter()
+    }
+}
+
 impl WriteTags for FrameCount {
     fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
     where

@@ -307,7 +307,7 @@ fn process(
     compressor: SupportedCompressor,
     parallelism: bool,
 ) -> Result<(), Error> {
-    let file = open_file(&source).context(DicomReadSnafu { path: source })?;
+    let mut file = open_file(&source).context(DicomReadSnafu { path: source })?;
 
     let dest = if dest.is_dir() {
         // Build filepath of form dest/study_instance_uid/sop_instance_uid.tiff
@@ -346,6 +346,7 @@ fn process(
     };
 
     tracing::info!("Processing {} -> {}", source.display(), dest.display());
+    Preprocessor::sanitize_dicom(&mut file);
     let (images, metadata) = preprocessor
         .prepare_image(&file, parallelism)
         .context(PreprocessingSnafu)?;

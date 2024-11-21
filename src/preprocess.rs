@@ -1,5 +1,7 @@
+use dicom::core::header::HasLength;
 use image::DynamicImage;
 
+use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
@@ -80,6 +82,25 @@ impl Preprocessor {
         }
     }
 
+    /// Decoding will error if the VOILUT tag is present but empty.
+    /// This function removes the tag if it is empty.
+    fn sanitize_voi_lut_function(
+        dcm: &mut FileDicomObject<InMemDicomObject>,
+    ) -> &FileDicomObject<InMemDicomObject> {
+        let voi_lut_function = dcm.get(tags::VOILUT_FUNCTION);
+        if let Some(voi_lut_function) = voi_lut_function {
+            if voi_lut_function.is_empty() {
+                dcm.remove_element(tags::VOILUT_FUNCTION);
+            }
+        }
+        dcm
+    }
+
+    /// Performs sanitization of the DICOM object to ensure decoding will succeed.
+    pub fn sanitize_dicom(dcm: &mut FileDicomObject<InMemDicomObject>) {
+        Self::sanitize_voi_lut_function(dcm);
+    }
+
     /// Decodes the pixel data and applies transformations.
     /// When `parallel` is true, the pixel data is decoded in parallel using rayon
     pub fn prepare_image(
@@ -142,6 +163,9 @@ impl Preprocessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dicom::core::{DataElement, PrimitiveValue, VR};
+    use dicom::dictionary_std::tags;
+
     use dicom::object::open_file;
 
     use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
@@ -240,5 +264,16 @@ mod tests {
                 assert_eq!(height, exp_height);
             }
         }
+    }
+
+    #[rstest]
+    #[case(DataElement::new(tags::VOILUT_FUNCTION, VR::LO, PrimitiveValue::Empty))]
+    fn test_sanitize_dicom(#[case] elem: DataElement<InMemDicomObject>) {
+        let mut dicom_file =
+            open_file(&dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        dicom_file.put_element(elem);
+        assert_eq!(dicom_file.get(tags::VOILUT_FUNCTION).is_some(), true);
+        Preprocessor::sanitize_dicom(&mut dicom_file);
+        assert_eq!(dicom_file.get(tags::VOILUT_FUNCTION).is_none(), true);
     }
 }

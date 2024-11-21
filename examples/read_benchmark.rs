@@ -86,6 +86,10 @@ fn main() {
     let source = args.source;
     let tiff_files = find_tiff_files(&source).collect::<Vec<_>>();
     println!("Found {} TIFF files", tiff_files.len());
+    if tiff_files.is_empty() {
+        println!("No TIFF files found in {}", source.display());
+        return;
+    }
 
     let pb = ProgressBar::new(args.iterations as u64).with_finish(ProgressFinish::AndLeave);
     pb.set_style(

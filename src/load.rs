@@ -58,11 +58,13 @@ pub enum LoadError {
 }
 
 /// The order of the channels in the loaded image
+#[derive(Clone, Copy, Debug)]
 pub enum ChannelOrder {
     NHWC,
     NCHW,
 }
 
+#[derive(Clone, Debug)]
 struct Dimensions {
     width: usize,
     height: usize,
@@ -132,11 +134,13 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         frames: impl Iterator<Item = usize>,
     ) -> Result<Array4<T>, LoadError> {
         let frames = frames.into_iter().collect::<Vec<_>>();
+        let num_frames = frames.len();
 
         // Determine dimensions of the loaded result, accounting for the selected frames subset
         // TODO: Support channel-first
         let dimensions = Dimensions::try_from(&mut *decoder)?;
         let channel_order = ChannelOrder::NHWC;
+        let decoded_dimensions = dimensions.clone().with_num_frames(frames.len());
 
         // Validate that the requested frames are within the range of the TIFF file
         let max_frame = frames.iter().max().unwrap().clone();
@@ -147,9 +151,23 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
             });
         }
 
+        // If only one frame is requested, we can avoid the overhead of pre-allocating the array
+        // and just use the original buffer.
+        if num_frames == 1 {
+            let frame = frames[0];
+            decoder.seek_to_image(frame).context(SeekToFrameSnafu {
+                frame,
+                num_frames: dimensions.num_frames,
+            })?;
+            let image = decoder.read_image().context(DecodeImageSnafu)?;
+            let image = Self::to_vec(image)?;
+            return Ok(
+                Array::from_shape_vec(decoded_dimensions.shape(&channel_order), image).unwrap(),
+            );
+        }
+
         // Pre-allocate contiguous array and fill it with the decoded frames
-        let dimensions = dimensions.with_num_frames(frames.len());
-        let mut array = Array4::<T>::zeros(dimensions.shape(&channel_order));
+        let mut array = Array4::<T>::zeros(decoded_dimensions.shape(&channel_order));
         for (i, frame) in frames.into_iter().enumerate() {
             decoder.seek_to_image(frame).context(SeekToFrameSnafu {
                 frame,
@@ -161,7 +179,8 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
             let image = decoder.read_image().context(DecodeImageSnafu)?;
             let image = Self::to_vec(image)?;
             let mut slice = array.slice_mut(s![i, .., .., ..]);
-            let new = Array::from_shape_vec(dimensions.frame_shape(&channel_order), image).unwrap();
+            let new = Array::from_shape_vec(decoded_dimensions.frame_shape(&channel_order), image)
+                .unwrap();
             slice.assign(&new);
         }
 
@@ -207,6 +226,25 @@ impl LoadFromTiff<u16> for Array4<u16> {
     }
 }
 
+impl LoadFromTiff<f32> for Array4<f32> {
+    fn to_vec(decoded: DecodingResult) -> Result<Vec<f32>, LoadError> {
+        match decoded {
+            DecodingResult::U8(image) => Ok(image
+                .into_iter()
+                .map(|x| x as f32 / u8::MAX as f32)
+                .collect()),
+            DecodingResult::U16(image) => Ok(image
+                .into_iter()
+                .map(|x| x as f32 / u16::MAX as f32)
+                .collect()),
+            _ => Err(LoadError::ConvertColorType {
+                input: decoded,
+                target: "f32",
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,6 +257,8 @@ mod tests {
     use crate::volume::{KeepVolume, VolumeHandler};
     use image::imageops::FilterType;
     use image::DynamicImage;
+    use image::ImageBuffer;
+    use image::Luma;
     use image::Pixel;
     use rstest::rstest;
     use tiff::encoder::compression::{Compressor, Uncompressed};
@@ -227,17 +267,19 @@ mod tests {
     const NUM_CHANNELS_RGB: usize = 3;
 
     #[rstest]
-    #[case("pydicom/CT_small.dcm", 16, false)]
-    #[case("pydicom/MR_small.dcm", 16, false)]
-    #[case("pydicom/JPEG2000_UNC.dcm", 16, false)]
-    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 16, false)] // Gray8 -> u16 array
-    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 8, false)] // Gray8 -> u8 array
-    #[case("pydicom/SC_rgb.dcm", 8, true)] // RGB8 -> u8 array
-    #[case("pydicom/emri_small.dcm", 16, false)] // multi frame
+    #[case("pydicom/CT_small.dcm", 16, false, false)]
+    #[case("pydicom/MR_small.dcm", 16, false, false)]
+    #[case("pydicom/JPEG2000_UNC.dcm", 16, false, false)]
+    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 16, false, false)] // Gray8 -> u16 array
+    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", 8, false, false)] // Gray8 -> u8 array
+    #[case("pydicom/SC_rgb.dcm", 8, true, false)] // RGB8 -> u8 array
+    #[case("pydicom/emri_small.dcm", 16, false, false)] // multi frame
+    #[case("pydicom/CT_small.dcm", 16, false, true)] // float32
     fn test_load_preprocessed(
         #[case] dicom_file_path: &str,
         #[case] bits: usize,
         #[case] rgb: bool,
+        #[case] fp32: bool,
     ) {
         let config = Preprocessor {
             crop: true,
@@ -269,10 +311,11 @@ mod tests {
         // Load from TIFF
         let file = BufReader::new(File::open(&path).unwrap());
         let mut decoder = Decoder::new(file).unwrap();
-        match (bits, rgb) {
-            (16, false) => exec_test_luma16(images, &mut decoder),
-            (8, false) => exec_test_luma8(images, &mut decoder),
-            (8, true) => exec_test_rgb8(images, &mut decoder),
+        match (bits, rgb, fp32) {
+            (16, false, false) => exec_test_luma16(images, &mut decoder),
+            (8, false, false) => exec_test_luma8(images, &mut decoder),
+            (8, true, false) => exec_test_rgb8(images, &mut decoder),
+            (_, false, true) => exec_test_float32(images, &mut decoder),
             _ => unreachable!(),
         }
     }
@@ -332,6 +375,33 @@ mod tests {
                         .unwrap();
                     assert_eq!(*actual_value, expected_value, "at ({}, {}, {})", x, y, i);
                 }
+            }
+        }
+    }
+
+    fn exec_test_float32(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
+        let array = Array4::<f32>::decode(&mut *decoder).unwrap();
+        assert_eq!(array.shape()[0], images.len());
+        for i in 0..images.len() {
+            let actual_frame = array.slice(s![i, .., .., ..]);
+            let expected_frame = images[i].clone().into_luma16();
+            // Convert u16 pixels to normalized f32 values
+            let pixels: Vec<f32> = expected_frame
+                .pixels()
+                .map(|p| (p.0[0] as f32) / (u16::MAX as f32))
+                .collect();
+            let expected_frame: ImageBuffer<Luma<f32>, Vec<f32>> =
+                ImageBuffer::from_raw(expected_frame.width(), expected_frame.height(), pixels)
+                    .unwrap();
+            assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
+            assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
+            assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
+            for (x, y, pixel) in expected_frame.enumerate_pixels() {
+                let expected_value = pixel.channels()[0];
+                let actual_value = actual_frame
+                    .get((y as usize, x as usize, 0 as usize))
+                    .unwrap();
+                assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
             }
         }
     }

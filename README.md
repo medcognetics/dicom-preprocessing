@@ -58,3 +58,49 @@ Below are example images demonstrating various volume handling options:
 | Central Slice | Maximum Intensity |
 |----------------|-------------------|
 | ![Central Slice](docs/central_slice.png) | ![Maximum Intensity](docs/max_intensity.png) |
+
+
+### Optimization Notes
+
+#### Compression and ZFS
+
+Below is a comparison of file sizes for 26,474 digital breast tomosynthesis (DBT) volumes after preprocessing to TIFF when stored in ZFS.
+Example decode times from a local NVMe SSD are also provided for each configuration. Note that the Rust PackBits decoder seems suboptimal,
+as PackBits decoding is generally faster than LZW.
+
+
+| TIFF Compression | Total Size | Total Size (LZ4 Compressed) | Peak Decode Time (ms) |
+|------------------|------------|-----------------------------|-----------------------|
+| Uncompressed     | 12TB       | 6.5TB                       | 3.204                 |
+| Packbits         | 8.3TB      | 6.5TB                       | 67.288                |
+| LZW              | 5.6TB      | 5.6TB                       | 44.080                |
+
+
+PackBits compression does not yield a substantial reduction in stored file size on ZFS. The primary
+determinant of compression algorithm then becomes the network bandwidth between the storage and compute nodes.
+Uncompressed files will require higher bandwidth to transfer, but do not require decompression on the compute node. Furthermore, the elimination of decompression frees the CPU to do other train-time tasks like augmentation. Note that TrueNAS will store compressed blocks in adaptive replacement cache (ARC), thus uncompressed and PackBits compressed files will have similar memory footprint.
+
+In summary, if you have sufficient storage capacity, network bandwidth, and are using an access pattern that saturates the network link, uncompressed TIFFs are a good choice. Local flash storage will be bottlenecked
+by the decompression step, so uncompressed TIFFs are an ideal choice for maximum throughput.
+
+#### Access Patterns
+
+When loading preprocessed TIFFs from HDDs over a local network, access patterns become a significant determinant of throughput. Spinning rust HDDs suffer from high latencies, and thus random access patterns are suboptimal. Below is a comparison of sequential and random access patterns for a the dataset described above.
+This is not an exact comparison, as the order of file reads differs between the two and thus the slice chosen from each DBT volume is different. However, the substantial difference in throughput demonstrates the impact of access patterns.
+
+| Access Pattern | Throughput (files/s) |
+|----------------|----------------------|
+| Sequential     | 641.4                |
+| Random         | 9.805                |
+
+#### ARC
+
+TrueNAS will store retrieved data in ARC. For sufficiently small datasets, it is possible that the entire dataset can be stored in ARC, thus eliminating bottlenecks associated with disk I/O and random access patterns. Below is a comparison of two benchmark runs, both using random access patterns with a consistent
+seed between runs. The second run benefits from ARC, as the dataset is smaller than the available ARC capacity.
+
+| Dataset Size | Throughput (files/s) |
+|--------------|----------------------|
+| Run 1        | 9.836                |
+| Run 2        | 820.5                |
+
+Given sufficient network bandwidth and ARC capacity, operations on datasets that have been cached will likely be bottlenecked by decode time.

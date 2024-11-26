@@ -4,7 +4,6 @@ use image::DynamicImage;
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::imageops::FilterType;
-use snafu::{ResultExt, Snafu};
 
 use crate::errors::DicomError;
 use crate::metadata::{PreprocessingMetadata, Resolution};

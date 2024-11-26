@@ -1,8 +1,4 @@
-use dicom::core::value::Value;
-use dicom::core::value::{CastValueError, ConvertValueError};
-use dicom::object::ReadError;
-use dicom::pixeldata::PhotometricInterpretation;
-use image::{ColorType as ImageColorType, DynamicImage};
+use image::ColorType as ImageColorType;
 pub use snafu::{Snafu, Whatever};
 use std::path::PathBuf;
 use tiff::decoder::DecodingResult;

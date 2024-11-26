@@ -4,7 +4,6 @@ use clap::error::ErrorKind;
 use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
-use dicom::object::ReadError;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
@@ -23,11 +22,10 @@ use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::num::NonZero;
 use std::path::Path;
-use std::sync::Arc;
 use std::thread::available_parallelism;
 
 use dicom_preprocessing::errors::{
-    dicom::{ConvertValueSnafu, InvalidValueSnafu, MissingPropertySnafu, ReadSnafu},
+    dicom::{ConvertValueSnafu, MissingPropertySnafu, ReadSnafu},
     DicomError, TiffError,
 };
 use dicom_preprocessing::save::TiffSaver;

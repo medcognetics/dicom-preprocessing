@@ -7,14 +7,14 @@ use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
 use tiff::encoder::TiffEncoder;
 
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::encoder::compression::{Lzw, Uncompressed};
 
 use crate::color::DicomColorType;
 use crate::errors::{
     tiff::{IOSnafu, WriteSnafu},
-    DicomError, TiffError,
+    TiffError,
 };
 use crate::metadata::{PreprocessingMetadata, WriteTags};
 

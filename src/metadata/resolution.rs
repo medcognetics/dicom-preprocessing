@@ -1,6 +1,4 @@
-use crate::errors::dicom::{
-    ConvertValueSnafu, DicomError, InvalidValueSnafu, MissingPropertySnafu, ParseFloatSnafu,
-};
+use crate::errors::dicom::{ConvertValueSnafu, DicomError, ParseFloatSnafu};
 use crate::errors::tiff::TiffError;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
@@ -11,7 +9,7 @@ use tiff::tags::ResolutionUnit;
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 
 use crate::metadata::WriteTags;
 

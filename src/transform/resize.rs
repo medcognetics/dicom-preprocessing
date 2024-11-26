@@ -9,7 +9,7 @@ use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 
-use crate::errors::tiff::{CardinalitySnafu, ReadSnafu, TiffError};
+use crate::errors::tiff::TiffError;
 use crate::metadata::{Resolution, WriteTags};
 use crate::transform::Transform;
 

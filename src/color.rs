@@ -1,15 +1,12 @@
-use crate::errors::{
-    dicom::CastValueSnafu, tiff::UnsupportedColorTypeSnafu, DicomError, TiffError,
-};
+use crate::errors::{dicom::CastValueSnafu, DicomError, TiffError};
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::PhotometricInterpretation;
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 use std::io::{Read, Seek};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::ColorType;
-use tiff::TiffError as BaseTiffError;
 
 /// The color types we expect to encounter in DICOM files and support processing of
 pub enum DicomColorType {

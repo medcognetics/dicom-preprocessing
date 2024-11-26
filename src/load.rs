@@ -1,12 +1,10 @@
-use std::fs::File;
-use std::io::{BufReader, Read, Seek};
-use std::path::PathBuf;
+use std::io::{Read, Seek};
 use tiff::decoder::{Decoder, DecodingResult};
 
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 
 use crate::color::DicomColorType;
-use crate::errors::{tiff::SeekToFrameSnafu, DicomError, TiffError};
+use crate::errors::{tiff::SeekToFrameSnafu, TiffError};
 use crate::metadata::FrameCount;
 use ndarray::{s, Array, Array4};
 
@@ -185,6 +183,8 @@ impl LoadFromTiff<f32> for Array4<f32> {
 mod tests {
     use super::*;
     use dicom::object::open_file;
+    use std::fs::File;
+    use std::io::BufReader;
     use tempfile;
 
     use crate::preprocess::Preprocessor;

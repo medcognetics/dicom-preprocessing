@@ -1,5 +1,4 @@
 use image::{DynamicImage, GenericImageView, Pixel};
-use snafu::{ResultExt, Snafu};
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
@@ -8,7 +7,7 @@ use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
 
-use crate::errors::tiff::{CardinalitySnafu, ReadSnafu, TiffError};
+use crate::errors::tiff::TiffError;
 use crate::metadata::WriteTags;
 use crate::transform::Transform;
 

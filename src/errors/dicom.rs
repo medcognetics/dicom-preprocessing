@@ -1,12 +1,7 @@
-use dicom::core::value::Value;
 use dicom::core::value::{CastValueError, ConvertValueError};
 use dicom::object::ReadError;
 use dicom::pixeldata::PhotometricInterpretation;
 pub use snafu::{Snafu, Whatever};
-use std::path::PathBuf;
-use std::sync::Arc;
-use tiff::ColorType;
-use tiff::TiffError;
 
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub))]

@@ -1,7 +1,5 @@
 use crate::errors::{
-    dicom::{
-        CastValueSnafu, ConvertValueSnafu, InvalidValueSnafu, MissingPropertySnafu, PixelDataSnafu,
-    },
+    dicom::{ConvertValueSnafu, PixelDataSnafu},
     DicomError,
 };
 use dicom::core::header::HasLength;
@@ -12,7 +10,7 @@ use image::DynamicImage;
 use image::Pixel;
 use image::{GenericImage, GenericImageView};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 use std::cmp::{max, min};
 use std::fmt;
 

@@ -1,5 +1,5 @@
 PYTHON=pdm run python
-PYTHON_DIRS=tests
+PYTHON_DIRS=tests examples
 
 init:
 	which pdm || pip install --user pdm

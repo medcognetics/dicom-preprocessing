@@ -1,10 +1,12 @@
-import numpy as np
 import timeit
 from argparse import ArgumentParser, Namespace
-from pathlib import Path
-from dicom_preprocessing import load_tiff_u16, load_tiff_f32
-from PIL import Image
 from functools import partial
+from pathlib import Path
+
+import numpy as np
+from dicom_preprocessing import load_tiff_f32, load_tiff_u16
+from PIL import Image
+
 
 def read_pil(filepath: Path, fp32: bool = False):
     """Reads a multi-frame TIFF file using PIL and returns a stacked array."""
@@ -24,6 +26,7 @@ def read_pil(filepath: Path, fp32: bool = False):
         result = result.astype(np.float32) / delta
     return result
 
+
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("path", type=Path, help="Path to TIFF file")
@@ -37,10 +40,16 @@ def main(args: Namespace):
         raise FileNotFoundError(f"File not found: {args.path}")
 
     if args.fp32:
-        rust_fn = lambda p: load_tiff_f32(str(p))
+
+        def rust_fn(p):
+            return load_tiff_f32(str(p))
+
         pil_fn = partial(read_pil, fp32=True)
     else:
-        rust_fn = lambda p: load_tiff_u16(str(p))
+
+        def rust_fn(p):
+            return load_tiff_u16(str(p))
+
         pil_fn = partial(read_pil, fp32=False)
 
     print(f"The test file size is {Path(args.path).stat().st_size / 1024**2:.2f}MB")
@@ -55,8 +64,10 @@ def main(args: Namespace):
     print(f"rust: {t1:.3f}ms")
     print(f"pil: {t2:.3f}ms")
 
+
 def entrypoint():
     main(parse_args())
+
 
 if __name__ == "__main__":
     entrypoint()

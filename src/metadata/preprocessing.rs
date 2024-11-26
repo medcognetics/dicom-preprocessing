@@ -102,7 +102,9 @@ where
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         // First try to parse the image description as a tuple of u16 (page, total).
         // The first value is ignored, and filled with 0 to satisfy the TIFF spec.
-        let page_info = decoder.get_tag(Self::TAG)?.into_u16_vec().ok();
+        let page_info = decoder
+            .get_tag(Self::TAG)
+            .map_or(None, |tag| tag.into_u16_vec().ok());
         if let Some(page_info) = page_info {
             if let [_, total] = page_info.as_slice() {
                 return Ok(FrameCount(*total));
@@ -253,5 +255,27 @@ mod tests {
         let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
         let actual = PreprocessingMetadata::try_from(&mut tiff).unwrap();
         assert_eq!(metadata, actual);
+    }
+
+    #[test]
+    fn test_frame_count_fallback() {
+        // Create a multi-frame TIFF without explicit frame count tag
+        let temp_dir = tempdir().unwrap();
+        let temp_file_path = temp_dir.path().join("temp.tif");
+        let mut tiff = TiffEncoder::new(File::create(temp_file_path.clone()).unwrap()).unwrap();
+
+        // Write 3 frames
+        for _ in 0..3 {
+            let img = tiff
+                .new_image::<tiff::encoder::colortype::Gray16>(1, 1)
+                .unwrap();
+            let data: Vec<u16> = vec![0; 1];
+            img.write_data(data.as_slice()).unwrap();
+        }
+
+        // Read back and verify frame count
+        let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
+        let frame_count = FrameCount::try_from(&mut tiff).unwrap();
+        assert_eq!(frame_count, FrameCount(3));
     }
 }

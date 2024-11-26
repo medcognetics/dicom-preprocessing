@@ -4,6 +4,11 @@ version = "0.1.0"    # the current version, obeying semver
 authors = ["Scott Chase Waggener <chase.waggener@icloud.com>"]
 edition = "2021"
 
+[lib]
+name = "dicom_preprocessing"
+path = "src/lib.rs"
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
 dicom = { version = "0.8", features = ["image", "ndarray"] }
 dicom-pixeldata = { version = "0.8", features = ["openjp2", "rayon"] }
@@ -21,6 +26,11 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 num = "0.4"
 ndarray = "0.16"
+pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
+numpy = { version = "0.22", optional = true }
+
+[features]
+python = ["pyo3", "numpy"]
 
 [dev-dependencies]
 tempfile = "3.10"

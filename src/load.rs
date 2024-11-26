@@ -9,6 +9,7 @@ use snafu::{ResultExt, Snafu};
 use crate::color::{ColorError, DicomColorType};
 use crate::metadata::FrameCount;
 use ndarray::{s, Array, Array4};
+use crate::error::{DicomError};
 
 #[derive(Debug, Snafu)]
 pub enum LoadError {

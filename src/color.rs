@@ -7,34 +7,20 @@ use tiff::decoder::Decoder;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::ColorType;
 use tiff::TiffError;
+use crate::error::{DicomError, MissingPropertySnafu, CastPropertyValueSnafu};
 
 #[derive(Debug, Snafu)]
 pub enum ColorError {
-    #[snafu(display("Missing property: {}", name))]
-    MissingProperty {
-        name: &'static str,
+    DicomError {
+        #[snafu(source(from(DicomError, Box::new)))]
+        source: Box<DicomError>,
     },
-    #[snafu(display("Invalid property value: {}", name))]
-    CastPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
-        source: Box<dicom::core::value::CastValueError>,
-    },
-    #[snafu(display(
-        "Unsupported photometric interpretation: {}, {}",
-        bits_allocated,
-        photometric_interpretation
-    ))]
-    UnsupportedPhotometricInterpretation {
-        bits_allocated: u16,
-        photometric_interpretation: PhotometricInterpretation,
+    TiffError {
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
     },
     UnsupportedColorType {
         color_type: ColorType,
-    },
-    ParseFromTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
     },
 }
 
@@ -50,7 +36,7 @@ impl DicomColorType {
     pub fn try_new(
         bits_allocated: u16,
         photometric_interpretation: PhotometricInterpretation,
-    ) -> Result<Self, ColorError> {
+    ) -> Result<Self, DicomError> {
         match (bits_allocated, photometric_interpretation) {
             // Monochrome 16-bit
             (16, PhotometricInterpretation::Monochrome1)
@@ -62,7 +48,7 @@ impl DicomColorType {
             (8, PhotometricInterpretation::Rgb) => Ok(DicomColorType::RGB8(RGB8)),
             // Unsupported
             (bits_allocated, photometric_interpretation) => {
-                Err(ColorError::UnsupportedPhotometricInterpretation {
+                Err(DicomError::UnsupportedPhotometricInterpretation {
                     bits_allocated,
                     photometric_interpretation,
                 })
@@ -80,14 +66,14 @@ impl DicomColorType {
 }
 
 impl TryFrom<&FileDicomObject<InMemDicomObject>> for DicomColorType {
-    type Error = ColorError;
+    type Error = DicomError;
 
     /// Read the BitsAllocated and PhotometricInterpretation tags from the DICOM file
     /// and infer the appropriate color type.
     fn try_from(file: &FileDicomObject<InMemDicomObject>) -> Result<Self, Self::Error> {
         let bits_allocated = file
             .get(tags::BITS_ALLOCATED)
-            .ok_or(ColorError::MissingProperty {
+            .ok_or(DicomError::MissingPropertyError {
                 name: "Bits Allocated",
             })?
             .value()
@@ -97,7 +83,7 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for DicomColorType {
             })?;
         let photometric_interpretation = file
             .get(tags::PHOTOMETRIC_INTERPRETATION)
-            .ok_or(ColorError::MissingProperty {
+            .ok_or(DicomError::MissingPropertyError {
                 name: "Photometric Interpretation",
             })?
             .value()
@@ -138,7 +124,7 @@ impl TryFrom<ColorType> for DicomColorType {
 impl<R: Read + Seek> TryFrom<&mut Decoder<R>> for DicomColorType {
     type Error = ColorError;
     fn try_from(decoder: &mut Decoder<R>) -> Result<Self, Self::Error> {
-        let color_type = decoder.colortype().context(ParseFromTiffSnafu)?;
+        let color_type = decoder.colortype().context(TiffSnafu)?;
         Self::try_from(color_type)
     }
 }

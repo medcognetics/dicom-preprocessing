@@ -2,53 +2,21 @@ use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
 use std::io::BufWriter;
-use std::path::PathBuf;
+use std::path::Path;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
 use tiff::encoder::TiffEncoder;
-use tiff::TiffError;
 
 use snafu::{ResultExt, Snafu};
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::encoder::compression::{Lzw, Uncompressed};
 
 use crate::color::DicomColorType;
+use crate::errors::{
+    tiff::{IOSnafu, WriteSnafu},
+    DicomError, TiffError,
+};
 use crate::metadata::{PreprocessingMetadata, WriteTags};
-
-#[derive(Debug, Snafu)]
-pub enum SaveError {
-    #[snafu(display("Missing property: {}", name))]
-    MissingProperty {
-        name: &'static str,
-    },
-    #[snafu(display("Invalid property value: {}", name))]
-    CastPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
-        source: Box<dicom::core::value::CastValueError>,
-    },
-    #[snafu(display("could not create TIFF file {}", path.display()))]
-    CreateFile {
-        #[snafu(source(from(std::io::Error, Box::new)))]
-        source: Box<std::io::Error>,
-        path: PathBuf,
-    },
-    #[snafu(display("could not open TIFF file {}", path.display()))]
-    OpenTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-        path: PathBuf,
-    },
-    WriteToTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    ConvertImageToBytes,
-    WriteTags {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-}
 
 // Trait for saving a DynamicImage to a TIFF via a TiffEncoder under a given color type and compression
 pub trait SaveToTiff<C, D>
@@ -62,7 +30,7 @@ where
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
         compression: D,
-    ) -> Result<(), SaveError>;
+    ) -> Result<(), TiffError>;
 }
 
 pub struct TiffSaver {
@@ -80,19 +48,19 @@ macro_rules! impl_save_frame {
                 image: &DynamicImage,
                 metadata: &PreprocessingMetadata,
                 compression: $compression,
-            ) -> Result<(), SaveError> {
+            ) -> Result<(), TiffError> {
                 let (columns, rows) = image.dimensions();
-                let mut tiff = encoder
-                    .new_image_with_compression::<$color_type, _>(columns, rows, compression)
-                    .context(WriteToTiffSnafu)?;
+                let mut tiff = encoder.new_image_with_compression::<$color_type, _>(
+                    columns,
+                    rows,
+                    compression,
+                )?;
 
-                metadata
-                    .write_tags(&mut tiff)
-                    .map_err(|e| SaveError::WriteTags {
-                        source: Box::new(e),
-                    })?;
-                let bytes = image.$as_fn().ok_or(SaveError::ConvertImageToBytes)?;
-                tiff.write_data(bytes).context(WriteToTiffSnafu)?;
+                metadata.write_tags(&mut tiff)?;
+                let bytes = image.$as_fn().ok_or(TiffError::DynamicImageError {
+                    color_type: image.color(),
+                })?;
+                tiff.write_data(bytes)?;
                 Ok(())
             }
         }
@@ -122,14 +90,14 @@ impl TiffSaver {
         Self { compressor, color }
     }
 
-    pub fn open_tiff(&self, output: PathBuf) -> Result<TiffEncoder<BufWriter<File>>, SaveError> {
-        let file = File::create(&output).context(CreateFileSnafu {
-            path: output.clone(),
-        })?;
+    pub fn open_tiff<P: AsRef<Path>>(
+        &self,
+        output: P,
+    ) -> Result<TiffEncoder<BufWriter<File>>, TiffError> {
+        let output = output.as_ref();
+        let file = File::create(&output).context(IOSnafu { path: output })?;
         let file = BufWriter::new(file);
-        TiffEncoder::new(file).context(OpenTiffSnafu {
-            path: output.clone(),
-        })
+        TiffEncoder::new(file).context(WriteSnafu { path: output })
     }
 
     pub fn save(
@@ -137,7 +105,7 @@ impl TiffSaver {
         encoder: &mut TiffEncoder<BufWriter<File>>,
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
-    ) -> Result<(), SaveError> {
+    ) -> Result<(), TiffError> {
         macro_rules! save_with {
             ($color_type:ty, $compression:ty, $compressor:expr) => {
                 <TiffSaver as SaveToTiff<$color_type, $compression>>::save(

@@ -1,3 +1,9 @@
+use crate::errors::{
+    dicom::{
+        CastValueSnafu, ConvertValueSnafu, InvalidValueSnafu, MissingPropertySnafu, PixelDataSnafu,
+    },
+    DicomError,
+};
 use dicom::core::header::HasLength;
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -9,7 +15,6 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use snafu::{ResultExt, Snafu};
 use std::cmp::{max, min};
 use std::fmt;
-use crate::error::{DicomError, MissingPropertySnafu, CastValueSnafu, ConvertValueSnafu, InvalidValueSnafu, PixelDataSnafu, DicomRangeSnafu};
 
 #[derive(Debug, Clone, Copy)]
 pub enum VolumeHandler {
@@ -60,17 +65,15 @@ pub fn get_number_of_frames(file: &FileDicomObject<InMemDicomObject>) -> Result<
     let number_of_frames = file.get(tags::NUMBER_OF_FRAMES);
 
     let number_of_frames = match number_of_frames {
-        Some(elem) if !elem.is_empty() => {
-            elem.to_int::<i32>().context(ConvertValueSnafu {
-                name: "Number of Frames",
-            })?
-        }
+        Some(elem) if !elem.is_empty() => elem.to_int::<i32>().context(ConvertValueSnafu {
+            name: "Number of Frames",
+        })?,
         _ => 1,
     };
 
     match number_of_frames >= 1 {
         true => Ok(number_of_frames as u32),
-        false => Err(DicomError::InvalidValueError { 
+        false => Err(DicomError::InvalidValueError {
             name: "Number of Frames",
             value: number_of_frames.to_string(),
         }),
@@ -147,7 +150,7 @@ impl HandleVolume for KeepVolume {
                     .context(PixelDataSnafu)?
                     .to_dynamic_image(0)
                     .context(PixelDataSnafu)?;
-                Ok(result)
+                Ok::<DynamicImage, DicomError>(result)
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(result)
@@ -213,10 +216,10 @@ impl HandleVolume for MaxIntensity {
 
         // Validate the start/end relative to the number of frames
         if start >= end || start >= number_of_frames || end <= 0 {
-            return Err(DicomRangeSnafu {
-                start,
-                end,
-                number_of_frames,
+            return Err(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
             });
         }
 
@@ -245,10 +248,10 @@ impl HandleVolume for MaxIntensity {
 
         // Validate the start/end relative to the number of frames
         if start >= end || start >= number_of_frames || end <= 0 {
-            return Err(VolumeError::InvalidVolumeRange {
-                start,
-                end,
-                number_of_frames,
+            return Err(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
             });
         }
 
@@ -267,10 +270,10 @@ impl HandleVolume for MaxIntensity {
         if let Some(image) = image {
             Ok(vec![image?])
         } else {
-            Err(VolumeError::InvalidVolumeRange {
-                start,
-                end,
-                number_of_frames,
+            Err(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
             })
         }
     }

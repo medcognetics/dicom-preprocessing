@@ -1,3 +1,6 @@
+use crate::errors::{
+    dicom::CastValueSnafu, tiff::UnsupportedColorTypeSnafu, DicomError, TiffError,
+};
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::PhotometricInterpretation;
@@ -6,23 +9,7 @@ use std::io::{Read, Seek};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::ColorType;
-use tiff::TiffError;
-use crate::error::{DicomError, MissingPropertySnafu, CastPropertyValueSnafu};
-
-#[derive(Debug, Snafu)]
-pub enum ColorError {
-    DicomError {
-        #[snafu(source(from(DicomError, Box::new)))]
-        source: Box<DicomError>,
-    },
-    TiffError {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    UnsupportedColorType {
-        color_type: ColorType,
-    },
-}
+use tiff::TiffError as BaseTiffError;
 
 /// The color types we expect to encounter in DICOM files and support processing of
 pub enum DicomColorType {
@@ -78,7 +65,7 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for DicomColorType {
             })?
             .value()
             .uint16()
-            .context(CastPropertyValueSnafu {
+            .context(CastValueSnafu {
                 name: "Bits Allocated",
             })?;
         let photometric_interpretation = file
@@ -88,7 +75,7 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for DicomColorType {
             })?
             .value()
             .string()
-            .context(CastPropertyValueSnafu {
+            .context(CastValueSnafu {
                 name: "Photometric Interpretation",
             })?;
         let photometric_interpretation =
@@ -110,21 +97,21 @@ impl Into<ColorType> for DicomColorType {
 }
 
 impl TryFrom<ColorType> for DicomColorType {
-    type Error = ColorError;
+    type Error = TiffError;
     fn try_from(color_type: ColorType) -> Result<Self, Self::Error> {
         match color_type {
             ColorType::Gray(8) => Ok(DicomColorType::Gray8(Gray8)),
             ColorType::Gray(16) => Ok(DicomColorType::Gray16(Gray16)),
             ColorType::RGB(8) => Ok(DicomColorType::RGB8(RGB8)),
-            _ => Err(ColorError::UnsupportedColorType { color_type }),
+            _ => Err(TiffError::UnsupportedColorType { color_type }),
         }
     }
 }
 
 impl<R: Read + Seek> TryFrom<&mut Decoder<R>> for DicomColorType {
-    type Error = ColorError;
+    type Error = TiffError;
     fn try_from(decoder: &mut Decoder<R>) -> Result<Self, Self::Error> {
-        let color_type = decoder.colortype().context(TiffSnafu)?;
+        let color_type = decoder.colortype()?;
         Self::try_from(color_type)
     }
 }

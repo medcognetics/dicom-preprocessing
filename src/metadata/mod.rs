@@ -1,9 +1,9 @@
+use crate::errors::tiff::TiffError;
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
-use tiff::TiffError;
 
 pub mod resolution;
 pub use resolution::*;

@@ -6,19 +6,11 @@ use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::imageops::FilterType;
 use snafu::{ResultExt, Snafu};
 
+use crate::errors::DicomError;
 use crate::metadata::{PreprocessingMetadata, Resolution};
-use crate::transform::volume::VolumeError;
 use crate::transform::{
     Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
-
-#[derive(Debug, Snafu)]
-pub enum PreprocessError {
-    DecodePixelData {
-        #[snafu(source(from(VolumeError, Box::new)))]
-        source: Box<VolumeError>,
-    },
-}
 
 // Responsible for preprocessing image data before saving
 #[derive(Debug, Clone, Copy)]
@@ -107,13 +99,12 @@ impl Preprocessor {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
         parallel: bool,
-    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), PreprocessError> {
+    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
         let image_data = match parallel {
             false => self.volume_handler.decode_volume(file),
             true => self.volume_handler.par_decode_volume(file),
-        }
-        .context(DecodePixelDataSnafu)?;
+        }?;
 
         // Try to determine the resolution from pixel spacing attributes
         let resolution = Resolution::try_from(file).ok();

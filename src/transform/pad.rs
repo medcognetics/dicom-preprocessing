@@ -8,24 +8,12 @@ use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
-use tiff::TiffError;
 
+use crate::errors::tiff::{CardinalitySnafu, ReadSnafu, TiffError};
 use crate::metadata::WriteTags;
 use crate::transform::Transform;
 
 pub const ACTIVE_AREA: u16 = 50829;
-
-#[derive(Debug, Snafu)]
-pub enum PaddingError {
-    ReadTiffTag {
-        name: &'static str,
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    InvalidLength {
-        size: usize,
-    },
-}
 
 #[derive(Clone, Debug, clap::ValueEnum, Default, Copy)]
 pub enum PaddingDirection {
@@ -166,13 +154,11 @@ impl<T> TryFrom<&mut Decoder<T>> for Padding
 where
     T: Read + Seek,
 {
-    type Error = PaddingError;
+    type Error = TiffError;
 
     /// Read the padding metadata from a TIFF file
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
-        let active_area = decoder
-            .get_tag_u32_vec(Tag::Unknown(ACTIVE_AREA))
-            .context(ReadTiffTagSnafu { name: "ActiveArea" })?;
+        let active_area = decoder.get_tag_u32_vec(Tag::Unknown(ACTIVE_AREA))?;
         Padding::try_from(active_area)
     }
 }
@@ -195,10 +181,14 @@ impl From<(u32, u32, u32, u32)> for Padding {
 }
 
 impl TryFrom<Vec<u32>> for Padding {
-    type Error = PaddingError;
+    type Error = TiffError;
     fn try_from(vec: Vec<u32>) -> Result<Self, Self::Error> {
         if vec.len() != Self::TAG_CARDINALITY {
-            return Err(PaddingError::InvalidLength { size: vec.len() });
+            return Err(TiffError::CardinalityError {
+                name: "ActiveArea",
+                actual: vec.len(),
+                expected: Self::TAG_CARDINALITY,
+            });
         }
         Ok((vec[0], vec[1], vec[2], vec[3]).into())
     }

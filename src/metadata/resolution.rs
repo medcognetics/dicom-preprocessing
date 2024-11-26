@@ -41,13 +41,27 @@ where
             message: "invalid resolution unit".to_string(),
         })?;
 
-        // Parse x resolution
-        let x_resolution = decoder.get_tag_u32_vec(tiff::tags::Tag::XResolution)?;
-        let x_resolution = x_resolution[0] as f32 / x_resolution[1] as f32;
+        // Parse x resolution from a rational
+        let x_resolution = if let [x_numerator, x_denominator] =
+            decoder.get_tag_u32_vec(tiff::tags::Tag::XResolution)?[..]
+        {
+            x_numerator as f32 / x_denominator as f32
+        } else {
+            return Err(TiffError::InvalidPropertyError {
+                name: "X Resolution",
+            });
+        };
 
-        // Parse y resolution
-        let y_resolution = decoder.get_tag_u32_vec(tiff::tags::Tag::YResolution)?;
-        let y_resolution = y_resolution[0] as f32 / y_resolution[1] as f32;
+        // Parse y resolution from a rational
+        let y_resolution = if let [y_numerator, y_denominator] =
+            decoder.get_tag_u32_vec(tiff::tags::Tag::YResolution)?[..]
+        {
+            y_numerator as f32 / y_denominator as f32
+        } else {
+            return Err(TiffError::InvalidPropertyError {
+                name: "Y Resolution",
+            });
+        };
 
         // Convert to pixels per mm
         let (x_resolution, y_resolution) = match unit {

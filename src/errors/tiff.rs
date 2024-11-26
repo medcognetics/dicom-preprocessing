@@ -32,6 +32,9 @@ pub enum TiffError {
     #[snafu(display("missing TIFF tag: {}", name))]
     MissingPropertyError { name: &'static str },
 
+    #[snafu(display("invalid TIFF tag: {}", name))]
+    InvalidPropertyError { name: &'static str },
+
     #[snafu(display("invalid frame index: {} of {}", frame, num_frames))]
     InvalidFrameIndex { frame: usize, num_frames: usize },
 

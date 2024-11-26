@@ -141,3 +141,4 @@ coverage.xml
 .vscode/*.code-workspace
 *.dcm
 *.tiff
+.venv/

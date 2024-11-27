@@ -1,7 +1,5 @@
-use criterion::{
-    black_box, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
-};
-use dicom_preprocessing::file::{Inode, InodeSort};
+use criterion::{measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput};
+use dicom_preprocessing::file::InodeSort;
 use std::path::PathBuf;
 use tempfile::tempdir;
 

@@ -8,9 +8,8 @@ use std::path::PathBuf;
 use tempfile::tempdir;
 
 const DUMMY_CONTENT: &[u8] = b"test content";
-const NUM_FILES: usize = 1000;
 
-trait Setup {
+pub trait Setup {
     fn setup<P: AsRef<Path>>(&self, path: P) -> Result<usize, std::io::Error>;
 
     fn subpath<P: AsRef<Path>>(&self, dir: P, index: usize) -> PathBuf;

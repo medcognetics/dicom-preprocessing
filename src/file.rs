@@ -1,35 +1,18 @@
-use clap::error::ErrorKind;
-use clap::Parser;
-use dicom::dictionary_std::tags;
 use dicom::object::open_file;
+use dicom::object::DefaultDicomObject;
 use dicom::object::ReadError;
-use dicom::object::{DefaultDicomObject, FileDicomObject, InMemDicomObject};
-use indicatif::{ProgressFinish, ProgressIterator};
 use itertools::Itertools;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::fmt;
 use std::fs::File;
-use std::hash::Hash;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::str::FromStr;
-use tiff::encoder::compression::Compressor;
-use tracing::{error, Level};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
-use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
-use std::num::NonZero;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
-use std::thread::available_parallelism;
-
-use crate::errors::{
-    dicom::{ConvertValueSnafu, MissingPropertySnafu, ReadSnafu},
-    DicomError, TiffError,
-};
 
 pub const DICM_PREFIX: &[u8; 4] = b"DICM";
 pub const DICM_PREFIX_LOCATION: u64 = 128;

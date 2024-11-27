@@ -1,5 +1,4 @@
 use image::{DynamicImage, GenericImageView, Pixel};
-use snafu::{ResultExt, Snafu};
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
@@ -7,30 +6,14 @@ use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
-use tiff::TiffError;
 
+use crate::errors::tiff::TiffError;
 use crate::metadata::WriteTags;
 use crate::transform::Transform;
 
 pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
 pub const DEFAULT_CROP_SIZE: u16 = 50720;
 const DEFAULT_CHECK_MAX: bool = false;
-
-#[derive(Debug, Snafu)]
-pub enum CropError {
-    ReadTiffTag {
-        name: &'static str,
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    InvalidLength {
-        size: usize,
-    },
-    InvalidTagLength {
-        name: &'static str,
-        size: usize,
-    },
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Crop {
@@ -199,34 +182,28 @@ impl<T> TryFrom<&mut Decoder<T>> for Crop
 where
     T: Read + Seek,
 {
-    type Error = CropError;
+    type Error = TiffError;
 
     /// Read the crop metadata from a TIFF file
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         // Read and parse crop origin
-        let origin = decoder
-            .get_tag_u32_vec(Tag::Unknown(DEFAULT_CROP_ORIGIN))
-            .context(ReadTiffTagSnafu {
-                name: "DefaultCropOrigin",
-            })?;
+        let origin = decoder.get_tag_u32_vec(Tag::Unknown(DEFAULT_CROP_ORIGIN))?;
         if origin.len() != 2 {
-            return Err(CropError::InvalidTagLength {
+            return Err(TiffError::CardinalityError {
                 name: "DefaultCropOrigin",
-                size: origin.len(),
+                actual: origin.len(),
+                expected: Self::TAG_CARDINALITY,
             });
         }
         let (origin_x, origin_y) = (origin[0], origin[1]);
 
         // Read and parse crop size
-        let size = decoder
-            .get_tag_u32_vec(Tag::Unknown(DEFAULT_CROP_SIZE))
-            .context(ReadTiffTagSnafu {
-                name: "DefaultCropSize",
-            })?;
+        let size = decoder.get_tag_u32_vec(Tag::Unknown(DEFAULT_CROP_SIZE))?;
         if size.len() != Self::TAG_CARDINALITY {
-            return Err(CropError::InvalidTagLength {
+            return Err(TiffError::CardinalityError {
                 name: "DefaultCropSize",
-                size: size.len(),
+                actual: size.len(),
+                expected: Self::TAG_CARDINALITY,
             });
         }
         let (width, height) = (size[0], size[1]);

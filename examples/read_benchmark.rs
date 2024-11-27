@@ -6,14 +6,15 @@ use rand::SeedableRng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use rust_search::SearchBuilder;
+use snafu::ResultExt;
 use std::fs::File;
 use std::io::BufReader;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::thread::available_parallelism;
 use tiff::decoder::Decoder;
-use tiff::TiffError;
 
+use dicom_preprocessing::errors::{tiff::IOSnafu, TiffError};
 use dicom_preprocessing::load::LoadFromTiff;
 use dicom_preprocessing::metadata::PreprocessingMetadata;
 
@@ -77,7 +78,7 @@ fn sort_by_inode(files: &mut Vec<PathBuf>) {
 
 fn open_tiff(path: &PathBuf, seed: u64) -> Result<Vec<usize>, TiffError> {
     // Open the file and build a decoder
-    let file = File::open(path)?;
+    let file = File::open(path).context(IOSnafu { path: path.clone() })?;
     let mut decoder = Decoder::new(BufReader::new(file))?;
 
     // Read metadata injected by the preprocessor

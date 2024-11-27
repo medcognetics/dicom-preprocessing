@@ -4,8 +4,8 @@ use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, TiffKind};
 use tiff::tags::Tag;
-use tiff::TiffError;
 
+use crate::errors::tiff::TiffError;
 use crate::metadata::{Resolution, WriteTags};
 use crate::transform::{Crop, Padding, Resize};
 

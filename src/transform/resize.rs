@@ -8,25 +8,12 @@ use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
-use tiff::TiffError;
 
+use crate::errors::tiff::TiffError;
 use crate::metadata::{Resolution, WriteTags};
 use crate::transform::Transform;
-use snafu::{ResultExt, Snafu};
 
 pub const DEFAULT_SCALE: u16 = 50718;
-
-#[derive(Debug, Snafu)]
-pub enum ResizeError {
-    ReadTiffTag {
-        name: &'static str,
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    InvalidLength {
-        size: usize,
-    },
-}
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum DisplayFilterType {
@@ -132,15 +119,11 @@ impl<T> TryFrom<&mut Decoder<T>> for Resize
 where
     T: Read + Seek,
 {
-    type Error = ResizeError;
+    type Error = TiffError;
 
     /// Read the resize metadata from a TIFF file
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
-        let scale = decoder
-            .get_tag_f32_vec(Tag::Unknown(DEFAULT_SCALE))
-            .context(ReadTiffTagSnafu {
-                name: "DefaultScale",
-            })?;
+        let scale = decoder.get_tag_f32_vec(Tag::Unknown(DEFAULT_SCALE))?;
         Resize::try_from(scale)
     }
 }
@@ -162,10 +145,14 @@ impl From<(f32, f32)> for Resize {
 }
 
 impl TryFrom<Vec<f32>> for Resize {
-    type Error = ResizeError;
+    type Error = TiffError;
     fn try_from(vec: Vec<f32>) -> Result<Self, Self::Error> {
         if vec.len() != Self::TAG_CARDINALITY {
-            return Err(ResizeError::InvalidLength { size: vec.len() });
+            return Err(TiffError::CardinalityError {
+                name: "DefaultScale",
+                actual: vec.len(),
+                expected: Self::TAG_CARDINALITY,
+            });
         }
         Ok((vec[0], vec[1]).into())
     }

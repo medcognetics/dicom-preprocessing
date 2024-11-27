@@ -1,61 +1,12 @@
-use std::fs::File;
-use std::io::{BufReader, Read, Seek};
-use std::path::PathBuf;
+use std::io::{Read, Seek};
 use tiff::decoder::{Decoder, DecodingResult};
-use tiff::TiffError;
 
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 
-use crate::color::{ColorError, DicomColorType};
+use crate::color::DicomColorType;
+use crate::errors::{tiff::SeekToFrameSnafu, TiffError};
 use crate::metadata::FrameCount;
 use ndarray::{s, Array, Array4};
-
-#[derive(Debug, Snafu)]
-pub enum LoadError {
-    ParseColorType {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    #[snafu(display("could not open TIFF file {}", path.display()))]
-    OpenTiff {
-        #[snafu(source(from(std::io::Error, Box::new)))]
-        source: Box<std::io::Error>,
-        path: PathBuf,
-    },
-    #[snafu(display("could not read TIFF file {}", path.display()))]
-    ReadTiff {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-        path: PathBuf,
-    },
-    DecodeImage {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    DimensionsError {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    UnsupportedColorType {
-        #[snafu(source(from(ColorError, Box::new)))]
-        source: Box<ColorError>,
-    },
-    #[snafu(display("could not convert color type from {:?} to {}", input, target))]
-    ConvertColorType {
-        input: DecodingResult,
-        target: &'static str,
-    },
-    InvalidFrameIndex {
-        frame: usize,
-        num_frames: usize,
-    },
-    SeekToFrame {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-        frame: usize,
-        num_frames: usize,
-    },
-}
 
 /// The order of the channels in the loaded image
 #[derive(Clone, Copy, Debug)]
@@ -103,14 +54,12 @@ impl Dimensions {
 }
 
 impl<R: Read + Seek> TryFrom<&mut Decoder<R>> for Dimensions {
-    type Error = LoadError;
+    type Error = TiffError;
     fn try_from(decoder: &mut Decoder<R>) -> Result<Self, Self::Error> {
-        let (width, height) = decoder.dimensions().context(DimensionsSnafu)?;
-        let color_type = decoder.colortype().context(ParseColorTypeSnafu)?;
-        let color_type = DicomColorType::try_from(color_type).context(UnsupportedColorTypeSnafu)?;
-        let num_frames: u16 = FrameCount::try_from(decoder)
-            .context(DimensionsSnafu)?
-            .into();
+        let (width, height) = decoder.dimensions()?;
+        let color_type = decoder.colortype()?;
+        let color_type = DicomColorType::try_from(color_type)?;
+        let num_frames: u16 = FrameCount::try_from(decoder)?.into();
         Ok(Self {
             width: width as usize,
             height: height as usize,
@@ -121,18 +70,12 @@ impl<R: Read + Seek> TryFrom<&mut Decoder<R>> for Dimensions {
 }
 
 pub trait LoadFromTiff<T: Clone + num::Zero> {
-    fn to_vec(decoded: DecodingResult) -> Result<Vec<T>, LoadError>;
-
-    /// Open the TIFF file, producing a decoder
-    fn open(path: PathBuf) -> Result<Decoder<BufReader<File>>, LoadError> {
-        let file = BufReader::new(File::open(&path).context(OpenTiffSnafu { path: path.clone() })?);
-        Decoder::new(file).context(ReadTiffSnafu { path })
-    }
+    fn to_vec(decoded: DecodingResult) -> Result<Vec<T>, TiffError>;
 
     fn decode_frames<R: Read + Seek>(
         decoder: &mut Decoder<R>,
         frames: impl Iterator<Item = usize>,
-    ) -> Result<Array4<T>, LoadError> {
+    ) -> Result<Array4<T>, TiffError> {
         let frames = frames.into_iter().collect::<Vec<_>>();
         let num_frames = frames.len();
 
@@ -145,7 +88,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         // Validate that the requested frames are within the range of the TIFF file
         let max_frame = frames.iter().max().unwrap().clone();
         if max_frame >= dimensions.num_frames {
-            return Err(LoadError::InvalidFrameIndex {
+            return Err(TiffError::InvalidFrameIndex {
                 frame: max_frame,
                 num_frames: dimensions.num_frames,
             });
@@ -159,7 +102,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
                 frame,
                 num_frames: dimensions.num_frames,
             })?;
-            let image = decoder.read_image().context(DecodeImageSnafu)?;
+            let image = decoder.read_image()?;
             let image = Self::to_vec(image)?;
             return Ok(
                 Array::from_shape_vec(decoded_dimensions.shape(&channel_order), image).unwrap(),
@@ -176,7 +119,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
             // TODO: It would be nice to decode directly into the array, without the intermediate vector.
             // However, read_image() has a complex implementation so it is non-trivial to reimplement.
             // Maybe revisit this in the future.
-            let image = decoder.read_image().context(DecodeImageSnafu)?;
+            let image = decoder.read_image()?;
             let image = Self::to_vec(image)?;
             let mut slice = array.slice_mut(s![i, .., .., ..]);
             let new = Array::from_shape_vec(decoded_dimensions.frame_shape(&channel_order), image)
@@ -187,47 +130,41 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         Ok(array)
     }
 
-    fn decode<R: Read + Seek>(decoder: &mut Decoder<R>) -> Result<Array4<T>, LoadError> {
-        let frame_count = FrameCount::try_from(&mut *decoder).context(DimensionsSnafu)?;
+    fn decode<R: Read + Seek>(decoder: &mut Decoder<R>) -> Result<Array4<T>, TiffError> {
+        let frame_count = FrameCount::try_from(&mut *decoder)?;
         let frames = 0..(frame_count.into());
         Self::decode_frames(decoder, frames)
     }
 }
 
 impl LoadFromTiff<u8> for Array4<u8> {
-    fn to_vec(decoded: DecodingResult) -> Result<Vec<u8>, LoadError> {
+    fn to_vec(decoded: DecodingResult) -> Result<Vec<u8>, TiffError> {
         match decoded {
             DecodingResult::U8(image) => Ok(image),
             DecodingResult::U16(image) => Ok(image
                 .iter()
                 .map(|&x| (x as u8) * (u8::MAX / u16::MAX as u8))
                 .collect()),
-            _ => Err(LoadError::ConvertColorType {
-                input: decoded,
-                target: "u8",
-            }),
+            _ => Err(TiffError::UnsupportedDataType { data_type: decoded }),
         }
     }
 }
 
 impl LoadFromTiff<u16> for Array4<u16> {
-    fn to_vec(decoded: DecodingResult) -> Result<Vec<u16>, LoadError> {
+    fn to_vec(decoded: DecodingResult) -> Result<Vec<u16>, TiffError> {
         match decoded {
             DecodingResult::U8(image) => Ok(image
                 .iter()
                 .map(|&x| (x as u16) * (u16::MAX / u8::MAX as u16))
                 .collect()),
             DecodingResult::U16(image) => Ok(image),
-            _ => Err(LoadError::ConvertColorType {
-                input: decoded,
-                target: "u16",
-            }),
+            _ => Err(TiffError::UnsupportedDataType { data_type: decoded }),
         }
     }
 }
 
 impl LoadFromTiff<f32> for Array4<f32> {
-    fn to_vec(decoded: DecodingResult) -> Result<Vec<f32>, LoadError> {
+    fn to_vec(decoded: DecodingResult) -> Result<Vec<f32>, TiffError> {
         match decoded {
             DecodingResult::U8(image) => Ok(image
                 .into_iter()
@@ -237,10 +174,7 @@ impl LoadFromTiff<f32> for Array4<f32> {
                 .into_iter()
                 .map(|x| x as f32 / u16::MAX as f32)
                 .collect()),
-            _ => Err(LoadError::ConvertColorType {
-                input: decoded,
-                target: "f32",
-            }),
+            _ => Err(TiffError::UnsupportedDataType { data_type: decoded }),
         }
     }
 }
@@ -249,6 +183,8 @@ impl LoadFromTiff<f32> for Array4<f32> {
 mod tests {
     use super::*;
     use dicom::object::open_file;
+    use std::fs::File;
+    use std::io::BufReader;
     use tempfile;
 
     use crate::preprocess::Preprocessor;

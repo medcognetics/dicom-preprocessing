@@ -1,3 +1,7 @@
+use crate::errors::{
+    dicom::{ConvertValueSnafu, PixelDataSnafu},
+    DicomError,
+};
 use dicom::core::header::HasLength;
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -6,44 +10,9 @@ use image::DynamicImage;
 use image::Pixel;
 use image::{GenericImage, GenericImageView};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 use std::cmp::{max, min};
 use std::fmt;
-
-#[derive(Debug, Snafu)]
-pub enum VolumeError {
-    #[snafu(display("Missing property: {}", name))]
-    MissingProperty { name: &'static str },
-    #[snafu(display("Invalid property value: {}", name))]
-    InvalidPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
-        source: Box<dicom::core::value::ConvertValueError>,
-    },
-    #[snafu(display("Invalid number of frames: {}", value))]
-    InvalidNumberOfFrames { value: i32 },
-    #[snafu(display("Invalid property value: {}", name))]
-    CastPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::CastValueError, Box::new)))]
-        source: Box<dicom::core::value::CastValueError>,
-    },
-    DecodePixelData {
-        #[snafu(source(from(dicom::pixeldata::Error, Box::new)))]
-        source: Box<dicom::pixeldata::Error>,
-    },
-    #[snafu(display(
-        "Invalid volume range: start={}, end={}, number_of_frames={}",
-        start,
-        end,
-        number_of_frames
-    ))]
-    InvalidVolumeRange {
-        start: u32,
-        end: u32,
-        number_of_frames: u32,
-    },
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum VolumeHandler {
@@ -90,22 +59,21 @@ impl fmt::Display for DisplayVolumeHandler {
     }
 }
 
-pub fn get_number_of_frames(file: &FileDicomObject<InMemDicomObject>) -> Result<u32, VolumeError> {
+pub fn get_number_of_frames(file: &FileDicomObject<InMemDicomObject>) -> Result<u32, DicomError> {
     let number_of_frames = file.get(tags::NUMBER_OF_FRAMES);
 
     let number_of_frames = match number_of_frames {
-        Some(elem) if !elem.is_empty() => {
-            elem.to_int::<i32>().context(InvalidPropertyValueSnafu {
-                name: "Number of Frames",
-            })?
-        }
+        Some(elem) if !elem.is_empty() => elem.to_int::<i32>().context(ConvertValueSnafu {
+            name: "Number of Frames",
+        })?,
         _ => 1,
     };
 
     match number_of_frames >= 1 {
         true => Ok(number_of_frames as u32),
-        false => Err(VolumeError::InvalidNumberOfFrames {
-            value: number_of_frames,
+        false => Err(DicomError::InvalidValueError {
+            name: "Number of Frames",
+            value: number_of_frames.to_string(),
         }),
     }
 }
@@ -115,20 +83,20 @@ pub trait HandleVolume {
     fn decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError>;
+    ) -> Result<Vec<DynamicImage>, DicomError>;
 
     /// Decode each frame in parallel and handle the volume
     fn par_decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError>;
+    ) -> Result<Vec<DynamicImage>, DicomError>;
 }
 
 impl HandleVolume for VolumeHandler {
     fn decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         match self {
             VolumeHandler::Keep(handler) => handler.decode_volume(file),
             VolumeHandler::CentralSlice(handler) => handler.decode_volume(file),
@@ -139,7 +107,7 @@ impl HandleVolume for VolumeHandler {
     fn par_decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         match self {
             VolumeHandler::Keep(handler) => handler.par_decode_volume(file),
             VolumeHandler::CentralSlice(handler) => handler.par_decode_volume(file),
@@ -155,14 +123,14 @@ impl HandleVolume for KeepVolume {
     fn decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames = get_number_of_frames(file)?;
         let mut image_data = Vec::with_capacity(number_of_frames as usize);
         for frame_number in 0..number_of_frames {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
-                .context(DecodePixelDataSnafu)?;
-            image_data.push(decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?);
+                .context(PixelDataSnafu)?;
+            image_data.push(decoded.to_dynamic_image(0).context(PixelDataSnafu)?);
         }
         Ok(image_data)
     }
@@ -170,17 +138,17 @@ impl HandleVolume for KeepVolume {
     fn par_decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames = get_number_of_frames(file)?;
         let result = (0..number_of_frames)
             .into_par_iter()
             .map(|frame| {
                 let result = file
                     .decode_pixel_data_frame(frame)
-                    .context(DecodePixelDataSnafu)?
+                    .context(PixelDataSnafu)?
                     .to_dynamic_image(0)
-                    .context(DecodePixelDataSnafu)?;
-                Ok(result)
+                    .context(PixelDataSnafu)?;
+                Ok::<DynamicImage, DicomError>(result)
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(result)
@@ -194,20 +162,20 @@ impl HandleVolume for CentralSlice {
     fn decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames = get_number_of_frames(file)?;
         let central_frame = number_of_frames / 2;
         let decoded = file
             .decode_pixel_data_frame(central_frame)
-            .context(DecodePixelDataSnafu)?;
-        let image = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
+            .context(PixelDataSnafu)?;
+        let image = decoded.to_dynamic_image(0).context(PixelDataSnafu)?;
         Ok(vec![image])
     }
 
     fn par_decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         // Since there is only one frame, we can just decode it serially
         self.decode_volume(file)
     }
@@ -239,30 +207,30 @@ impl HandleVolume for MaxIntensity {
     fn decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames = get_number_of_frames(file)?;
         let start = min(number_of_frames, self.skip_start);
         let end = max(0, number_of_frames - self.skip_end);
 
         // Validate the start/end relative to the number of frames
         if start >= end || start >= number_of_frames || end <= 0 {
-            return Err(VolumeError::InvalidVolumeRange {
-                start,
-                end,
-                number_of_frames,
+            return Err(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
             });
         }
 
         let decoded = file
             .decode_pixel_data_frame(start)
-            .context(DecodePixelDataSnafu)?;
+            .context(PixelDataSnafu)?;
 
-        let mut image = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
+        let mut image = decoded.to_dynamic_image(0).context(PixelDataSnafu)?;
         for frame_number in (start + 1)..end {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
-                .context(DecodePixelDataSnafu)?;
-            let frame = decoded.to_dynamic_image(0).context(DecodePixelDataSnafu)?;
+                .context(PixelDataSnafu)?;
+            let frame = decoded.to_dynamic_image(0).context(PixelDataSnafu)?;
             image = Self::reduce(image, frame);
         }
         Ok(vec![image])
@@ -271,17 +239,17 @@ impl HandleVolume for MaxIntensity {
     fn par_decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, VolumeError> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames = get_number_of_frames(file)?;
         let start = min(number_of_frames, self.skip_start);
         let end = max(0, number_of_frames - self.skip_end);
 
         // Validate the start/end relative to the number of frames
         if start >= end || start >= number_of_frames || end <= 0 {
-            return Err(VolumeError::InvalidVolumeRange {
-                start,
-                end,
-                number_of_frames,
+            return Err(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
             });
         }
 
@@ -290,20 +258,20 @@ impl HandleVolume for MaxIntensity {
             .map(|frame_number| {
                 let frame = file
                     .decode_pixel_data_frame(frame_number)
-                    .context(DecodePixelDataSnafu)?
+                    .context(PixelDataSnafu)?
                     .to_dynamic_image(0)
-                    .context(DecodePixelDataSnafu)?;
-                Ok::<DynamicImage, VolumeError>(frame)
+                    .context(PixelDataSnafu)?;
+                Ok::<DynamicImage, DicomError>(frame)
             })
             .try_reduce_with(|image, frame| Ok(Self::reduce(image, frame)));
 
         if let Some(image) = image {
             Ok(vec![image?])
         } else {
-            Err(VolumeError::InvalidVolumeRange {
-                start,
-                end,
-                number_of_frames,
+            Err(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
             })
         }
     }

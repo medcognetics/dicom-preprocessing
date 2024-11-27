@@ -1,51 +1,20 @@
+use crate::errors::dicom::{ConvertValueSnafu, DicomError, ParseFloatSnafu};
+use crate::errors::tiff::TiffError;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, Rational, TiffKind};
 use tiff::tags::ResolutionUnit;
-use tiff::TiffError;
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use snafu::{ResultExt, Snafu};
+use snafu::ResultExt;
 
 use crate::metadata::WriteTags;
 
 const MM_PER_CM: f32 = 10.0;
 const MM_PER_IN: f32 = 25.4;
-
-#[derive(Debug, Snafu)]
-pub enum ResolutionError {
-    MissingProperty {
-        name: &'static str,
-    },
-    InvalidPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
-        source: Box<dicom::core::value::ConvertValueError>,
-    },
-    ParsePixelSpacing {
-        #[snafu(source(from(std::num::ParseFloatError, Box::new)))]
-        source: Box<std::num::ParseFloatError>,
-    },
-    WriteTags {
-        name: &'static str,
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    InvalidResolutionUnit {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-    CastResolutionUnit {
-        val: u16,
-    },
-    InvalidResolution {
-        #[snafu(source(from(TiffError, Box::new)))]
-        source: Box<TiffError>,
-    },
-}
 
 #[derive(Debug, PartialEq)]
 pub struct Resolution {
@@ -57,38 +26,42 @@ impl<T> TryFrom<&mut Decoder<T>> for Resolution
 where
     T: Read + Seek,
 {
-    type Error = ResolutionError;
+    type Error = TiffError;
 
     // Extract resolution metadata from a TIFF decoder
-    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, ResolutionError> {
+    fn try_from(decoder: &mut Decoder<T>) -> Result<Self, TiffError> {
         // Parse resolution unit
         let unit = decoder
             .get_tag(tiff::tags::Tag::ResolutionUnit)
-            .map_err(|_| ResolutionError::MissingProperty {
+            .map_err(|_| TiffError::MissingPropertyError {
                 name: "Resolution Unit",
             })?
-            .into_u16()
-            .map_err(|s| ResolutionError::InvalidResolutionUnit {
-                source: Box::new(s),
-            })?;
-        let unit = ResolutionUnit::from_u16(unit)
-            .ok_or(ResolutionError::CastResolutionUnit { val: unit })?;
+            .into_u16()?;
+        let unit = ResolutionUnit::from_u16(unit).ok_or(TiffError::Other {
+            message: "invalid resolution unit".to_string(),
+        })?;
 
-        // Parse x resolution
-        let x_resolution = decoder
-            .get_tag_u32_vec(tiff::tags::Tag::XResolution)
-            .map_err(|s| ResolutionError::InvalidResolution {
-                source: Box::new(s),
-            })?;
-        let x_resolution = x_resolution[0] as f32 / x_resolution[1] as f32;
+        // Parse x resolution from a rational
+        let x_resolution = if let [x_numerator, x_denominator] =
+            decoder.get_tag_u32_vec(tiff::tags::Tag::XResolution)?[..]
+        {
+            x_numerator as f32 / x_denominator as f32
+        } else {
+            return Err(TiffError::InvalidPropertyError {
+                name: "X Resolution",
+            });
+        };
 
-        // Parse y resolution
-        let y_resolution = decoder
-            .get_tag_u32_vec(tiff::tags::Tag::YResolution)
-            .map_err(|s| ResolutionError::InvalidResolution {
-                source: Box::new(s),
-            })?;
-        let y_resolution = y_resolution[0] as f32 / y_resolution[1] as f32;
+        // Parse y resolution from a rational
+        let y_resolution = if let [y_numerator, y_denominator] =
+            decoder.get_tag_u32_vec(tiff::tags::Tag::YResolution)?[..]
+        {
+            y_numerator as f32 / y_denominator as f32
+        } else {
+            return Err(TiffError::InvalidPropertyError {
+                name: "Y Resolution",
+            });
+        };
 
         // Convert to pixels per mm
         let (x_resolution, y_resolution) = match unit {
@@ -150,19 +123,19 @@ impl From<(f32, f32)> for Resolution {
 }
 
 impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
-    type Error = ResolutionError;
+    type Error = DicomError;
 
     fn try_from(file: &FileDicomObject<InMemDicomObject>) -> Result<Self, Self::Error> {
         // Read the spacing, first from the Pixel Spacing tag, then from the Imager Pixel Spacing tag.
         let spacing = file
             .get(tags::PIXEL_SPACING)
             .or_else(|| file.get(tags::IMAGER_PIXEL_SPACING))
-            .ok_or(ResolutionError::MissingProperty {
+            .ok_or(DicomError::MissingPropertyError {
                 name: "Pixel Spacing",
             })?
             .value()
             .to_str()
-            .context(InvalidPropertyValueSnafu {
+            .context(ConvertValueSnafu {
                 name: "Pixel Spacing",
             })?;
 
@@ -170,19 +143,19 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
         let mut spacing_iter = spacing.split('\\');
         let pixel_spacing_mm_y = spacing_iter
             .next()
-            .ok_or(ResolutionError::MissingProperty {
+            .ok_or(DicomError::MissingPropertyError {
                 name: "Pixel Spacing",
             })?
             .parse::<f32>()
-            .context(ParsePixelSpacingSnafu)?;
+            .context(ParseFloatSnafu)?;
 
         let pixel_spacing_mm_x = spacing_iter
             .next()
-            .ok_or(ResolutionError::MissingProperty {
+            .ok_or(DicomError::MissingPropertyError {
                 name: "Pixel Spacing",
             })?
             .parse::<f32>()
-            .context(ParsePixelSpacingSnafu)?;
+            .context(ParseFloatSnafu)?;
 
         // Convert to pixels per mm
         Ok((1.0 / pixel_spacing_mm_x, 1.0 / pixel_spacing_mm_y).into())

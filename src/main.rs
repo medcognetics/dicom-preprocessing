@@ -4,7 +4,7 @@ use clap::error::ErrorKind;
 use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
-use dicom::object::ReadError;
+use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;
@@ -24,50 +24,43 @@ use std::num::NonZero;
 use std::path::Path;
 use std::thread::available_parallelism;
 
-use dicom_preprocessing::color::ColorError;
-use dicom_preprocessing::preprocess::PreprocessError;
-use dicom_preprocessing::save::{SaveError, TiffSaver};
+use dicom_preprocessing::errors::{
+    dicom::{ConvertValueSnafu, MissingPropertySnafu, ReadSnafu},
+    DicomError, TiffError,
+};
+use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
     #[snafu(display("Invalid source path: {}", path.display()))]
     InvalidSourcePath { path: PathBuf },
+
     #[snafu(display("No sources found in source path: {}", path.display()))]
     NoSources { path: PathBuf },
+
     #[snafu(display("Invalid output path: {}", path.display()))]
     InvalidOutputPath { path: PathBuf },
-    #[snafu(display("Failed to read DICOM file: {}", path.display()))]
-    DicomRead {
-        path: PathBuf,
-        #[snafu(source(from(ReadError, Box::new)))]
-        source: Box<ReadError>,
-    },
-    #[snafu(display("Missing property: {}", name))]
-    MissingProperty { name: &'static str },
-    #[snafu(display("Invalid property value: {}", name))]
-    InvalidPropertyValue {
-        name: &'static str,
-        #[snafu(source(from(dicom::core::value::ConvertValueError, Box::new)))]
-        source: Box<dicom::core::value::ConvertValueError>,
-    },
-    Preprocessing {
-        #[snafu(source(from(PreprocessError, Box::new)))]
-        source: Box<PreprocessError>,
-    },
+
     #[snafu(display("Failed to create directory: {}", path.display()))]
     CreateDir {
         path: PathBuf,
         #[snafu(source(from(std::io::Error, Box::new)))]
         source: Box<std::io::Error>,
     },
-    ColorType {
-        #[snafu(source(from(ColorError, Box::new)))]
-        source: Box<ColorError>,
+
+    #[snafu(display("DICOM error on {}: {}", path.display(), source))]
+    DicomError {
+        path: PathBuf,
+        #[snafu(source(from(DicomError, Box::new)))]
+        source: Box<DicomError>,
     },
-    SaveToTiff {
-        #[snafu(source(from(SaveError, Box::new)))]
-        source: Box<SaveError>,
+
+    #[snafu(display("TIFF error on {}: {}", path.display(), source))]
+    TiffError {
+        path: PathBuf,
+        #[snafu(source(from(TiffError, Box::new)))]
+        source: Box<TiffError>,
     },
 }
 
@@ -153,7 +146,7 @@ fn find_dicom_files(dir: &PathBuf) -> impl Iterator<Item = PathBuf> {
 fn check_filelist(filelist: &PathBuf, strict: bool) -> Result<Vec<PathBuf>, Error> {
     let filelist = std::fs::read_to_string(filelist)
         .map_err(|_| Error::InvalidSourcePath {
-            path: filelist.clone(),
+            path: filelist.to_path_buf(),
         })?
         .lines()
         .map(PathBuf::from)
@@ -300,64 +293,82 @@ fn main() {
     });
 }
 
-fn process(
-    source: &PathBuf,
-    dest: &PathBuf,
+fn get_output_path<P: AsRef<Path>>(
+    file: &FileDicomObject<InMemDicomObject>,
+    dest: P,
+) -> Result<PathBuf, DicomError> {
+    // Build filepath of form dest/study_instance_uid/sop_instance_uid.tiff
+    let study_instance_uid = file
+        .get(tags::STUDY_INSTANCE_UID)
+        .context(MissingPropertySnafu {
+            name: "Study Instance UID",
+        })?
+        .value()
+        .to_str()
+        .context(ConvertValueSnafu {
+            name: "Study Instance UID",
+        })?
+        .into_owned();
+    let sop_instance_uid = file
+        .get(tags::SOP_INSTANCE_UID)
+        .context(MissingPropertySnafu {
+            name: "SOP Instance UID",
+        })?
+        .value()
+        .to_str()
+        .context(ConvertValueSnafu {
+            name: "SOP Instance UID",
+        })?
+        .into_owned();
+    let filename = format!("{}.tiff", sop_instance_uid);
+    let dest = dest.as_ref();
+    Ok(dest.join(study_instance_uid).join(filename))
+}
+
+fn process<P: AsRef<Path>>(
+    source: P,
+    dest: P,
     preprocessor: &Preprocessor,
     compressor: SupportedCompressor,
     parallelism: bool,
 ) -> Result<(), Error> {
-    let mut file = open_file(&source).context(DicomReadSnafu { path: source })?;
+    let source = source.as_ref();
+    let dest = dest.as_ref();
+
+    let mut file = open_file(&source)
+        .context(ReadSnafu)
+        .context(DicomSnafu { path: source })?;
 
     let dest = if dest.is_dir() {
-        // Build filepath of form dest/study_instance_uid/sop_instance_uid.tiff
-        let study_instance_uid = file
-            .get(tags::STUDY_INSTANCE_UID)
-            .context(MissingPropertySnafu {
-                name: "Study Instance UID",
-            })?
-            .value()
-            .to_str()
-            .context(InvalidPropertyValueSnafu {
-                name: "Study Instance UID",
-            })?
-            .into_owned();
-        let sop_instance_uid = file
-            .get(tags::SOP_INSTANCE_UID)
-            .context(MissingPropertySnafu {
-                name: "SOP Instance UID",
-            })?
-            .value()
-            .to_str()
-            .context(InvalidPropertyValueSnafu {
-                name: "SOP Instance UID",
-            })?
-            .into_owned();
-        let filename = format!("{}.tiff", sop_instance_uid);
-
-        let filepath = dest.join(study_instance_uid).join(filename);
+        let filepath = get_output_path(&file, dest).context(DicomSnafu { path: source })?;
 
         // Create the parents
         let parent = filepath.parent().unwrap();
-        std::fs::create_dir_all(parent).context(CreateDirSnafu { path: parent })?;
+        std::fs::create_dir_all(parent).context(CreateDirSnafu {
+            path: parent.to_path_buf(),
+        })?;
         filepath
     } else {
         dest.to_path_buf()
     };
+    let dest = dest.as_path();
 
     tracing::info!("Processing {} -> {}", source.display(), dest.display());
     Preprocessor::sanitize_dicom(&mut file);
-    let (images, metadata) = preprocessor
-        .prepare_image(&file, parallelism)
-        .context(PreprocessingSnafu)?;
-    let color_type = DicomColorType::try_from(&file).context(ColorTypeSnafu)?;
+    let (images, metadata) =
+        preprocessor
+            .prepare_image(&file, parallelism)
+            .context(DicomSnafu {
+                path: source.to_path_buf(),
+            })?;
+    let color_type = DicomColorType::try_from(&file).context(DicomSnafu { path: source })?;
 
     let saver = TiffSaver::new(compressor.into(), color_type);
     let mut encoder = saver.open_tiff(dest).unwrap();
     images
         .into_iter()
         .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
-        .context(SaveToTiffSnafu)?;
+        .context(TiffSnafu { path: dest })?;
 
     Ok(())
 }

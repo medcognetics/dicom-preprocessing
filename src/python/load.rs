@@ -1,3 +1,4 @@
+use crate::file::{self, find_dicom_files, Inode, InodeSort};
 use crate::load::LoadFromTiff;
 use ndarray::Array4;
 use num::Zero;
@@ -6,11 +7,12 @@ use numpy::{IntoPyArray, PyArray4};
 use pyo3::{
     exceptions::{PyIOError, PyRuntimeError},
     pymodule,
-    types::PyModule,
+    types::{PyList, PyModule},
     Bound, PyResult, Python,
 };
 use std::clone::Clone;
 use std::fs::File;
+use std::path::PathBuf;
 use tiff::decoder::Decoder;
 
 #[pymodule]
@@ -44,6 +46,20 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
     #[pyo3(name = "load_tiff_f32")]
     fn load_tiff_f32<'py>(py: Python<'py>, path: &str) -> PyResult<Bound<'py, PyArray4<f32>>> {
         load_tiff::<f32>(py, path)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "inode_sort")]
+    fn inode_sort(paths: Vec<PathBuf>) -> PyResult<Vec<PathBuf>> {
+        let result = paths.into_iter().sorted_by_inode().collect::<Vec<_>>();
+        Ok(result)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "find_dicom_files", signature = (path, bar=false))]
+    fn find_dicom_files(path: &str, bar: bool) -> PyResult<Vec<PathBuf>> {
+        let result = file::find_dicom_files(path, bar);
+        Ok(result.collect())
     }
 
     Ok(())

@@ -1,3 +1,4 @@
+use num::PrimInt;
 use std::io::{Read, Seek};
 use tiff::decoder::{Decoder, DecodingResult};
 

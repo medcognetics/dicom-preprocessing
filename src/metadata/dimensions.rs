@@ -2,6 +2,8 @@ use crate::metadata::FrameCount;
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::DynamicImage;
+use image::GenericImageView;
+use image::ImageError;
 use ndarray::{Dim, Shape};
 use num::PrimInt;
 use snafu::{ResultExt, Snafu};
@@ -14,66 +16,66 @@ use crate::errors::{
     DicomError, TiffError,
 };
 
-#[derive(Clone, Copy, Debug)]
-pub enum ChannelOrder {
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum DimensionOrder {
+    #[default]
     NHWC,
     NCHW,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dimensions {
     width: usize,
     height: usize,
     num_frames: usize,
     channels: usize,
-    channel_order: ChannelOrder,
+    order: DimensionOrder,
 }
 
 impl Dimensions {
-    fn new(
-        width: usize,
-        height: usize,
-        num_frames: usize,
-        channels: usize,
-        channel_order: ChannelOrder,
-    ) -> Self {
+    pub fn new(width: usize, height: usize, num_frames: usize, channels: usize) -> Self {
         Self {
             width,
             height,
             num_frames,
             channels,
-            channel_order,
+            order: DimensionOrder::default(),
         }
     }
 
-    fn with_num_frames(self, num_frames: usize) -> Self {
+    pub fn with_num_frames(self, num_frames: usize) -> Self {
         Self { num_frames, ..self }
     }
 
-    fn with_channel_order(self, channel_order: ChannelOrder) -> Self {
-        Self {
-            channel_order,
-            ..self
+    pub fn with_order(self, order: DimensionOrder) -> Self {
+        Self { order, ..self }
+    }
+
+    pub fn shape(&self) -> (usize, usize, usize, usize) {
+        match self.order {
+            DimensionOrder::NHWC => (self.num_frames, self.height, self.width, self.channels),
+            DimensionOrder::NCHW => (self.num_frames, self.channels, self.height, self.width),
         }
+    }
+
+    pub fn numel(&self) -> usize {
+        self.num_frames * self.height * self.width * self.channels
+    }
+
+    pub fn size<T: PrimInt>(&self) -> usize {
+        self.numel() * std::mem::size_of::<T>()
     }
 }
 
-impl<T: PrimInt> Into<(T, T, T, T)> for Dimensions {
+impl<T: PrimInt> From<(T, T, T, T)> for Dimensions {
     /// Returns the shape of the entire volume
-    fn into(self) -> (T, T, T, T) {
-        match self.channel_order {
-            ChannelOrder::NHWC => (
-                T::from(self.num_frames).unwrap(),
-                T::from(self.height).unwrap(),
-                T::from(self.width).unwrap(),
-                T::from(self.channels).unwrap(),
-            ),
-            ChannelOrder::NCHW => (
-                T::from(self.num_frames).unwrap(),
-                T::from(self.channels).unwrap(),
-                T::from(self.height).unwrap(),
-                T::from(self.width).unwrap(),
-            ),
+    fn from((num_frames, height, width, channels): (T, T, T, T)) -> Self {
+        Self {
+            num_frames: num_frames.to_usize().unwrap(),
+            height: height.to_usize().unwrap(),
+            width: width.to_usize().unwrap(),
+            channels: channels.to_usize().unwrap(),
+            order: DimensionOrder::default(),
         }
     }
 }
@@ -92,7 +94,7 @@ impl<R: Read + Seek> TryFrom<&mut Decoder<R>> for Dimensions {
             height: height as usize,
             num_frames: num_frames as usize,
             channels: color_type.channels(),
-            channel_order: ChannelOrder::NHWC,
+            order: DimensionOrder::default(),
         })
     }
 }
@@ -119,34 +121,152 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for Dimensions {
             height: rows,
             width: columns,
             channels: color_type.channels(),
-            channel_order: ChannelOrder::NHWC,
+            order: DimensionOrder::default(),
         })
     }
 }
 
-impl TryFrom<&DynamicImage> for Dimensions {
-    type Error = LoadError;
-    fn try_from(dcm: &FileDicomObject<InMemDicomObject>) -> Result<Self, Self::Error> {
-        let num_frames = FrameCount::try_from(dcm).context(VolumeSnafu)?.into();
-        let rows = dcm
-            .get(tags::ROWS)
-            .ok_or(LoadError::MissingProperty { name: "Rows" })?
-            .value()
-            .to_int::<i32>()
-            .context(InvalidPropertyValueSnafu { name: "Rows" })? as usize;
-        let columns = dcm
-            .get(tags::COLUMNS)
-            .ok_or(LoadError::MissingProperty { name: "Columns" })?
-            .value()
-            .to_int::<i32>()
-            .context(InvalidPropertyValueSnafu { name: "Columns" })? as usize;
-        let color_type = DicomColorType::try_from(dcm).context(ColorTypeSnafu)?;
-        Ok(Self {
-            num_frames,
-            height: rows,
-            width: columns,
-            channels: color_type.channels(),
-            channel_order: ChannelOrder::NHWC,
-        })
+impl From<&DynamicImage> for Dimensions {
+    fn from(img: &DynamicImage) -> Self {
+        let (width, height) = img.dimensions();
+        let channels = img.color().channel_count();
+        Self {
+            num_frames: 1,
+            height: height as usize,
+            width: width as usize,
+            channels: channels as usize,
+            order: DimensionOrder::default(),
+        }
+    }
+}
+
+#[derive(Debug, Snafu)]
+pub enum DynamicImageError {
+    #[snafu(display("No images provided"))]
+    NoImages,
+    #[snafu(display("Dimension mismatch: first {expected:?}, other {actual:?}"))]
+    DimensionMismatch {
+        expected: Dimensions,
+        actual: Dimensions,
+    },
+}
+
+impl TryFrom<&Vec<DynamicImage>> for Dimensions {
+    type Error = DynamicImageError;
+
+    /// Get dimensions from first image and verify all images have same dimensions
+    fn try_from(imgs: &Vec<DynamicImage>) -> Result<Self, Self::Error> {
+        let dims: Dimensions = imgs.first().ok_or(DynamicImageError::NoImages)?.into();
+        for img in imgs {
+            let other_dims: Dimensions = img.into();
+            if other_dims != dims {
+                return Err(DynamicImageError::DimensionMismatch {
+                    expected: dims,
+                    actual: other_dims,
+                });
+            }
+        }
+        Ok(dims.with_num_frames(imgs.len()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    #[test]
+    fn test_dimension_order_default() {
+        assert_eq!(DimensionOrder::default(), DimensionOrder::NHWC);
+    }
+
+    #[rstest]
+    #[case(1, 2, 3, 4, DimensionOrder::NHWC, (1, 2, 3, 4))]
+    #[case(1, 2, 3, 4, DimensionOrder::NCHW, (1, 4, 2, 3))]
+    fn test_shape(
+        #[case] n: usize,
+        #[case] h: usize,
+        #[case] w: usize,
+        #[case] c: usize,
+        #[case] order: DimensionOrder,
+        #[case] expected: (usize, usize, usize, usize),
+    ) {
+        let dims = Dimensions::new(w, h, n, c).with_order(order);
+        assert_eq!(dims.shape(), expected);
+    }
+
+    #[rstest]
+    #[case(2, 3, 4, 5, 120)]
+    #[case(1, 1, 1, 1, 1)]
+    fn test_numel(
+        #[case] n: usize,
+        #[case] h: usize,
+        #[case] w: usize,
+        #[case] c: usize,
+        #[case] expected: usize,
+    ) {
+        let dims = Dimensions::new(w, h, n, c);
+        assert_eq!(dims.numel(), expected);
+    }
+
+    #[rstest]
+    #[case(2, 3, 4, 5, 480)] // 120 elements * 4 bytes for i32
+    fn test_size(
+        #[case] n: usize,
+        #[case] h: usize,
+        #[case] w: usize,
+        #[case] c: usize,
+        #[case] expected: usize,
+    ) {
+        let dims = Dimensions::new(w, h, n, c);
+        assert_eq!(dims.size::<i32>(), expected);
+    }
+
+    #[test]
+    fn test_from_tuple() {
+        let dims = Dimensions::from((1_i32, 2_i32, 3_i32, 4_i32));
+        assert_eq!(dims.num_frames, 1);
+        assert_eq!(dims.height, 2);
+        assert_eq!(dims.width, 3);
+        assert_eq!(dims.channels, 4);
+        assert_eq!(dims.order, DimensionOrder::default());
+    }
+
+    #[test]
+    fn test_dynamic_image_vec_empty() {
+        let imgs: Vec<DynamicImage> = vec![];
+        assert!(matches!(
+            Dimensions::try_from(&imgs),
+            Err(DynamicImageError::NoImages)
+        ));
+    }
+
+    #[test]
+    fn test_dynamic_image_vec_mismatch() {
+        use image::{ImageBuffer, Rgb};
+
+        let img1 = DynamicImage::ImageRgb8(ImageBuffer::<Rgb<u8>, Vec<u8>>::new(10, 20));
+        let img2 = DynamicImage::ImageRgb8(ImageBuffer::<Rgb<u8>, Vec<u8>>::new(20, 10));
+        let imgs = vec![img1, img2];
+
+        assert!(matches!(
+            Dimensions::try_from(&imgs),
+            Err(DynamicImageError::DimensionMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn test_dynamic_image_vec_success() {
+        use image::{ImageBuffer, Rgb};
+
+        let img1 = DynamicImage::ImageRgb8(ImageBuffer::<Rgb<u8>, Vec<u8>>::new(10, 20));
+        let img2 = DynamicImage::ImageRgb8(ImageBuffer::<Rgb<u8>, Vec<u8>>::new(10, 20));
+        let imgs = vec![img1, img2];
+
+        let dims = Dimensions::try_from(&imgs).unwrap();
+        assert_eq!(dims.width, 10);
+        assert_eq!(dims.height, 20);
+        assert_eq!(dims.channels, 3);
+        assert_eq!(dims.num_frames, 2);
     }
 }

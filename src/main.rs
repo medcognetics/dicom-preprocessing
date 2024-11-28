@@ -9,8 +9,6 @@ use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;
 use std::fmt;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use tiff::encoder::compression::Compressor;
 use tracing::{error, Level};
 
@@ -18,7 +16,6 @@ use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::Preprocessor;
 use dicom_preprocessing::resize::DisplayFilterType;
 use indicatif::{ProgressBar, ProgressStyle};
-use rust_search::SearchBuilder;
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::num::NonZero;
 use std::path::Path;
@@ -28,6 +25,7 @@ use dicom_preprocessing::errors::{
     dicom::{ConvertValueSnafu, MissingPropertySnafu, ReadSnafu},
     DicomError, TiffError,
 };
+use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 
@@ -94,93 +92,6 @@ impl fmt::Display for SupportedCompressor {
             SupportedCompressor::Uncompressed => "none",
         };
         write!(f, "{}", direction_str)
-    }
-}
-
-fn has_dicm_prefix(path: &Path) -> bool {
-    const DICM_PREFIX: &[u8; 4] = b"DICM";
-    File::open(path)
-        .and_then(|mut file| {
-            file.seek(SeekFrom::Start(128))?;
-            let mut buffer = [0; 4];
-            file.read_exact(&mut buffer)?;
-            Ok(buffer)
-        })
-        .map_or(false, |buffer| &buffer == DICM_PREFIX)
-}
-
-fn is_dicom_file(path: &Path) -> bool {
-    // If the path has a .dcm or .dicom extension and is a file, it is a DICOM file
-    if let Some(ext) = path.extension().map(|ext| ext.to_ascii_lowercase()) {
-        return (ext == "dcm" || ext == "dicom") && path.is_file();
-    }
-    // Path is a directory, not a DICOM file
-    else if path.is_dir() {
-        return false;
-    }
-    // Extensionless file, we must check the DICM prefix
-    else {
-        has_dicm_prefix(path)
-    }
-}
-
-fn find_dicom_files(dir: &PathBuf) -> impl Iterator<Item = PathBuf> {
-    // Set up spinner, iterating may files may take some time
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Searching for DICOM files");
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.blue} {msg}")
-            .unwrap(),
-    );
-
-    // Yield from the search
-    SearchBuilder::default()
-        .location(dir)
-        .build()
-        .inspect(move |_| spinner.tick())
-        .map(PathBuf::from)
-        .filter(move |file| is_dicom_file(file) && file.is_file())
-}
-
-fn check_filelist(filelist: &PathBuf, strict: bool) -> Result<Vec<PathBuf>, Error> {
-    let filelist = std::fs::read_to_string(filelist)
-        .map_err(|_| Error::InvalidSourcePath {
-            path: filelist.to_path_buf(),
-        })?
-        .lines()
-        .map(PathBuf::from)
-        .collect::<Vec<PathBuf>>();
-
-    // Set up spinner, checking files may take some time
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_message("Checking input paths from text file");
-    spinner.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.blue} {msg}")
-            .unwrap(),
-    );
-
-    // Check each path
-    let result =
-        filelist
-            .into_par_iter()
-            .inspect(|_| spinner.tick())
-            .map(|path| match is_dicom_file(&path) {
-                true => Ok(path),
-                false => Err(Error::InvalidSourcePath { path }),
-            });
-
-    // For strict mode, return the errors
-    if strict {
-        result.collect::<Result<Vec<_>, _>>()
-    // For non-strict mode, return the valid paths
-    } else {
-        Ok(result
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|path| path.ok())
-            .collect())
     }
 }
 
@@ -386,12 +297,23 @@ fn determine_parallelism(num_inputs: usize) -> bool {
 fn run(args: Args) -> Result<(), Error> {
     // Parse the sources
     let source = if args.source.is_dir() {
-        find_dicom_files(&args.source).collect()
+        args.source
+            .find_dicoms()
+            .map_err(|_| Error::InvalidSourcePath {
+                path: args.source.to_path_buf(),
+            })?
+            .collect::<Vec<_>>()
     } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
-        check_filelist(&args.source, args.strict)?
+        args.source
+            .read_dicom_paths_with_bar()
+            .map_err(|_| Error::InvalidSourcePath {
+                path: args.source.to_path_buf(),
+            })?
+            .collect::<Vec<_>>()
     } else {
         vec![args.source.clone()]
     };
+    let source = source.into_iter().sorted_by_inode().collect::<Vec<_>>();
 
     tracing::info!("Number of sources found: {}", source.len());
 

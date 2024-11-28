@@ -129,18 +129,6 @@ impl BenchDef {
                 |b, input| b.iter(|| black_box(input.iter()).map(func).collect::<Vec<_>>()),
             );
     }
-
-    fn bench_is_dicom_file_strict<M: Measurement>(&self, group: &mut BenchmarkGroup<M>) {
-        let func = |path: &PathBuf| path.is_dicom_file();
-        group
-            .sample_size(self.sample_size)
-            .throughput(Throughput::Elements(self.paths.len() as u64))
-            .bench_with_input(
-                BenchmarkId::new(self.id, self.paths.len()),
-                &self.paths,
-                |b, input| b.iter(|| black_box(input.iter()).map(func).collect::<Vec<_>>()),
-            );
-    }
 }
 
 fn main() {
@@ -149,17 +137,9 @@ fn main() {
     // These have a fast path where only the extension is checked
     BenchDef::new("is_dicom_file-balanced", 500, 100, 100, 100, 100)
         .bench_is_dicom_file(&mut group);
-    BenchDef::new("is_dicom_file_strict-balanced", 500, 100, 100, 100, 100)
-        .bench_is_dicom_file_strict(&mut group);
     BenchDef::new("is_dicom_file-other", 500, 0, 10000, 0, 0).bench_is_dicom_file(&mut group);
-    BenchDef::new("is_dicom_file_strict-other", 500, 0, 10000, 0, 0)
-        .bench_is_dicom_file_strict(&mut group);
     // These will be slower because they require file system access
     BenchDef::new("is_dicom_file-extensionless", 500, 0, 0, 10000, 0)
         .bench_is_dicom_file(&mut group);
-    BenchDef::new("is_dicom_file_strict-extensionless", 500, 0, 0, 10000, 0)
-        .bench_is_dicom_file_strict(&mut group);
     BenchDef::new("is_dicom_file-dir", 500, 0, 0, 0, 10000).bench_is_dicom_file(&mut group);
-    BenchDef::new("is_dicom_file_strict-dir", 500, 0, 0, 0, 10000)
-        .bench_is_dicom_file_strict(&mut group);
 }

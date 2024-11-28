@@ -142,7 +142,6 @@ where
 
     /// Check if a path is a DICOM file as efficiently as possible.
     /// The function will use the file extension if available, otherwise it will check the DICM prefix.
-    /// If strict is false, the function will not check if the file exists.
     fn is_dicom_file(&self) -> IOResult<bool> {
         let path = self.as_ref();
         if self.has_dicom_extension() {

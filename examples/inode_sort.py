@@ -11,7 +11,7 @@ def inode_sort_python(paths: List[Path]) -> List[Path]:
 def parse_args():
     parser = ArgumentParser()
     parser.add_argument("path", type=Path, help="Path to directory")
-    parser.add_argument("-i", "--iterations", type=int, default=100, help="Number of iterations")
+    parser.add_argument("-i", "--iterations", type=int, default=10, help="Number of iterations")
     return parser.parse_args()
 
 

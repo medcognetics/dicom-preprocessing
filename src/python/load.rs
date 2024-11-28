@@ -1,4 +1,4 @@
-use crate::file::{DicomFileOperations, InodeSort, SourceFileOperations, TiffFileOperations};
+use crate::file::{DicomFileOperations, InodeSort, TiffFileOperations};
 use crate::load::LoadFromTiff;
 use ndarray::Array4;
 use num::Zero;
@@ -7,7 +7,7 @@ use numpy::{IntoPyArray, PyArray4};
 use pyo3::{
     exceptions::{PyIOError, PyRuntimeError},
     pymodule,
-    types::{PyList, PyModule},
+    types::PyModule,
     Bound, PyResult, Python,
 };
 use std::clone::Clone;
@@ -57,7 +57,7 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
 
     #[pyfn(m)]
     #[pyo3(name = "find_dicom_files", signature = (path, spinner=false))]
-    fn find_dicom_files(path: &str, spinner: bool) -> PyResult<Vec<PathBuf>> {
+    fn find_dicom_files(path: PathBuf, spinner: bool) -> PyResult<Vec<PathBuf>> {
         let result = match spinner {
             true => path.find_dicoms_with_spinner()?.collect(),
             false => path.find_dicoms()?.collect(),
@@ -67,7 +67,7 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
 
     #[pyfn(m)]
     #[pyo3(name = "find_tiff_files", signature = (path, spinner=false))]
-    fn find_tiff_files(path: &str, spinner: bool) -> PyResult<Vec<PathBuf>> {
+    fn find_tiff_files(path: PathBuf, spinner: bool) -> PyResult<Vec<PathBuf>> {
         let result = match spinner {
             true => path.find_tiffs_with_spinner()?.collect(),
             false => path.find_tiffs()?.collect(),
@@ -77,7 +77,7 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
 
     #[pyfn(m)]
     #[pyo3(name = "read_dicom_paths", signature = (path, bar=false))]
-    fn read_dicom_paths(path: &str, bar: bool) -> PyResult<Vec<PathBuf>> {
+    fn read_dicom_paths(path: PathBuf, bar: bool) -> PyResult<Vec<PathBuf>> {
         let result = match bar {
             true => path.read_dicom_paths_with_bar()?.collect(),
             false => path.read_dicom_paths()?.collect(),
@@ -87,7 +87,7 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
 
     #[pyfn(m)]
     #[pyo3(name = "read_tiff_paths", signature = (path, bar=false))]
-    fn read_tiff_paths(path: &str, bar: bool) -> PyResult<Vec<PathBuf>> {
+    fn read_tiff_paths(path: PathBuf, bar: bool) -> PyResult<Vec<PathBuf>> {
         let result = match bar {
             true => path.read_tiff_paths_with_bar()?.collect(),
             false => path.read_tiff_paths()?.collect(),

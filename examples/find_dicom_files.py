@@ -13,7 +13,7 @@ def is_dicom_file(path: Path, strict: bool) -> bool:
     raise NotImplementedError("DICM prefix check")
 
 def find_dicom_files_python(path: Path) -> List[Path]:
-    return list(p for p in path.rglob("*") if is_dicom_file(p, False))
+    return list(p for p in path.rglob("*") if is_dicom_file(p, True))
 
 def parse_args():
     parser = ArgumentParser()
@@ -26,12 +26,12 @@ def main(args: Namespace):
     if not args.path.is_dir():
         raise NotADirectoryError(f"Directory not found: {args.path}")
 
-    result_rust = find_dicom_files(str(args.path), True)
+    result_rust = find_dicom_files(args.path, True)
     result_python = find_dicom_files_python(args.path)
     # NOTE: Only check length - rust implementation uses unstable sort
     assert len(result_python) == len(result_rust)
 
-    t1 = timeit.timeit(lambda: find_dicom_files(str(args.path), False), number=args.iterations) / args.iterations * 1000
+    t1 = timeit.timeit(lambda: find_dicom_files(args.path, False), number=args.iterations) / args.iterations * 1000
     print(f"rust: {t1:.3f}ms")
     t2 = timeit.timeit(lambda: find_dicom_files_python(args.path), number=args.iterations) / args.iterations * 1000
     print(f"python: {t2:.3f}ms")

@@ -1,7 +1,9 @@
 use criterion::{
     black_box, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
 };
-use dicom_preprocessing::file::{DicomFile as DicomFileTrait, DICM_PREFIX, DICM_PREFIX_LOCATION};
+use dicom_preprocessing::file::{
+    DicomFileOperations as DicomFileTrait, DICM_PREFIX, DICM_PREFIX_LOCATION,
+};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use std::path::PathBuf;
@@ -117,7 +119,7 @@ impl BenchDef {
     }
 
     fn bench_is_dicom_file<M: Measurement>(&self, group: &mut BenchmarkGroup<M>) {
-        let func = |path: &PathBuf| path.is_dicom_file(false);
+        let func = |path: &PathBuf| path.is_dicom_file();
         group
             .sample_size(self.sample_size)
             .throughput(Throughput::Elements(self.paths.len() as u64))
@@ -129,7 +131,7 @@ impl BenchDef {
     }
 
     fn bench_is_dicom_file_strict<M: Measurement>(&self, group: &mut BenchmarkGroup<M>) {
-        let func = |path: &PathBuf| path.is_dicom_file(true);
+        let func = |path: &PathBuf| path.is_dicom_file();
         group
             .sample_size(self.sample_size)
             .throughput(Throughput::Elements(self.paths.len() as u64))

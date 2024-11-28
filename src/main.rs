@@ -25,7 +25,7 @@ use dicom_preprocessing::errors::{
     dicom::{ConvertValueSnafu, MissingPropertySnafu, ReadSnafu},
     DicomError, TiffError,
 };
-use dicom_preprocessing::file::{find_dicom_files, FileList};
+use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 
@@ -297,16 +297,23 @@ fn determine_parallelism(num_inputs: usize) -> bool {
 fn run(args: Args) -> Result<(), Error> {
     // Parse the sources
     let source = if args.source.is_dir() {
-        find_dicom_files(&args.source, args.strict).collect()
-    } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
         args.source
-            .read_valid_paths(args.strict, true)
+            .find_dicoms()
             .map_err(|_| Error::InvalidSourcePath {
                 path: args.source.to_path_buf(),
             })?
+            .collect::<Vec<_>>()
+    } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
+        args.source
+            .read_dicom_paths_with_bar()
+            .map_err(|_| Error::InvalidSourcePath {
+                path: args.source.to_path_buf(),
+            })?
+            .collect::<Vec<_>>()
     } else {
         vec![args.source.clone()]
     };
+    let source = source.into_iter().sorted_by_inode().collect::<Vec<_>>();
 
     tracing::info!("Number of sources found: {}", source.len());
 

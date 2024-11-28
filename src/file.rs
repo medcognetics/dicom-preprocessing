@@ -1,6 +1,7 @@
 use dicom::object::open_file;
 use dicom::object::DefaultDicomObject;
 use dicom::object::ReadError;
+use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
@@ -8,6 +9,8 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::str::FromStr;
+use tiff::decoder::Decoder;
+use tiff::TiffError;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
@@ -17,12 +20,48 @@ use std::path::Path;
 pub const DICM_PREFIX: &[u8; 4] = b"DICM";
 pub const DICM_PREFIX_LOCATION: u64 = 128;
 
+type IOResult<T> = Result<T, std::io::Error>;
+
+fn default_bar(len: u64) -> ProgressBar {
+    let pb = ProgressBar::new(len);
+    pb.set_style(
+        ProgressStyle::default_bar()
+            .template(
+                "{msg} {spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta} @ {per_sec})",
+            )
+            .unwrap(),
+    );
+    pb
+}
+
+fn default_spinner() -> ProgressBar {
+    let spinner = ProgressBar::new_spinner();
+    spinner.set_style(
+        ProgressStyle::default_spinner()
+            .template("{spinner:.blue} {msg}")
+            .unwrap(),
+    );
+    spinner
+}
+
+/// Filter map function for boolean tuple results with the following logic:
+/// - Boolean true results are propagated
+/// - Boolean false results are filtered
+/// - Errors are propagated
+fn filter_fn_bool_tuple<T, E>(r: Result<(bool, T), E>) -> Option<Result<T, E>> {
+    match r {
+        Ok((true, p)) => Some(Ok(p)),
+        Ok((false, _)) => None,
+        Err(e) => Some(Err(e)),
+    }
+}
+
 pub trait Inode
 where
     Self: AsRef<Path>,
 {
     /// Get the inode of a path.
-    fn inode(&self) -> Result<u64, std::io::Error> {
+    fn inode(&self) -> IOResult<u64> {
         let metadata = std::fs::metadata(self.as_ref())?;
         Ok(metadata.ino())
     }
@@ -55,14 +94,35 @@ where
 
 impl<P: AsRef<Path> + Inode, I: Iterator<Item = P>> InodeSort<P> for I {}
 
-pub trait DicomFile
+pub trait SourceFileOperations
+where
+    Self: AsRef<Path>,
+{
+    /// Read a file containing a list of paths and return an iterator of results.
+    fn read_paths(&self) -> IOResult<impl Iterator<Item = IOResult<PathBuf>>> {
+        let reader = BufReader::new(File::open(self.as_ref())?);
+        let result = reader
+            .lines()
+            .map(|s| match s {
+                Ok(s) => PathBuf::from_str(s.as_str())
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
+                Err(e) => return Err(e),
+            })
+            .into_iter();
+        Ok(result)
+    }
+}
+
+impl<P: AsRef<Path>> SourceFileOperations for P {}
+
+pub trait DicomFileOperations
 where
     Self: AsRef<Path>,
 {
     /// Check if a file has a DICM prefix.
     /// This will only return an error if the file cannot be opened.
     /// Any other errors mapped to `false`.
-    fn has_dicm_prefix(&self) -> Result<bool, std::io::Error> {
+    fn has_dicm_prefix(&self) -> IOResult<bool> {
         let mut reader = File::open(self.as_ref())?;
         let mut buffer = [0; DICM_PREFIX.len()];
         reader
@@ -83,10 +143,10 @@ where
     /// Check if a path is a DICOM file as efficiently as possible.
     /// The function will use the file extension if available, otherwise it will check the DICM prefix.
     /// If strict is false, the function will not check if the file exists.
-    fn is_dicom_file(&self, strict: bool) -> Result<bool, std::io::Error> {
+    fn is_dicom_file(&self) -> IOResult<bool> {
         let path = self.as_ref();
         if self.has_dicom_extension() {
-            Ok(!strict || path.is_file())
+            Ok(path.is_file())
         } else if path.extension().is_some() || path.is_dir() {
             Ok(false)
         } else {
@@ -95,8 +155,78 @@ where
     }
 
     /// Similar to `is_dicom_file`, but returns a default value if an error occurs.
-    fn is_dicom_file_or(&self, strict: bool, default: bool) -> bool {
-        self.is_dicom_file(strict).unwrap_or(default)
+    fn is_dicom_file_or(&self, default: bool) -> bool {
+        self.is_dicom_file().unwrap_or(default)
+    }
+
+    /// Find all DICOM files in a directory.
+    fn find_dicoms(&self) -> IOResult<impl Iterator<Item = PathBuf>> {
+        let dir = self.as_ref();
+        if !dir.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Not a directory",
+            ));
+        }
+        let result = SearchBuilder::default()
+            .location(dir)
+            .build()
+            .filter(move |file| file.is_dicom_file_or(false))
+            .map(|file| PathBuf::from_str(file.as_str()).unwrap());
+        Ok(result)
+    }
+
+    /// Find all DICOM files in a directory, with a progress spinner.
+    fn find_dicoms_with_spinner(&self) -> IOResult<impl Iterator<Item = PathBuf>> {
+        let spinner = default_spinner();
+        spinner.set_message("Searching for DICOM files");
+        let result = self.find_dicoms()?.inspect(move |_| {
+            spinner.tick();
+        });
+        Ok(result)
+    }
+
+    /// Read DICOM paths from a text file. Propagates any errors encountered in opening the text file
+    /// or in parsing/validating the paths. Paths are filtered using `is_dicom_file`.
+    fn read_dicom_paths(&self) -> IOResult<impl Iterator<Item = PathBuf>>
+    where
+        Self: SourceFileOperations,
+    {
+        let result = self
+            .read_paths()?
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|r| match r {
+                Ok(p) => p.is_dicom_file().map(|is_dicom| (is_dicom, p)),
+                Err(e) => Err(e),
+            })
+            .filter_map(filter_fn_bool_tuple)
+            .collect::<IOResult<Vec<_>>>()?
+            .into_iter();
+        Ok(result)
+    }
+
+    /// Like `read_dicom_paths`, but with a progress bar.
+    fn read_dicom_paths_with_bar(&self) -> IOResult<impl Iterator<Item = PathBuf>>
+    where
+        Self: SourceFileOperations,
+    {
+        let paths = self.read_paths()?.collect::<Vec<_>>();
+
+        let pb = default_bar(paths.len() as u64);
+        pb.set_message("Reading DICOM paths from text file");
+
+        let result = paths
+            .into_par_iter()
+            .progress_with(pb)
+            .map(|r| match r {
+                Ok(p) => p.is_dicom_file().map(|is_dicom| (is_dicom, p)),
+                Err(e) => Err(e),
+            })
+            .filter_map(filter_fn_bool_tuple)
+            .collect::<IOResult<Vec<_>>>()?
+            .into_iter();
+        Ok(result)
     }
 
     /// Read the DICOM file.
@@ -105,108 +235,112 @@ where
     }
 }
 
-impl<P: AsRef<Path>> DicomFile for P {}
+impl<P: AsRef<Path>> DicomFileOperations for P {}
 
-/// Find all DICOM files in a directory.
-/// If bar is true, a progress bar will be shown.
-pub fn find_dicom_files<P: AsRef<Path>>(dir: P, bar: bool) -> impl Iterator<Item = PathBuf> {
-    let spinner = if bar {
-        let spinner = ProgressBar::new_spinner();
-        spinner.set_message("Searching for DICOM files");
-        spinner.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.blue} {msg}")
-                .unwrap(),
-        );
-        Some(spinner)
-    } else {
-        None
-    };
-
-    SearchBuilder::default()
-        .location(dir)
-        .build()
-        .inspect(move |_| {
-            if let Some(spinner) = &spinner {
-                spinner.tick();
-            }
-        })
-        .filter(move |file| file.is_dicom_file_or(false, false))
-        .map(|file| PathBuf::from_str(file.as_str()).unwrap())
-}
-
-pub trait FileList
+pub trait TiffFileOperations
 where
     Self: AsRef<Path>,
 {
-    /// Read a file containing a list of paths and return an iterator of results.
-    fn read_paths(
-        &self,
-    ) -> Result<impl Iterator<Item = Result<PathBuf, std::io::Error>>, std::io::Error> {
-        let reader = BufReader::new(File::open(self.as_ref())?);
-        let result = reader
-            .lines()
-            .map(|s| match s {
-                Ok(s) => PathBuf::from_str(s.as_str())
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
-                Err(e) => return Err(e),
+    /// Check if a file has a TIFF extension.
+    fn has_tiff_extension(&self) -> bool {
+        let path = self.as_ref();
+        if let Some(ext) = path.extension() {
+            return ext == "tiff" || ext == "tif" || ext == "TIFF" || ext == "TIF";
+        }
+        return false;
+    }
+
+    /// Check if a path is a TIFF file.
+    fn is_tiff_file(&self) -> Result<bool, std::io::Error> {
+        // We don't handle extensionless TIFF files, extension and existence are the only checks.
+        // Signature is matched against is_dicom_file for consistency.
+        Ok(self.as_ref().is_file() && self.has_tiff_extension())
+    }
+
+    /// Similar to `is_tiff_file`, but returns a default value if an error occurs.
+    fn is_tiff_file_or(&self, default: bool) -> bool {
+        self.is_tiff_file().unwrap_or(default)
+    }
+
+    /// Find all TIFF files in a directory.
+    fn find_tiffs(&self) -> Result<impl Iterator<Item = PathBuf>, std::io::Error> {
+        let dir = self.as_ref();
+        if !dir.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Not a directory",
+            ));
+        }
+        let result = SearchBuilder::default()
+            .location(dir)
+            .build()
+            .filter(move |file| file.is_tiff_file_or(false))
+            .map(|file| PathBuf::from_str(file.as_str()).unwrap());
+        Ok(result)
+    }
+
+    /// Find all TIFF files in a directory, with a progress spinner.
+    fn find_tiffs_with_spinner(&self) -> IOResult<impl Iterator<Item = PathBuf>> {
+        let spinner = default_spinner();
+        spinner.set_message("Searching for TIFF files");
+        let result = self.find_tiffs()?.inspect(move |_| {
+            spinner.tick();
+        });
+        Ok(result)
+    }
+
+    /// Read TIFF paths from a text file. Propagates any errors encountered in opening the text file
+    /// or in parsing/validating the paths. Paths are filtered using `is_tiff_file`.
+    fn read_tiff_paths(&self) -> IOResult<impl Iterator<Item = PathBuf>>
+    where
+        Self: SourceFileOperations,
+    {
+        let result = self
+            .read_paths()?
+            .collect::<Vec<_>>()
+            .into_par_iter()
+            .map(|r| match r {
+                Ok(p) => p.is_tiff_file().map(|is_tiff| (is_tiff, p)),
+                Err(e) => Err(e),
             })
+            .filter_map(filter_fn_bool_tuple)
+            .collect::<IOResult<Vec<_>>>()?
             .into_iter();
         Ok(result)
     }
 
-    /// Read a file containing a list of DICOM and validate each path.
-    fn read_valid_paths(&self, strict: bool, bar: bool) -> Result<Vec<PathBuf>, std::io::Error> {
+    /// Like `read_tiff_paths`, but with a progress bar.
+    fn read_tiff_paths_with_bar(&self) -> IOResult<impl Iterator<Item = PathBuf>>
+    where
+        Self: SourceFileOperations,
+    {
         let paths = self.read_paths()?.collect::<Vec<_>>();
 
-        // Set up spinner, checking files may take some time
-        let spinner = if bar {
-            let spinner = ProgressBar::new_spinner();
-            spinner.set_message("Checking input paths from text file");
-            spinner.set_style(
-                ProgressStyle::default_spinner()
-                    .template("{spinner:.blue} {msg}")
-                    .unwrap(),
-            );
-            Some(spinner)
-        } else {
-            None
-        };
+        let pb = default_bar(paths.len() as u64);
+        pb.set_message("Reading TIFF paths from text file");
 
-        // Check each path
         let result = paths
             .into_par_iter()
-            .inspect(|_| {
-                if let Some(spinner) = &spinner {
-                    spinner.tick()
-                }
-            })
+            .progress_with(pb)
             .map(|r| match r {
-                Ok(path) => match path.is_dicom_file_or(false, false) {
-                    true => Ok(path),
-                    false => Err(std::io::Error::new(
-                        std::io::ErrorKind::InvalidInput,
-                        "Not a DICOM file",
-                    )),
-                },
+                Ok(p) => p.is_tiff_file().map(|is_tiff| (is_tiff, p)),
                 Err(e) => Err(e),
-            });
+            })
+            .filter_map(filter_fn_bool_tuple)
+            .collect::<IOResult<Vec<_>>>()?
+            .into_iter();
+        Ok(result)
+    }
 
-        // For strict mode, return the errors
-        if strict {
-            result.collect::<Result<Vec<_>, _>>()
-        // For non-strict mode, return the valid paths
-        } else {
-            Ok(result
-                .collect::<Vec<_>>()
-                .into_iter()
-                .filter_map(|path| path.ok())
-                .collect())
-        }
+    /// Read the TIFF file.
+    fn tiffread(&self) -> Result<Decoder<BufReader<File>>, TiffError> {
+        let file = File::open(self.as_ref()).map_err(|e| TiffError::IoError(e))?;
+        let decoder = Decoder::new(BufReader::new(file))?;
+        Ok(decoder)
     }
 }
 
-impl<P: AsRef<Path>> FileList for P {}
+impl<P: AsRef<Path>> TiffFileOperations for P {}
 
 #[cfg(test)]
 mod tests {
@@ -220,25 +354,20 @@ mod tests {
     #[case::empty_file(vec![], false)]
     #[case::dicm_prefix(b"DICM".to_vec(), true)]
     #[case::wrong_prefix(b"NOT_DICM".to_vec(), false)]
-    fn test_has_dicm_prefix(
-        #[case] contents: Vec<u8>,
-        #[case] expected: bool,
-    ) -> std::io::Result<()> {
-        let mut temp = NamedTempFile::new()?;
-        temp.seek(SeekFrom::Start(DICM_PREFIX_LOCATION))?;
-        temp.write_all(&contents)?;
+    fn test_has_dicm_prefix(#[case] contents: Vec<u8>, #[case] expected: bool) {
+        let mut temp = NamedTempFile::new().unwrap();
+        temp.seek(SeekFrom::Start(DICM_PREFIX_LOCATION)).unwrap();
+        temp.write_all(&contents).unwrap();
 
-        let result = temp.path().has_dicm_prefix()?;
+        let result = temp.path().has_dicm_prefix().unwrap();
         assert_eq!(result, expected);
-        Ok(())
     }
 
     #[test]
-    fn test_has_dicm_prefix_real_dicom() -> std::io::Result<()> {
+    fn test_has_dicm_prefix_real_dicom() {
         let dicom_file_path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
-        let result = dicom_file_path.has_dicm_prefix()?;
+        let result = dicom_file_path.has_dicm_prefix().unwrap();
         assert!(result);
-        Ok(())
     }
 
     #[rstest]
@@ -255,75 +384,72 @@ mod tests {
         assert_eq!(result, expected);
     }
 
-    #[rstest]
-    #[case::strict_valid_dicom(true)]
-    #[case::strict_invalid_dicom(false)]
-    fn test_is_dicom_file_real_dicom(#[case] strict: bool) -> std::io::Result<()> {
+    #[test]
+    fn test_is_dicom_file_real_dicom() {
         let path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
-        let result = path.is_dicom_file(strict)?;
+        let result = path.is_dicom_file().unwrap();
         assert_eq!(result, true);
-        Ok(())
     }
 
     #[rstest]
-    #[case::no_bar(false)]
-    #[case::bar(true)]
-    fn test_find_dicom_files(#[case] bar: bool) -> std::io::Result<()> {
+    #[case::no_spinner(false)]
+    #[case::spinner(true)]
+    fn test_find_dicom_files(#[case] spinner: bool) {
         // Create a temp directory with some test files
-        let temp_dir = tempfile::tempdir()?;
+        let temp_dir = tempfile::tempdir().unwrap();
 
         // Copy a real DICOM file
         let dicom_path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
         let dicom_dest = temp_dir.path().join("test.dcm");
-        std::fs::copy(&dicom_path, &dicom_dest)?;
+        std::fs::copy(&dicom_path, &dicom_dest).unwrap();
 
         // Create a non-DICOM file
         let text_path = temp_dir.path().join("test.txt");
-        std::fs::write(&text_path, "not a DICOM file")?;
+        std::fs::write(&text_path, "not a DICOM file").unwrap();
 
         // Create a subdirectory with another DICOM file
         let sub_dir = temp_dir.path().join("subdir");
-        std::fs::create_dir(&sub_dir)?;
+        std::fs::create_dir(&sub_dir).unwrap();
         let sub_dicom = sub_dir.join("sub.dcm");
-        std::fs::copy(&dicom_path, &sub_dicom)?;
+        std::fs::copy(&dicom_path, &sub_dicom).unwrap();
 
-        let files: Vec<_> = find_dicom_files(&temp_dir, bar).collect();
+        let files: Vec<_> = match spinner {
+            true => temp_dir
+                .path()
+                .find_dicoms_with_spinner()
+                .unwrap()
+                .collect(),
+            false => temp_dir.path().find_dicoms().unwrap().collect(),
+        };
         assert_eq!(files.len(), 2);
         assert!(files.iter().any(|p| p == &dicom_dest));
         assert!(files.iter().any(|p| p == &sub_dicom));
-        Ok(())
     }
 
-    #[rstest]
-    #[case::sequential(false)]
-    #[case::parallel(true)]
-    fn test_inode_sort(#[case] parallel: bool) -> std::io::Result<()> {
+    #[test]
+    fn test_inode_sort() {
         // Create temp directory with test files
-        let temp_dir = tempfile::tempdir()?;
+        let temp_dir = tempfile::tempdir().unwrap();
 
         // Create multiple files with known content
         let file1 = temp_dir.path().join("file1.txt");
         let file2 = temp_dir.path().join("file2.txt");
         let file3 = temp_dir.path().join("file3.txt");
 
-        std::fs::write(&file1, "file1")?;
-        std::fs::write(&file2, "file2")?;
-        std::fs::write(&file3, "file3")?;
+        std::fs::write(&file1, "file1").unwrap();
+        std::fs::write(&file2, "file2").unwrap();
+        std::fs::write(&file3, "file3").unwrap();
 
         // Get paths in random order
         let paths = vec![&file2, &file3, &file1];
 
         // Sort by inode
-        let sorted = if parallel {
-            paths.into_iter().sorted_by_inode().collect::<Vec<_>>()
-        } else {
-            paths.into_iter().sorted_by_inode().collect::<Vec<_>>()
-        };
+        let sorted = paths.into_iter().sorted_by_inode().collect::<Vec<_>>();
 
         // Verify files exist and are readable
         for path in &sorted {
             assert!(path.exists());
-            let content = std::fs::read_to_string(path)?;
+            let content = std::fs::read_to_string(path).unwrap();
             assert!(!content.is_empty());
         }
 
@@ -339,38 +465,147 @@ mod tests {
         for i in 1..inodes.len() {
             assert!(inodes[i - 1] <= inodes[i]);
         }
-
-        Ok(())
     }
 
-    #[test]
-    fn test_paths_from_file() -> std::io::Result<()> {
+    #[rstest]
+    #[case::no_bar(false)]
+    #[case::bar(true)]
+    fn test_dicom_paths_from_file(#[case] bar: bool) {
         // Create temp file with list of paths
-        let temp_file = tempfile::NamedTempFile::new()?;
-        let temp_dir = tempfile::tempdir()?;
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
 
         // Create test files
-        let file1 = temp_dir.path().join("file1.txt");
-        let file2 = temp_dir.path().join("file2.txt");
-        std::fs::write(&file1, "test1")?;
-        std::fs::write(&file2, "test2")?;
+        let file1 = temp_dir.path().join("file1.dcm");
+        let file2 = temp_dir.path().join("file2.dcm");
+        std::fs::write(&file1, "test1").unwrap();
+        std::fs::write(&file2, "test2").unwrap();
 
         // Write paths to temp file
-        writeln!(temp_file.as_file(), "{}", file1.display())?;
-        writeln!(temp_file.as_file(), "{}", file2.display())?;
-        writeln!(temp_file.as_file(), "invalid/path")?;
+        writeln!(temp_file.as_file(), "{}", file1.display()).unwrap();
+        writeln!(temp_file.as_file(), "{}", file2.display()).unwrap();
 
         // Read paths from file
-        let paths = temp_file.path().read_paths()?.collect::<Vec<_>>();
+        let paths = match bar {
+            true => temp_file
+                .path()
+                .read_dicom_paths_with_bar()
+                .unwrap()
+                .collect::<Vec<_>>(),
+            false => temp_file
+                .path()
+                .read_dicom_paths()
+                .unwrap()
+                .collect::<Vec<_>>(),
+        };
+
+        assert!(paths.len() == 2);
+        assert!(paths[0].exists());
+        assert!(paths[1].exists());
+    }
+
+    #[rstest]
+    #[case("test.tiff", true)]
+    #[case("test.tif", true)]
+    #[case("test.TIFF", true)]
+    #[case("test.TIF", true)]
+    #[case("path/to/test.tiff", true)]
+    #[case("test.txt", false)]
+    #[case("test", false)]
+    #[case("test.tif.txt", false)]
+    #[case("path/to/test", false)]
+    fn test_tiff_extension(#[case] path: &str, #[case] expected: bool) {
+        let path = PathBuf::from(path);
+        assert_eq!(path.has_tiff_extension(), expected);
+    }
+
+    #[rstest]
+    #[case("test.tiff", true)]
+    #[case("test.txt", false)]
+    #[case("nonexistent.tiff", false)]
+    fn test_is_tiff_file(#[case] filename: &str, #[case] expected: bool) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join(filename);
+        if !filename.starts_with("nonexistent") {
+            std::fs::write(&file_path, "test").unwrap();
+        }
+
+        assert_eq!(file_path.is_tiff_file().unwrap(), expected);
+        assert_eq!(file_path.is_tiff_file_or(!expected), expected);
+    }
+
+    #[rstest]
+    #[case::no_spinner(false)]
+    #[case::spinner(true)]
+    fn test_find_tiffs(#[case] spinner: bool) {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create test files
+        let tiff_files = vec![
+            temp_dir.path().join("test1.tiff"),
+            temp_dir.path().join("test2.tif"),
+            temp_dir.path().join("test3.TIFF"),
+        ];
+        let other_files = vec![
+            temp_dir.path().join("test4.txt"),
+            temp_dir.path().join("test5.doc"),
+        ];
+
+        // Create all test files
+        for file in tiff_files.iter().chain(other_files.iter()) {
+            std::fs::write(file, "test").unwrap();
+        }
+
+        // Find TIFF files
+        let found: Vec<_> = match spinner {
+            true => temp_dir.path().find_tiffs_with_spinner().unwrap().collect(),
+            false => temp_dir.path().find_tiffs().unwrap().collect(),
+        };
+
+        // Verify we found all TIFF files and only TIFF files
+        assert_eq!(found.len(), tiff_files.len());
+        for file in &found {
+            assert!(tiff_files.contains(file));
+        }
+    }
+
+    #[rstest]
+    #[case::no_bar(false)]
+    #[case::bar(true)]
+    fn test_tiff_paths_from_file(#[case] bar: bool) {
+        // Create temp file with list of paths
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create test files
+        let file1 = temp_dir.path().join("file1.tiff");
+        let file2 = temp_dir.path().join("file2.tiff");
+        std::fs::write(&file1, "test1").unwrap();
+        std::fs::write(&file2, "test2").unwrap();
+
+        // Write paths to temp file
+        writeln!(temp_file.as_file(), "{}", file1.display()).unwrap();
+        writeln!(temp_file.as_file(), "{}", file2.display()).unwrap();
+        writeln!(temp_file.as_file(), "invalid/path").unwrap();
+        temp_file.flush().unwrap();
+
+        // Read paths from file
+        let paths = match bar {
+            true => temp_file
+                .path()
+                .read_tiff_paths_with_bar()
+                .unwrap()
+                .collect::<Vec<_>>(),
+            false => temp_file
+                .path()
+                .read_tiff_paths()
+                .unwrap()
+                .collect::<Vec<_>>(),
+        };
 
         // First two paths should be valid
-        assert!(paths[0].as_ref().unwrap().exists());
-        assert!(paths[1].as_ref().unwrap().exists());
-
-        // Third path should be invalid but parseable
-        assert!(paths[2].as_ref().unwrap().to_str().unwrap() == "invalid/path");
-        assert!(!paths[2].as_ref().unwrap().exists());
-
-        Ok(())
+        assert!(paths.len() == 2);
+        assert!(paths[0].exists());
+        assert!(paths[1].exists());
     }
 }

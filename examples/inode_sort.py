@@ -1,8 +1,10 @@
-from pathlib import Path
-from dicom_preprocessing import inode_sort
 import timeit
 from argparse import ArgumentParser, Namespace
+from pathlib import Path
 from typing import List
+
+from dicom_preprocessing import inode_sort
+
 
 def inode_sort_python(paths: List[Path]) -> List[Path]:
     return sorted(paths, key=lambda p: p.stat().st_ino)

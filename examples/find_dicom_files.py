@@ -1,8 +1,10 @@
-from pathlib import Path
-from dicom_preprocessing import find_dicom_files
 import timeit
 from argparse import ArgumentParser, Namespace
+from pathlib import Path
 from typing import List
+
+from dicom_preprocessing import find_dicom_files
+
 
 def is_dicom_file(path: Path, strict: bool) -> bool:
     ext = path.suffix.lower()
@@ -12,8 +14,10 @@ def is_dicom_file(path: Path, strict: bool) -> bool:
         return False
     raise NotImplementedError("DICM prefix check")
 
+
 def find_dicom_files_python(path: Path) -> List[Path]:
     return list(p for p in path.rglob("*") if is_dicom_file(p, True))
+
 
 def parse_args():
     parser = ArgumentParser()

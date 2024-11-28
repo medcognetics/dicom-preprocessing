@@ -3,18 +3,13 @@ use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use image::DynamicImage;
 use image::GenericImageView;
-use image::ImageError;
-use ndarray::{Dim, Shape};
 use num::PrimInt;
 use snafu::{ResultExt, Snafu};
 use std::io::{Read, Seek};
 use tiff::decoder::Decoder;
 
 use crate::color::DicomColorType;
-use crate::errors::{
-    dicom::{CastValueSnafu, ConvertValueSnafu, MissingPropertySnafu},
-    DicomError, TiffError,
-};
+use crate::errors::{dicom::ConvertValueSnafu, DicomError, TiffError};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum DimensionOrder {
@@ -25,11 +20,11 @@ pub enum DimensionOrder {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dimensions {
-    width: usize,
-    height: usize,
-    num_frames: usize,
-    channels: usize,
-    order: DimensionOrder,
+    pub width: usize,
+    pub height: usize,
+    pub num_frames: usize,
+    pub channels: usize,
+    pub order: DimensionOrder,
 }
 
 impl Dimensions {
@@ -55,6 +50,13 @@ impl Dimensions {
         match self.order {
             DimensionOrder::NHWC => (self.num_frames, self.height, self.width, self.channels),
             DimensionOrder::NCHW => (self.num_frames, self.channels, self.height, self.width),
+        }
+    }
+
+    pub fn frame_shape(&self) -> (usize, usize, usize) {
+        match self.order {
+            DimensionOrder::NHWC => (self.height, self.width, self.channels),
+            DimensionOrder::NCHW => (self.channels, self.height, self.width),
         }
     }
 
@@ -180,6 +182,17 @@ mod tests {
         assert_eq!(DimensionOrder::default(), DimensionOrder::NHWC);
     }
 
+    #[test]
+    fn test_with_num_frames() {
+        let dims = Dimensions::new(3, 4, 1, 2);
+        let new_dims = dims.with_num_frames(5);
+        assert_eq!(new_dims.num_frames, 5);
+        assert_eq!(new_dims.width, dims.width);
+        assert_eq!(new_dims.height, dims.height);
+        assert_eq!(new_dims.channels, dims.channels);
+        assert_eq!(new_dims.order, dims.order);
+    }
+
     #[rstest]
     #[case(1, 2, 3, 4, DimensionOrder::NHWC, (1, 2, 3, 4))]
     #[case(1, 2, 3, 4, DimensionOrder::NCHW, (1, 4, 2, 3))]
@@ -193,6 +206,21 @@ mod tests {
     ) {
         let dims = Dimensions::new(w, h, n, c).with_order(order);
         assert_eq!(dims.shape(), expected);
+    }
+
+    #[rstest]
+    #[case(1, 2, 3, 4, DimensionOrder::NHWC, (2, 3, 4))]
+    #[case(1, 2, 3, 4, DimensionOrder::NCHW, (4, 2, 3))]
+    fn test_frame_shape(
+        #[case] n: usize,
+        #[case] h: usize,
+        #[case] w: usize,
+        #[case] c: usize,
+        #[case] order: DimensionOrder,
+        #[case] expected: (usize, usize, usize),
+    ) {
+        let dims = Dimensions::new(w, h, n, c).with_order(order);
+        assert_eq!(dims.frame_shape(), expected);
     }
 
     #[rstest]

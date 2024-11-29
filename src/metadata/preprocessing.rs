@@ -1,3 +1,4 @@
+use dicom::object::{FileDicomObject, InMemDicomObject};
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
@@ -5,9 +6,9 @@ use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, TiffKind};
 use tiff::tags::Tag;
 
-use crate::errors::tiff::TiffError;
+use crate::errors::{DicomError, TiffError};
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::{Crop, Padding, Resize};
+use crate::transform::{get_number_of_frames, Crop, Padding, Resize};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -117,6 +118,14 @@ where
         while decoder.seek_to_image(num_frames).is_ok() {
             num_frames += 1;
         }
+        Ok(num_frames.into())
+    }
+}
+
+impl TryFrom<&FileDicomObject<InMemDicomObject>> for FrameCount {
+    type Error = DicomError;
+    fn try_from(dcm: &FileDicomObject<InMemDicomObject>) -> Result<Self, Self::Error> {
+        let num_frames = get_number_of_frames(dcm)? as u16;
         Ok(num_frames.into())
     }
 }

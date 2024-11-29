@@ -3,71 +3,9 @@ use tiff::decoder::{Decoder, DecodingResult};
 
 use snafu::ResultExt;
 
-use crate::color::DicomColorType;
 use crate::errors::{tiff::SeekToFrameSnafu, TiffError};
-use crate::metadata::FrameCount;
+use crate::metadata::{Dimensions, FrameCount};
 use ndarray::{s, Array, Array4};
-
-/// The order of the channels in the loaded image
-#[derive(Clone, Copy, Debug)]
-pub enum ChannelOrder {
-    NHWC,
-    NCHW,
-}
-
-#[derive(Clone, Debug)]
-struct Dimensions {
-    width: usize,
-    height: usize,
-    num_frames: usize,
-    color_type: DicomColorType,
-}
-
-impl Dimensions {
-    pub fn shape(&self, channel_order: &ChannelOrder) -> (usize, usize, usize, usize) {
-        match channel_order {
-            ChannelOrder::NHWC => (
-                self.num_frames,
-                self.height,
-                self.width,
-                self.color_type.channels(),
-            ),
-            ChannelOrder::NCHW => (
-                self.num_frames,
-                self.color_type.channels(),
-                self.height,
-                self.width,
-            ),
-        }
-    }
-
-    pub fn frame_shape(&self, channel_order: &ChannelOrder) -> (usize, usize, usize) {
-        match channel_order {
-            ChannelOrder::NHWC => (self.height, self.width, self.color_type.channels()),
-            ChannelOrder::NCHW => (self.color_type.channels(), self.height, self.width),
-        }
-    }
-
-    pub fn with_num_frames(self, num_frames: usize) -> Self {
-        Dimensions { num_frames, ..self }
-    }
-}
-
-impl<R: Read + Seek> TryFrom<&mut Decoder<R>> for Dimensions {
-    type Error = TiffError;
-    fn try_from(decoder: &mut Decoder<R>) -> Result<Self, Self::Error> {
-        let (width, height) = decoder.dimensions()?;
-        let color_type = decoder.colortype()?;
-        let color_type = DicomColorType::try_from(color_type)?;
-        let num_frames: u16 = FrameCount::try_from(decoder)?.into();
-        Ok(Self {
-            width: width as usize,
-            height: height as usize,
-            num_frames: num_frames as usize,
-            color_type,
-        })
-    }
-}
 
 pub trait LoadFromTiff<T: Clone + num::Zero> {
     fn to_vec(decoded: DecodingResult) -> Result<Vec<T>, TiffError>;
@@ -82,8 +20,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         // Determine dimensions of the loaded result, accounting for the selected frames subset
         // TODO: Support channel-first
         let dimensions = Dimensions::try_from(&mut *decoder)?;
-        let channel_order = ChannelOrder::NHWC;
-        let decoded_dimensions = dimensions.clone().with_num_frames(frames.len());
+        let decoded_dimensions = dimensions.with_num_frames(frames.len());
 
         // Validate that the requested frames are within the range of the TIFF file
         let max_frame = frames.iter().max().unwrap().clone();
@@ -104,13 +41,11 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
             })?;
             let image = decoder.read_image()?;
             let image = Self::to_vec(image)?;
-            return Ok(
-                Array::from_shape_vec(decoded_dimensions.shape(&channel_order), image).unwrap(),
-            );
+            return Ok(Array::from_shape_vec(decoded_dimensions.shape(), image).unwrap());
         }
 
         // Pre-allocate contiguous array and fill it with the decoded frames
-        let mut array = Array4::<T>::zeros(decoded_dimensions.shape(&channel_order));
+        let mut array = Array4::<T>::zeros(decoded_dimensions.shape());
         for (i, frame) in frames.into_iter().enumerate() {
             decoder.seek_to_image(frame).context(SeekToFrameSnafu {
                 frame,
@@ -122,8 +57,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
             let image = decoder.read_image()?;
             let image = Self::to_vec(image)?;
             let mut slice = array.slice_mut(s![i, .., .., ..]);
-            let new = Array::from_shape_vec(decoded_dimensions.frame_shape(&channel_order), image)
-                .unwrap();
+            let new = Array::from_shape_vec(decoded_dimensions.frame_shape(), image).unwrap();
             slice.assign(&new);
         }
 
@@ -187,6 +121,7 @@ mod tests {
     use std::io::BufReader;
     use tempfile;
 
+    use crate::color::DicomColorType;
     use crate::preprocess::Preprocessor;
     use crate::save::TiffSaver;
     use crate::transform::PaddingDirection;

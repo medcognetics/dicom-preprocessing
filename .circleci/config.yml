@@ -25,6 +25,10 @@ jobs:
                 paths:
                 - "~/.cargo"
                 - "./target"
+            - persist_to_workspace:
+                root: .
+                paths:
+                    - target/
 
     test_python:
         docker:
@@ -34,6 +38,16 @@ jobs:
             - restore_cache:
                 keys:
                   - v1-dependencies-{{ checksum "pdm.lock" }}
+            - attach_workspace:
+                at: .
+            - run:
+                name: Install Rust
+                command: |
+                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
+            - run:
+                name: Version information
+                command: rustc --version; cargo --version; rustup --version
             - run:
                 name: Install dependencies
                 command: make init
@@ -49,5 +63,7 @@ jobs:
 workflows:
     build_and_test:
         jobs:
-            - test_python
             - build
+            - test_python:
+                requires:
+                    - build

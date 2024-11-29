@@ -25,3 +25,29 @@ jobs:
                 paths:
                 - "~/.cargo"
                 - "./target"
+
+    test_python:
+        docker:
+            - image: cimg/python:3.11-node
+        steps:
+            - checkout
+            - restore_cache:
+                keys:
+                  - v1-dependencies-{{ checksum "pdm.lock" }}
+            - run:
+                name: Install dependencies
+                command: make init
+            - save_cache:
+                paths:
+                  - ~/.cache/pip
+                  - ~/.cache/pdm
+                key: v1-dependencies-{{ checksum "pdm.lock" }}
+            - run:
+                name: Run tests
+                command: make test-python
+
+workflows:
+    build_and_test:
+        jobs:
+            - test_python
+            - build

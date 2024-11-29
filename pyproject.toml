@@ -6,10 +6,14 @@ requires = ["maturin>=1.0,<2.0", "pip", "cffi"]
 name = "dicom-preprocessing"
 description = "Preprocessing for DICOM images"
 requires-python = ">=3.10"
+dynamic = ["version"]
 
 [tool.maturin]
 bindings = "pyo3"  
 features = ["python"]
+version = { source = "cargo" }
+module-name = "dicom_preprocessing"
+package-data = ["*.pyi"]
 
 [tool.autoflake]
 remove-all-unused-imports = true

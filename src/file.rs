@@ -1,7 +1,7 @@
 use dicom::object::open_file;
 use dicom::object::DefaultDicomObject;
 use dicom::object::ReadError;
-use indicatif::ParallelProgressIterator;
+use indicatif::{ParallelProgressIterator, ProgressIterator};
 use itertools::Itertools;
 use rayon::iter::IntoParallelIterator;
 use rayon::prelude::*;
@@ -85,8 +85,22 @@ where
 {
     /// Sort paths by inode number.
     fn sorted_by_inode(&mut self) -> impl Iterator<Item = P> {
-        self.into_iter()
-            .map(|p| (p.inode_or(0), p))
+        self.map(|p| (p.inode_or(0), p))
+            .sorted_unstable_by_key(|(i, _)| *i)
+            .map(|(_, p)| p)
+    }
+
+    /// Like `sorted_by_inode`, but with a progress bar or spinner.
+    /// The progress bar tracks the querying of the inode numbers, but not the sorting.
+    fn sorted_by_inode_with_progress(&mut self) -> impl Iterator<Item = P> {
+        let (_, total) = self.size_hint();
+        let pb = match total {
+            Some(total) => default_bar(total as u64),
+            None => default_spinner(),
+        };
+        pb.set_message("Sorting paths by inode");
+        self.map(|p| (p.inode_or(0), p))
+            .progress_with(pb)
             .sorted_unstable_by_key(|(i, _)| *i)
             .map(|(_, p)| p)
     }
@@ -425,8 +439,10 @@ mod tests {
         assert!(files.iter().any(|p| p == &sub_dicom));
     }
 
-    #[test]
-    fn test_inode_sort() {
+    #[rstest]
+    #[case::no_spinner(false)]
+    #[case::spinner(true)]
+    fn test_inode_sort(#[case] spinner: bool) {
         // Create temp directory with test files
         let temp_dir = tempfile::tempdir().unwrap();
 
@@ -443,7 +459,10 @@ mod tests {
         let paths = vec![&file2, &file3, &file1];
 
         // Sort by inode
-        let sorted = paths.into_iter().sorted_by_inode().collect::<Vec<_>>();
+        let sorted: Vec<_> = match spinner {
+            true => paths.into_iter().sorted_by_inode_with_progress().collect(),
+            false => paths.into_iter().sorted_by_inode().collect(),
+        };
 
         // Verify files exist and are readable
         for path in &sorted {

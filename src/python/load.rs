@@ -12,6 +12,7 @@ use pyo3::{
 };
 use std::clone::Clone;
 use std::fs::File;
+use std::io::BufReader;
 use std::ops::Deref;
 use std::path::Path;
 use std::path::PathBuf;
@@ -85,8 +86,9 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
         }
 
         let file = File::open(path).map_err(|_| PyIOError::new_err("Failed to open file"))?;
-        let mut decoder =
-            Decoder::new(file).map_err(|_| PyRuntimeError::new_err("Failed to create decoder"))?;
+        let reader = BufReader::new(file);
+        let mut decoder = Decoder::new(reader)
+            .map_err(|_| PyRuntimeError::new_err("Failed to create decoder"))?;
         let array = Array4::<T>::decode(&mut decoder)
             .map_err(|_| PyRuntimeError::new_err("Failed to decode TIFF"))?;
         Ok(array.into_pyarray_bound(py))

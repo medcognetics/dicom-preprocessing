@@ -1,5 +1,6 @@
 use crate::file::{DicomFileOperations, InodeSort, TiffFileOperations};
 use crate::load::LoadFromTiff;
+use crate::python::path::PyPath;
 use ndarray::Array4;
 use num::Zero;
 use numpy::Element;
@@ -8,66 +9,13 @@ use pyo3::{
     exceptions::{PyFileNotFoundError, PyIOError, PyNotADirectoryError, PyRuntimeError},
     pymodule,
     types::{PyAnyMethods, PyList, PyListMethods, PyModule},
-    Bound, FromPyObject, IntoPy, PyAny, PyResult, Python, ToPyObject,
+    Bound, IntoPy, PyAny, PyResult, Python,
 };
 use std::clone::Clone;
 use std::fs::File;
 use std::io::BufReader;
-use std::ops::Deref;
 use std::path::Path;
-use std::path::PathBuf;
 use tiff::decoder::Decoder;
-
-use pyo3::prelude::*;
-
-/// Wrapper to convert between Python Path and Rust PathBuf
-struct PyPath(PathBuf);
-
-impl FromPyObject<'_> for PyPath {
-    fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
-        let path = ob.extract::<PathBuf>()?;
-        Ok(PyPath(path))
-    }
-}
-
-impl ToPyObject for PyPath {
-    fn to_object(&self, py: Python<'_>) -> PyObject {
-        let pathlib = py
-            .import_bound("pathlib")
-            .expect("Failed to import pathlib");
-        let path_class = pathlib.getattr("Path").expect("Failed to get Path class");
-        path_class
-            .call1((self.0.to_string_lossy().into_owned(),))
-            .expect("Failed to create Path")
-            .into()
-    }
-}
-
-impl IntoPy<PyObject> for PyPath {
-    fn into_py(self, py: Python<'_>) -> PyObject {
-        self.to_object(py)
-    }
-}
-
-impl Deref for PyPath {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl AsRef<Path> for PyPath {
-    fn as_ref(&self) -> &Path {
-        &self.0.as_ref()
-    }
-}
-
-impl From<PyPath> for PathBuf {
-    fn from(path: PyPath) -> Self {
-        path.0
-    }
-}
 
 #[pymodule]
 fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
@@ -176,9 +124,9 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
         let result: Vec<PyPath> = match spinner {
             true => path
                 .find_dicoms_with_spinner()?
-                .map(|p| PyPath(p))
+                .map(|p| PyPath::new(p))
                 .collect(),
-            false => path.find_dicoms()?.map(|p| PyPath(p)).collect(),
+            false => path.find_dicoms()?.map(|p| PyPath::new(p)).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)
@@ -199,8 +147,11 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
             )));
         }
         let result: Vec<PyPath> = match spinner {
-            true => path.find_tiffs_with_spinner()?.map(|p| PyPath(p)).collect(),
-            false => path.find_tiffs()?.map(|p| PyPath(p)).collect(),
+            true => path
+                .find_tiffs_with_spinner()?
+                .map(|p| PyPath::new(p))
+                .collect(),
+            false => path.find_tiffs()?.map(|p| PyPath::new(p)).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)
@@ -223,9 +174,9 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
         let result: Vec<PyPath> = match bar {
             true => path
                 .read_dicom_paths_with_bar()?
-                .map(|p| PyPath(p))
+                .map(|p| PyPath::new(p))
                 .collect(),
-            false => path.read_dicom_paths()?.map(|p| PyPath(p)).collect(),
+            false => path.read_dicom_paths()?.map(|p| PyPath::new(p)).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)
@@ -248,9 +199,9 @@ fn dicom_preprocessing<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyRes
         let result: Vec<PyPath> = match bar {
             true => path
                 .read_tiff_paths_with_bar()?
-                .map(|p| PyPath(p))
+                .map(|p| PyPath::new(p))
                 .collect(),
-            false => path.read_tiff_paths()?.map(|p| PyPath(p)).collect(),
+            false => path.read_tiff_paths()?.map(|p| PyPath::new(p)).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)

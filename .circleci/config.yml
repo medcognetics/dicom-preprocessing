@@ -31,7 +31,7 @@ jobs:
                 command: cargo build
             - run:
                 name: Test
-                command: cargo test --all-features
+                command: cargo test
             - save_cache:
                 key: project-cache
                 paths:
@@ -69,7 +69,10 @@ jobs:
                   - ~/.cache/pdm
                 key: v1-dependencies-{{ checksum "pdm.lock" }}
             - run:
-                name: Run tests
+                name: Run tests (Rust)
+                command: cargo test --features python
+            - run:
+                name: Run tests (Python)
                 command: make test-python
 
 workflows:

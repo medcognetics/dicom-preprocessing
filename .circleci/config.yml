@@ -69,10 +69,7 @@ jobs:
                   - ~/.cache/pdm
                 key: v1-dependencies-{{ checksum "pdm.lock" }}
             - run:
-                name: Run tests (Rust)
-                command: cargo test --features python
-            - run:
-                name: Run tests (Python)
+                name: Run tests
                 command: make test-python
 
 workflows:

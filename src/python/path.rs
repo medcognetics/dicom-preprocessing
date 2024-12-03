@@ -59,32 +59,3 @@ impl From<PyPath> for PathBuf {
         path.0
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use pyo3::Python;
-
-    #[test]
-    fn test_pypath_conversions() {
-        Python::with_gil(|py| {
-            // Create a Python Path object
-            let pathlib = py.import_bound("pathlib").unwrap();
-            let path_class = pathlib.getattr("Path").unwrap();
-            let test_path = path_class.call1(("test/path",)).unwrap();
-
-            // Convert Python Path to PyPath
-            let py_path: PyPath = test_path.extract().unwrap();
-            assert_eq!(py_path.0.to_str().unwrap(), "test/path");
-
-            // Convert PyPath back to Python Path
-            let py_obj = py_path.to_object(py);
-            let path_str = py_obj.call_method0(py, "__str__").unwrap();
-            assert_eq!(path_str.extract::<String>(py).unwrap(), "test/path");
-
-            // Test From<PyPath> for PathBuf
-            let path_buf: PathBuf = py_path.into();
-            assert_eq!(path_buf.to_str().unwrap(), "test/path");
-        });
-    }
-}

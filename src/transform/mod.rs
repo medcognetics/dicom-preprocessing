@@ -43,7 +43,7 @@ pub trait InvertibleTransform<T>: Transform<T> {
     /// Invert the transform.
     fn invert(&self, target: &T) -> T;
 
-    /// Invert the transform to an iterator of targets.
+    /// Invert the transform over an iterator of targets.
     fn invert_iter(&self, target: impl Iterator<Item = T>) -> impl Iterator<Item = T> {
         target.map(|t| self.invert(&t))
     }

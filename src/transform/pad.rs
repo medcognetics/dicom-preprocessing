@@ -10,7 +10,7 @@ use tiff::tags::Tag;
 
 use crate::errors::tiff::TiffError;
 use crate::metadata::WriteTags;
-use crate::transform::Transform;
+use crate::transform::{Coord, InvertibleTransform, Transform};
 
 pub const ACTIVE_AREA: u16 = 50829;
 
@@ -131,6 +131,23 @@ impl Transform<DynamicImage> for Padding {
             }
         }
         padded_image
+    }
+}
+
+impl Transform<Coord> for Padding {
+    fn apply(&self, coord: &Coord) -> Coord {
+        let (x, y): (u32, u32) = coord.into();
+        Coord::new(x + self.left, y + self.top)
+    }
+}
+
+impl InvertibleTransform<Coord> for Padding {
+    fn invert(&self, coord: &Coord) -> Coord {
+        let (x, y): (u32, u32) = coord.into();
+        let (left, top) = (self.left, self.top);
+        let new_x = if x > left { x - left } else { 0 };
+        let new_y = if y > top { y - top } else { 0 };
+        Coord::new(new_x, new_y)
     }
 }
 
@@ -369,5 +386,42 @@ mod tests {
         let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
         let actual = Padding::try_from(&mut tiff).unwrap();
         assert_eq!(padding, actual);
+    }
+
+    #[rstest]
+    #[case(
+        Padding { left: 1, top: 1, right: 2, bottom: 2 },
+        Coord::new(0, 0),
+        Coord::new(1, 1)
+    )]
+    #[case(
+        Padding { left: 2, top: 3, right: 1, bottom: 1 },
+        Coord::new(5, 5),
+        Coord::new(7, 8)
+    )]
+    fn test_apply_coord(#[case] padding: Padding, #[case] coord: Coord, #[case] expected: Coord) {
+        let result = padding.apply(&coord);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        Padding { left: 1, top: 1, right: 2, bottom: 2 },
+        Coord::new(1, 1),
+        Coord::new(0, 0)
+    )]
+    #[case(
+        Padding { left: 2, top: 3, right: 1, bottom: 1 },
+        Coord::new(7, 8),
+        Coord::new(5, 5)
+    )]
+    #[case(
+        Padding { left: 2, top: 2, right: 1, bottom: 1 },
+        Coord::new(1, 1),
+        Coord::new(0, 0)
+    )]
+    fn test_invert_coord(#[case] padding: Padding, #[case] coord: Coord, #[case] expected: Coord) {
+        let result = padding.invert(&coord);
+        assert_eq!(result, expected);
     }
 }

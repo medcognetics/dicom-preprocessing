@@ -11,7 +11,7 @@ use tiff::tags::Tag;
 
 use crate::errors::tiff::TiffError;
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::Transform;
+use crate::transform::{Coord, InvertibleTransform, Transform};
 
 pub const DEFAULT_SCALE: u16 = 50718;
 
@@ -97,6 +97,33 @@ impl Transform<Resolution> for Resize {
         );
         let scale = self.scale_x;
         resolution.scale(scale)
+    }
+}
+
+impl InvertibleTransform<Resolution> for Resize {
+    fn invert(&self, resolution: &Resolution) -> Resolution {
+        let scale = 1.0 / self.scale_x;
+        resolution.scale(scale)
+    }
+}
+
+impl Transform<Coord> for Resize {
+    fn apply(&self, coord: &Coord) -> Coord {
+        let (x, y): (u32, u32) = coord.into();
+        let (scale_x, scale_y) = (self.scale_x, self.scale_y);
+        let new_x = (x as f32 * scale_x) as u32;
+        let new_y = (y as f32 * scale_y) as u32;
+        Coord::new(new_x, new_y)
+    }
+}
+
+impl InvertibleTransform<Coord> for Resize {
+    fn invert(&self, coord: &Coord) -> Coord {
+        let (x, y): (u32, u32) = coord.into();
+        let (scale_x, scale_y) = (self.scale_x, self.scale_y);
+        let new_x = (x as f32 / scale_x) as u32;
+        let new_y = (y as f32 / scale_y) as u32;
+        Coord::new(new_x, new_y)
     }
 }
 
@@ -237,5 +264,97 @@ mod tests {
         let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
         let actual = Resize::try_from(&mut tiff).unwrap();
         assert_eq!(resize, actual);
+    }
+
+    #[rstest]
+    #[case(
+        Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest },
+        Coord::new(5, 5),
+        Coord::new(10, 10)
+    )]
+    #[case(
+        Resize { scale_x: 0.5, scale_y: 0.5, filter: FilterType::Nearest },
+        Coord::new(10, 10), 
+        Coord::new(5, 5)
+    )]
+    #[case(
+        Resize { scale_x: 1.5, scale_y: 1.5, filter: FilterType::Nearest },
+        Coord::new(4, 6),
+        Coord::new(6, 9)
+    )]
+    fn test_apply_coord(#[case] resize: Resize, #[case] coord: Coord, #[case] expected: Coord) {
+        let result = resize.apply(&coord);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest },
+        Coord::new(10, 10),
+        Coord::new(5, 5)
+    )]
+    #[case(
+        Resize { scale_x: 0.5, scale_y: 0.5, filter: FilterType::Nearest },
+        Coord::new(5, 5),
+        Coord::new(10, 10)
+    )]
+    #[case(
+        Resize { scale_x: 1.5, scale_y: 1.5, filter: FilterType::Nearest },
+        Coord::new(6, 9),
+        Coord::new(4, 6)
+    )]
+    fn test_invert_coord(#[case] resize: Resize, #[case] coord: Coord, #[case] expected: Coord) {
+        let result = resize.invert(&coord);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest },
+        Resolution::new(300.0, 300.0),
+        Resolution::new(600.0, 600.0)
+    )]
+    #[case(
+        Resize { scale_x: 0.5, scale_y: 0.5, filter: FilterType::Nearest },
+        Resolution::new(300.0, 300.0),
+        Resolution::new(150.0, 150.0)
+    )]
+    #[case(
+        Resize { scale_x: 1.5, scale_y: 1.5, filter: FilterType::Nearest },
+        Resolution::new(200.0, 200.0),
+        Resolution::new(300.0, 300.0)
+    )]
+    fn test_apply_resolution(
+        #[case] resize: Resize,
+        #[case] resolution: Resolution,
+        #[case] expected: Resolution,
+    ) {
+        let result = resize.apply(&resolution);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest },
+        Resolution::new(600.0, 600.0),
+        Resolution::new(300.0, 300.0)
+    )]
+    #[case(
+        Resize { scale_x: 0.5, scale_y: 0.5, filter: FilterType::Nearest },
+        Resolution::new(150.0, 150.0),
+        Resolution::new(300.0, 300.0)
+    )]
+    #[case(
+        Resize { scale_x: 1.5, scale_y: 1.5, filter: FilterType::Nearest },
+        Resolution::new(300.0, 300.0),
+        Resolution::new(200.0, 200.0)
+    )]
+    fn test_invert_resolution(
+        #[case] resize: Resize,
+        #[case] resolution: Resolution,
+        #[case] expected: Resolution,
+    ) {
+        let result = resize.invert(&resolution);
+        assert_eq!(result, expected);
     }
 }

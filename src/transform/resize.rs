@@ -274,7 +274,7 @@ mod tests {
     )]
     #[case(
         Resize { scale_x: 0.5, scale_y: 0.5, filter: FilterType::Nearest },
-        Coord::new(10, 10), 
+        Coord::new(10, 10),
         Coord::new(5, 5)
     )]
     #[case(

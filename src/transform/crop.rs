@@ -420,13 +420,13 @@ mod tests {
     )]
     #[case(
         Crop { left: 1, top: 1, width: 2, height: 2 },
-        Coord::new(0, 0), 
+        Coord::new(0, 0),
         Coord::new(0, 0)
     )]
     #[case(
         Crop { left: 1, top: 1, width: 2, height: 2 },
         Coord::new(4, 4),
-        Coord::new(2, 2) 
+        Coord::new(2, 2)
     )]
     fn test_apply_coord(#[case] crop: Crop, #[case] coord: Coord, #[case] expected: Coord) {
         let result = crop.apply(&coord);

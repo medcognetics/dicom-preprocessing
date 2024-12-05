@@ -1,6 +1,21 @@
 version: 2.1
 
 jobs:
+    quality:
+        docker:
+            - image: rust:latest
+        steps:
+            - checkout
+            - run:
+                name: Install dependencies
+                command: rustup component add rustfmt
+            - run:
+                name: Check formatting
+                command: cargo fmt -- --check
+            - run:
+                name: General check
+                command: cargo check --all-features
+
     build:
         docker:
             - image: rust:latest
@@ -11,9 +26,6 @@ jobs:
             - run:
                 name: Install dependencies
                 command: rustup component add rustfmt
-            - run:
-                name: Check formatting
-                command: cargo fmt -- --check
             - run:
                 name: Stable Build
                 command: cargo build
@@ -63,6 +75,7 @@ jobs:
 workflows:
     build_and_test:
         jobs:
+            - quality
             - build
             - test_python:
                 requires:

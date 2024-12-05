@@ -313,7 +313,10 @@ fn run(args: Args) -> Result<(), Error> {
     } else {
         vec![args.source.clone()]
     };
-    let source = source.into_iter().sorted_by_inode().collect::<Vec<_>>();
+    let source = source
+        .into_iter()
+        .sorted_by_inode_with_progress()
+        .collect::<Vec<_>>();
 
     tracing::info!("Number of sources found: {}", source.len());
 

@@ -1,4 +1,7 @@
+use dicom::core::header::HasLength;
+use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
+use snafu::ResultExt;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
@@ -6,9 +9,10 @@ use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, TiffKind};
 use tiff::tags::Tag;
 
+use crate::dicom::ConvertValueSnafu;
 use crate::errors::{DicomError, TiffError};
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::{get_number_of_frames, Crop, Padding, Resize};
+use crate::transform::{Crop, Padding, Resize};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -94,6 +98,18 @@ impl From<FrameCount> for usize {
     }
 }
 
+impl From<u32> for FrameCount {
+    fn from(num_frames: u32) -> Self {
+        Self(num_frames as u16)
+    }
+}
+
+impl From<FrameCount> for u32 {
+    fn from(frame_count: FrameCount) -> Self {
+        frame_count.0 as u32
+    }
+}
+
 impl<T> TryFrom<&mut Decoder<T>> for FrameCount
 where
     T: Read + Seek,
@@ -125,8 +141,16 @@ where
 impl TryFrom<&FileDicomObject<InMemDicomObject>> for FrameCount {
     type Error = DicomError;
     fn try_from(dcm: &FileDicomObject<InMemDicomObject>) -> Result<Self, Self::Error> {
-        let num_frames = get_number_of_frames(dcm)? as u16;
-        Ok(num_frames.into())
+        let number_of_frames = dcm.get(tags::NUMBER_OF_FRAMES);
+
+        let number_of_frames = match number_of_frames {
+            Some(elem) if !elem.is_empty() => elem.to_int::<u16>().context(ConvertValueSnafu {
+                name: "Number of Frames",
+            })?,
+            _ => 1,
+        };
+
+        Ok(number_of_frames.into())
     }
 }
 

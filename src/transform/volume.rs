@@ -1,9 +1,5 @@
-use crate::errors::{
-    dicom::{ConvertValueSnafu, PixelDataSnafu},
-    DicomError,
-};
-use dicom::core::header::HasLength;
-use dicom::dictionary_std::tags;
+use crate::errors::{dicom::PixelDataSnafu, DicomError};
+use crate::metadata::preprocessing::FrameCount;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::PixelDecoder;
 use image::DynamicImage;
@@ -59,25 +55,6 @@ impl fmt::Display for DisplayVolumeHandler {
     }
 }
 
-pub fn get_number_of_frames(file: &FileDicomObject<InMemDicomObject>) -> Result<u32, DicomError> {
-    let number_of_frames = file.get(tags::NUMBER_OF_FRAMES);
-
-    let number_of_frames = match number_of_frames {
-        Some(elem) if !elem.is_empty() => elem.to_int::<i32>().context(ConvertValueSnafu {
-            name: "Number of Frames",
-        })?,
-        _ => 1,
-    };
-
-    match number_of_frames >= 1 {
-        true => Ok(number_of_frames as u32),
-        false => Err(DicomError::InvalidValueError {
-            name: "Number of Frames",
-            value: number_of_frames.to_string(),
-        }),
-    }
-}
-
 pub trait HandleVolume {
     /// Decode and handle the volume frame by frame
     fn decode_volume(
@@ -124,7 +101,7 @@ impl HandleVolume for KeepVolume {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames = get_number_of_frames(file)?;
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let mut image_data = Vec::with_capacity(number_of_frames as usize);
         for frame_number in 0..number_of_frames {
             let decoded = file
@@ -139,7 +116,7 @@ impl HandleVolume for KeepVolume {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames = get_number_of_frames(file)?;
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let result = (0..number_of_frames)
             .into_par_iter()
             .map(|frame| {
@@ -163,7 +140,7 @@ impl HandleVolume for CentralSlice {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames = get_number_of_frames(file)?;
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let central_frame = number_of_frames / 2;
         let decoded = file
             .decode_pixel_data_frame(central_frame)
@@ -208,7 +185,7 @@ impl HandleVolume for MaxIntensity {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames = get_number_of_frames(file)?;
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let start = min(number_of_frames, self.skip_start);
         let end = max(0, number_of_frames - self.skip_end);
 
@@ -240,7 +217,7 @@ impl HandleVolume for MaxIntensity {
         &self,
         file: &FileDicomObject<InMemDicomObject>,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames = get_number_of_frames(file)?;
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let start = min(number_of_frames, self.skip_start);
         let end = max(0, number_of_frames - self.skip_end);
 

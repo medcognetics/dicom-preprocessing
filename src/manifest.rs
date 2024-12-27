@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::path::Path;
 use std::path::PathBuf;
@@ -109,6 +110,16 @@ pub fn get_manifest_with_progress<P: AsRef<Path>>(root: P) -> IOResult<Vec<Manif
         .into_par_iter()
         .map(|p| ManifestEntry::try_from_preprocessed_file(&p))
         .collect::<IOResult<Vec<_>>>()?;
+
+    // Sort by (study_instance_uid, sop_instance_uid)
+    let manifest = manifest
+        .into_iter()
+        .sorted_by(|a, b| {
+            a.study_instance_uid()
+                .cmp(&b.study_instance_uid())
+                .then(a.sop_instance_uid().cmp(&b.sop_instance_uid()))
+        })
+        .collect::<Vec<_>>();
 
     Ok(manifest)
 }

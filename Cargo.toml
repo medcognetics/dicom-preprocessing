@@ -51,6 +51,10 @@ lto = "fat"
 name = "dicom-preprocess"
 path = "src/main.rs"
 
+[[bin]]
+name = "dicom-manifest"
+path = "src/bin/manifest.rs"
+
 [[bench]]
 name = "inode_sort"
 harness = false

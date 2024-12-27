@@ -113,3 +113,29 @@ def inode_sort(paths: List[Path], bar: bool = False) -> List[Path]:
         Sorted list of paths
     """
     ...
+
+class ManifestEntry:
+    path: Path
+    sop_instance_uid: str
+    study_instance_uid: str
+    inode: int
+
+    def relative_path(self, root: Path) -> Path:
+        """Get the path of this entry relative to a root path"""
+        ...
+
+def get_manifest(path: Path, bar: bool = False) -> List[ManifestEntry]:
+    """Gets manifest entries for preprocessed TIFF files in a directory.
+
+    TIFF files are recursively searched for in the given directory.
+    Preprocessed files are expected to be in the following directory structure:
+    `{root}/{study_instance_uid}/{sop_instance_uid}.{tiff}`
+
+    Args:
+        path: Directory path to search
+        bar: Whether to show a progress bar
+
+    Returns:
+        List of manifest entries
+    """
+    ...

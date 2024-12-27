@@ -7,6 +7,7 @@ use crate::file::{default_bar, TiffFileOperations};
 type IOResult<T> = Result<T, std::io::Error>;
 
 /// Data structure for tracking metadata about a single preprocessed file
+#[derive(Debug, Clone)]
 pub struct ManifestEntry {
     path: PathBuf,
     sop_instance_uid: String,
@@ -20,9 +21,13 @@ impl AsRef<Path> for ManifestEntry {
 }
 
 impl ManifestEntry {
-    pub fn new(path: PathBuf, sop_instance_uid: String, study_instance_uid: String) -> Self {
+    pub fn new<P: AsRef<Path>>(
+        path: P,
+        sop_instance_uid: String,
+        study_instance_uid: String,
+    ) -> Self {
         Self {
-            path,
+            path: PathBuf::from(path.as_ref()),
             sop_instance_uid,
             study_instance_uid,
         }

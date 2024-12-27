@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import numpy as np
 import pytest
 from dicom_preprocessing import get_manifest
+from PIL import Image
 
 
 @pytest.fixture(params=[Path, str])
@@ -24,7 +26,11 @@ def tiff_files(tmp_path):
         for sop_uid in sop_uids:
             path = tmp_path / study_uid / f"{sop_uid}.tiff"
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.touch()
+            # Create a valid TIFF file with basic image data
+            img_data = np.zeros((64, 64), dtype=np.uint8)
+            img_data[16:48, 16:48] = 255  # Create a white square in center
+            img = Image.fromarray(img_data)
+            img.save(path, format="TIFF", resolution=(72, 72))
             files.append(path)
     return files
 
@@ -46,3 +52,4 @@ def test_get_manifest(root, tiff_files, bar):
     assert set(m.path for m in files) == set(tiff_files)
     assert all(isinstance(m.inode, int) for m in files)
     assert all(m.relative_path(root) == m.path.relative_to(root) for m in files)
+    assert all(m.dimensions == {"width": 64, "height": 64, "channels": 1, "num_frames": 1} for m in files)

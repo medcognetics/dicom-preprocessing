@@ -117,6 +117,10 @@ The manifest will contain the following columns, sorted by (`study_instance_uid`
 - `sop_instance_uid` - the SOP instance UID of the preprocessed file
 - `path` - the path of the preprocessed file relative to the source path
 - `inode` - the inode of the preprocessed file
+- `width` - the width of the preprocessed file
+- `height` - the height of the preprocessed file
+- `channels` - the number of channels in the preprocessed file
+- `num_frames` - the number of frames in the preprocessed file
 
 Example usage:
 

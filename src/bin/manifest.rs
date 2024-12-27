@@ -112,19 +112,27 @@ fn run(args: Args) -> Result<(), Error> {
     // Write each entry to CSV file
     let mut csv_file = BufWriter::new(File::create(dest).context(CreateManifestSnafu)?);
     csv_file
-        .write_all(b"study_instance_uid,sop_instance_uid,path,inode\n")
+        .write_all(
+            b"study_instance_uid,sop_instance_uid,path,inode,width,height,channels,num_frames\n",
+        )
         .context(WriteManifestSnafu)?;
     for entry in entries {
         let path = entry.relative_path(&source);
+        let dims = entry.dimensions();
         writeln!(
             csv_file,
-            "{},{},{},{}",
+            "{},{},{},{},{},{},{},{}",
             entry.study_instance_uid(),
             entry.sop_instance_uid(),
             path.display(),
             entry.inode().context(ReadInodeSnafu)?,
+            dims.map(|d| d.width).unwrap_or(0),
+            dims.map(|d| d.height).unwrap_or(0),
+            dims.map(|d| d.channels).unwrap_or(0),
+            dims.map(|d| d.num_frames).unwrap_or(0),
         )
         .context(WriteManifestSnafu)?;
+        pb.inc(1);
     }
 
     Ok(())
@@ -187,7 +195,9 @@ mod tests {
             .unwrap();
 
         // Check header
-        assert!(contents.starts_with("study_instance_uid,sop_instance_uid,path,inode\n"));
+        assert!(contents.starts_with(
+            "study_instance_uid,sop_instance_uid,path,inode,width,height,channels,num_frames\n"
+        ));
 
         // Check we have 3 data rows (one per file)
         let num_lines = contents.lines().count();

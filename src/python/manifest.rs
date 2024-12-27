@@ -6,7 +6,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyList;
 use pyo3::{
     pymodule,
-    types::{PyAnyMethods, PyModule},
+    types::{PyAnyMethods, PyDict, PyModule},
     Bound, PyAny, PyResult, Python,
 };
 use std::clone::Clone;
@@ -52,12 +52,36 @@ impl PyManifestEntry {
         Ok(inode)
     }
 
+    #[getter]
+    fn dimensions<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
+        if let Some(dims) = self.0.dimensions() {
+            let dict = PyDict::new_bound(py);
+            dict.set_item("width", dims.width)?;
+            dict.set_item("height", dims.height)?;
+            dict.set_item("channels", dims.channels)?;
+            dict.set_item("num_frames", dims.num_frames)?;
+            Ok(Some(dict))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn __repr__(&self) -> String {
+        let dims_str = if let Some(dims) = self.0.dimensions() {
+            format!(
+                ", dimensions=({}x{}x{}x{})",
+                dims.num_frames, dims.height, dims.width, dims.channels
+            )
+        } else {
+            String::new()
+        };
+
         format!(
-            "ManifestEntry(path='{}', sop_instance_uid='{}', study_instance_uid='{}')",
+            "ManifestEntry(path='{}', sop_instance_uid='{}', study_instance_uid='{}'{})",
             self.0.path().display(),
             self.0.sop_instance_uid(),
-            self.0.study_instance_uid()
+            self.0.study_instance_uid(),
+            dims_str
         )
     }
 

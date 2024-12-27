@@ -1,9 +1,11 @@
+use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::path::Path;
 use std::path::PathBuf;
 
 use crate::file::{default_bar, TiffFileOperations};
+use crate::metadata::Dimensions;
 
 type IOResult<T> = Result<T, std::io::Error>;
 
@@ -13,6 +15,7 @@ pub struct ManifestEntry {
     path: PathBuf,
     sop_instance_uid: String,
     study_instance_uid: String,
+    dimensions: Option<Dimensions>,
 }
 
 impl AsRef<Path> for ManifestEntry {
@@ -31,6 +34,7 @@ impl ManifestEntry {
             path: PathBuf::from(path.as_ref()),
             sop_instance_uid,
             study_instance_uid,
+            dimensions: None,
         }
     }
 
@@ -44,6 +48,10 @@ impl ManifestEntry {
 
     pub fn study_instance_uid(&self) -> &str {
         &self.study_instance_uid
+    }
+
+    pub fn dimensions(&self) -> Option<&Dimensions> {
+        self.dimensions.as_ref()
     }
 
     /// Get the path of this entry relative to a root path
@@ -81,7 +89,23 @@ impl ManifestEntry {
             .to_string_lossy()
             .to_string();
 
-        Ok(Self::new(path, sop_instance_uid, study_instance_uid))
+        // Try to read dimensions from the TIFF file
+        let dimensions = if let Ok(file) = std::fs::File::open(&path) {
+            if let Ok(mut decoder) = tiff::decoder::Decoder::new(file) {
+                Dimensions::try_from(&mut decoder).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(Self {
+            path,
+            sop_instance_uid,
+            study_instance_uid,
+            dimensions,
+        })
     }
 }
 
@@ -108,6 +132,7 @@ pub fn get_manifest_with_progress<P: AsRef<Path>>(root: P) -> IOResult<Vec<Manif
 
     let manifest = tiff_files
         .into_par_iter()
+        .progress_with(bar)
         .map(|p| ManifestEntry::try_from_preprocessed_file(&p))
         .collect::<IOResult<Vec<_>>>()?;
 

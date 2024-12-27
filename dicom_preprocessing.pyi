@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+from typing import Dict, List
 
 import numpy as np
 import numpy.typing as npt
@@ -119,6 +119,7 @@ class ManifestEntry:
     sop_instance_uid: str
     study_instance_uid: str
     inode: int
+    dimensions: Dict[str, int]
 
     def relative_path(self, root: Path) -> Path:
         """Get the path of this entry relative to a root path"""

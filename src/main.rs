@@ -125,6 +125,14 @@ struct Args {
     crop_max: bool,
 
     #[arg(
+        help = "Do not use connected components for the crop calculation",
+        long = "no-components",
+        short = 'n',
+        default_value_t = false
+    )]
+    no_components: bool,
+
+    #[arg(
         help = "Target size (width,height)",
         long = "size",
         short = 's',
@@ -340,6 +348,7 @@ fn run(args: Args) -> Result<(), Error> {
         padding_direction: args.padding_direction,
         crop_max: args.crop_max,
         volume_handler: args.volume_handler.into(),
+        use_components: !args.no_components,
     };
     let compressor = args.compressor;
 
@@ -444,6 +453,7 @@ mod tests {
             strict: true,
             compressor: SupportedCompressor::default(),
             crop_max: false,
+            no_components: false,
             volume_handler: DisplayVolumeHandler::default(),
         };
         run(args).unwrap();

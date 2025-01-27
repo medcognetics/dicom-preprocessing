@@ -159,6 +159,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
         };
 
         let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
@@ -286,6 +287,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
         };
 
         let dicom_file_path = "pydicom/emri_small.dcm";

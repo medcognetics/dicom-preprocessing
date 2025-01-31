@@ -20,6 +20,7 @@ pub struct Preprocessor {
     pub padding_direction: PaddingDirection,
     pub crop_max: bool,
     pub volume_handler: VolumeHandler,
+    pub use_components: bool,
 }
 
 impl Default for Preprocessor {
@@ -31,6 +32,7 @@ impl Default for Preprocessor {
             padding_direction: PaddingDirection::Zero,
             crop_max: true,
             volume_handler: VolumeHandler::default(),
+            use_components: true,
         }
     }
 }
@@ -41,6 +43,7 @@ impl Preprocessor {
             true => Some(Crop::new_from_images(
                 &images.iter().collect::<Vec<_>>(),
                 self.crop_max,
+                self.use_components,
             )),
             false => None,
         }
@@ -172,6 +175,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
         },
         false
     )]
@@ -184,6 +188,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
         },
         true
     )]
@@ -196,6 +201,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
         },
         false
     )]
@@ -208,6 +214,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
         },
         false
     )]
@@ -220,6 +227,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
         },
         false
     )]
@@ -232,6 +240,7 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
         },
         false
     )]

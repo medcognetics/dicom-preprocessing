@@ -164,7 +164,7 @@ mod tests {
     use dicom::object::open_file;
 
     use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
-    use image::GenericImageView;
+    use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
 
     #[rstest]

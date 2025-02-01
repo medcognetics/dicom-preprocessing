@@ -21,6 +21,7 @@ pub struct Preprocessor {
     pub crop_max: bool,
     pub volume_handler: VolumeHandler,
     pub use_components: bool,
+    pub use_padding: bool,
 }
 
 impl Default for Preprocessor {
@@ -33,6 +34,7 @@ impl Default for Preprocessor {
             crop_max: true,
             volume_handler: VolumeHandler::default(),
             use_components: true,
+            use_padding: true,
         }
     }
 }
@@ -61,8 +63,8 @@ impl Preprocessor {
     }
 
     fn get_padding(&self, images: &Vec<DynamicImage>) -> Option<Padding> {
-        match self.size {
-            Some((target_width, target_height)) => {
+        match (self.use_padding, self.size) {
+            (true, Some((target_width, target_height))) => {
                 let first_image = images.first().unwrap();
                 let config = Padding::new(
                     &first_image,
@@ -72,7 +74,7 @@ impl Preprocessor {
                 );
                 Some(config)
             }
-            None => None,
+            _ => None,
         }
     }
 
@@ -176,6 +178,7 @@ mod tests {
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
             use_components: true,
+            use_padding: true,
         },
         false
     )]
@@ -189,6 +192,7 @@ mod tests {
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
+            use_padding: true,
         },
         true
     )]
@@ -202,6 +206,7 @@ mod tests {
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
+            use_padding: true,
         },
         false
     )]
@@ -215,6 +220,7 @@ mod tests {
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
+            use_padding: true,
         },
         false
     )]
@@ -228,6 +234,7 @@ mod tests {
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
+            use_padding: true,
         },
         false
     )]
@@ -241,6 +248,7 @@ mod tests {
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
+            use_padding: true,
         },
         false
     )]
@@ -274,5 +282,56 @@ mod tests {
         assert_eq!(dicom_file.get(tags::VOILUT_FUNCTION).is_some(), true);
         Preprocessor::sanitize_dicom(&mut dicom_file);
         assert_eq!(dicom_file.get(tags::VOILUT_FUNCTION).is_none(), true);
+    }
+
+    #[rstest]
+    #[case(
+        vec![
+            vec![1, 1],
+            vec![1, 1],
+        ],
+        (4, 4),
+        true,
+        Some(Padding { left: 1, top: 1, right: 1, bottom: 1 })
+    )]
+    #[case(
+        vec![
+            vec![1, 1],
+            vec![1, 1],
+        ],
+        (4, 4),
+        false,
+        None
+    )]
+    fn test_padding_enabled(
+        #[case] pixels: Vec<Vec<u8>>,
+        #[case] (target_width, target_height): (u32, u32),
+        #[case] use_padding: bool,
+        #[case] expected_padding: Option<Padding>,
+    ) {
+        // Create image from pixels
+        let width = pixels[0].len() as u32;
+        let height = pixels.len() as u32;
+        let mut img = RgbaImage::new(width, height);
+        for (y, row) in pixels.iter().enumerate() {
+            for (x, &value) in row.iter().enumerate() {
+                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
+            }
+        }
+        let dynamic_image = DynamicImage::ImageRgba8(img);
+
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: Some((target_width, target_height)),
+            filter: FilterType::Nearest,
+            padding_direction: PaddingDirection::Center,
+            crop_max: false,
+            volume_handler: VolumeHandler::default(),
+            use_components: true,
+            use_padding,
+        };
+
+        let padding = preprocessor.get_padding(&vec![dynamic_image]);
+        assert_eq!(padding, expected_padding);
     }
 }

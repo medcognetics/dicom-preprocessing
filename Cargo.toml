@@ -10,8 +10,8 @@ path = "src/lib.rs"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-dicom = { version = "0.8", features = ["image", "ndarray"] }
-dicom-pixeldata = { version = "0.8", features = ["openjp2", "rayon"] }
+dicom = { git = "https://github.com/TidalPaladin/dicom-rs.git", features = ["image", "ndarray"], rev = "6a0b20d"}
+dicom-pixeldata = { git = "https://github.com/TidalPaladin/dicom-rs.git", features = ["openjp2", "rayon"], rev = "6a0b20d"}
 indicatif = { version= "0.17", features= ["rayon"] }
 clap = { version = "4.5", features = ["derive"] }
 rayon = "1.10"
@@ -51,6 +51,10 @@ lto = "fat"
 [[bin]]
 name = "dicom-preprocess"
 path = "src/main.rs"
+
+[[bin]]
+name = "dicom-voilut"
+path = "src/voilut/main.rs"
 
 [[bench]]
 name = "inode_sort"

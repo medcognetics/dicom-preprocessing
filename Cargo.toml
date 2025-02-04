@@ -53,6 +53,10 @@ name = "dicom-preprocess"
 path = "src/main.rs"
 
 [[bin]]
+name = "dicom-manifest"
+path = "src/bin/manifest.rs"
+
+[[bin]]
 name = "dicom-voilut"
 path = "src/voilut/main.rs"
 

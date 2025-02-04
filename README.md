@@ -104,3 +104,26 @@ seed between runs. The second run benefits from ARC, as the dataset is smaller t
 | Run 2        | 820.5                |
 
 Given sufficient network bandwidth and ARC capacity, operations on datasets that have been cached will likely be bottlenecked by decode time.
+
+
+### Manifest Creation
+
+When dealing with large datasets stored on slow drives, it is useful to create a manifest of the dataset.
+This manifest should track the preprocessed file paths that comprise the dataset, as well as the inode of the
+preprocessed file (for optimizing sequential read performance). A binary, `dicom-manifest`, is provided to create a manifest from a directory of preprocessed TIFFs. It is assumed that the preprocessed TIFFs are named in the format of `{study_instance_uid}/{sop_instance_uid}.tiff`. Likewise, it is assumed that `dicom-manifest` will be given a source path at the root of the preprocessed dataset.
+
+The manifest will contain the following columns, sorted by (`study_instance_uid`, `sop_instance_uid`):
+- `study_instance_uid` - the study instance UID of the preprocessed file
+- `sop_instance_uid` - the SOP instance UID of the preprocessed file
+- `path` - the path of the preprocessed file relative to the source path
+- `inode` - the inode number of the preprocessed file
+- `width` - the width of the preprocessed file
+- `height` - the height of the preprocessed file
+- `channels` - the number of channels in the preprocessed file
+- `num_frames` - the number of frames in the preprocessed file
+
+Example usage:
+
+```
+dicom-manifest /path/to/preprocessed/dataset /path/to/manifest.csv
+```

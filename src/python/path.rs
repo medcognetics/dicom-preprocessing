@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use pyo3::prelude::*;
 
 /// Wrapper to convert between Python Path and Rust PathBuf
+#[derive(Clone)]
 pub struct PyPath(PathBuf);
 
 impl PyPath {

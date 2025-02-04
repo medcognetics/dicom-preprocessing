@@ -40,9 +40,9 @@ use_parentheses = false
 
 [tool.pdm.dev-dependencies]
 test = [
-    "pytest",
-    "numpy",
-    "Pillow",
+  "pytest",
+  "numpy",
+  "Pillow",
 ]
 quality = [
   "autoflake",

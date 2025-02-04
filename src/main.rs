@@ -167,6 +167,9 @@ struct Args {
     )]
     padding_direction: PaddingDirection,
 
+    #[arg(help = "Disable padding", long = "no-padding", default_value_t = false)]
+    no_padding: bool,
+
     #[arg(
         help = "Compression type",
         long = "compressor",
@@ -349,6 +352,7 @@ fn run(args: Args) -> Result<(), Error> {
         crop_max: args.crop_max,
         volume_handler: args.volume_handler.into(),
         use_components: !args.no_components,
+        use_padding: !args.no_padding,
     };
     let compressor = args.compressor;
 
@@ -455,6 +459,7 @@ mod tests {
             crop_max: false,
             no_components: false,
             volume_handler: DisplayVolumeHandler::default(),
+            no_padding: false,
         };
         run(args).unwrap();
 

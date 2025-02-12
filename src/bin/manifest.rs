@@ -1,7 +1,7 @@
 use arrow::array::{Int64Array, StringArray, UInt32Array};
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use indicatif::ProgressFinish;
 use parquet::arrow::arrow_writer::ArrowWriter;
 use parquet::errors::ParquetError;
@@ -11,7 +11,6 @@ use std::io::BufWriter;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
-use std::str::FromStr;
 use tracing::{error, Level};
 
 use indicatif::{ProgressBar, ProgressStyle};
@@ -60,22 +59,29 @@ enum Error {
         #[snafu(source(from(ParquetError, Box::new)))]
         source: Box<ParquetError>,
     },
+
+    #[snafu(display("Invalid output extension for {}, supported extensions: {}", path.display(), supported.join(", ")))]
+    InvalidOutputExtension {
+        path: PathBuf,
+        supported: Vec<&'static str>,
+    },
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy)]
 enum OutputFormat {
     Csv,
     Parquet,
 }
 
-impl FromStr for OutputFormat {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "csv" => Ok(OutputFormat::Csv),
-            "parquet" => Ok(OutputFormat::Parquet),
-            _ => Err(format!("Unknown format: {}", s)),
+impl OutputFormat {
+    fn from_extension(path: &Path) -> Result<Self, Error> {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("csv") => Ok(OutputFormat::Csv),
+            Some("parquet") => Ok(OutputFormat::Parquet),
+            _ => Err(Error::InvalidOutputExtension {
+                path: path.to_path_buf(),
+                supported: vec!["csv", "parquet"],
+            }),
         }
     }
 }
@@ -86,11 +92,8 @@ struct Args {
     #[arg(help = "Source directory")]
     source: PathBuf,
 
-    #[arg(help = "Output filepath")]
+    #[arg(help = "Output filepath (extension determines format: .csv or .parquet)")]
     output: PathBuf,
-
-    #[arg(help = "Output format (csv or parquet)", default_value = "csv")]
-    format: OutputFormat,
 }
 
 fn main() {
@@ -247,6 +250,8 @@ fn run(args: Args) -> Result<(), Error> {
         Ok(args.output)
     }?;
 
+    let format = OutputFormat::from_extension(&dest)?;
+
     // Read the files and create a manifest
     let entries = get_manifest_with_progress(&source).context(CreateManifestSnafu)?;
     if entries.is_empty() {
@@ -267,7 +272,7 @@ fn run(args: Args) -> Result<(), Error> {
     );
     pb.set_message("Writing manifest");
 
-    match args.format {
+    match format {
         OutputFormat::Csv => write_manifest_csv(&entries, &source, &dest, &pb),
         OutputFormat::Parquet => write_manifest_parquet(&entries, &source, &dest, &pb),
     }
@@ -316,7 +321,6 @@ mod tests {
         let args = Args {
             source: temp_dir.path().to_path_buf(),
             output: output_file.clone(),
-            format: OutputFormat::Csv,
         };
 
         run(args)?;
@@ -350,7 +354,6 @@ mod tests {
         let args = Args {
             source: temp_dir.path().to_path_buf(),
             output: output_file.clone(),
-            format: OutputFormat::Parquet,
         };
 
         run(args)?;
@@ -394,7 +397,6 @@ mod tests {
         let args = Args {
             source: temp_dir.path().to_path_buf(),
             output: output_file,
-            format: OutputFormat::Csv,
         };
 
         let result = run(args);
@@ -410,7 +412,6 @@ mod tests {
         let args = Args {
             source: temp_dir.path().to_path_buf(),
             output: output_dir,
-            format: OutputFormat::Csv,
         };
 
         let result = run(args);

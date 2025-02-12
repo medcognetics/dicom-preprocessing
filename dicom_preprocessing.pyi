@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, Iterator, List
 
 import numpy as np
 import numpy.typing as npt
@@ -138,5 +138,19 @@ def get_manifest(path: Path, bar: bool = False) -> List[ManifestEntry]:
 
     Returns:
         List of manifest entries
+    """
+    ...
+
+def load_tiff_f32_batched(paths: List[Path], batch_size: int) -> Iterator[List[npt.NDArray[np.float32]]]:
+    """Iterate over a list of TIFF file paths, loading and returning them in batches.
+
+    Batches are loaded using parallel threads.
+
+    Args:
+        paths: List of paths to TIFF files
+        batch_size: Number of files to load in each batch
+
+    Yields:
+        A batch of TIFF files as 32-bit floating-point numpy arrays
     """
     ...

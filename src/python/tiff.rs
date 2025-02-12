@@ -5,19 +5,18 @@ use ndarray::Array4;
 use num::Zero;
 use numpy::Element;
 use numpy::{IntoPyArray, PyArray4};
+use pyo3::prelude::*;
 use pyo3::{
     exceptions::{PyFileNotFoundError, PyIOError, PyRuntimeError},
     pymodule,
     types::{PyAnyMethods, PyList, PyModule},
     Bound, PyAny, PyResult, Python,
 };
+use rayon::prelude::*;
 use std::clone::Clone;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
-use pyo3::prelude::*;
-use rayon::prelude::*;
-
 
 #[pymodule]
 #[pyo3(name = "tiff")]
@@ -115,13 +114,32 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             }
 
             let end_idx = (slf.current_idx + slf.batch_size).min(slf.paths.len());
-            let batch_paths = &slf.paths[slf.current_idx..end_idx];
-            
-            let arrays: Vec<_> = batch_paths
-                .par_iter()
-                .map(|path| load_tiff::<f32, _>(py, path))
-                .collect::<Result<Vec<_>, _>>()
-                .ok()?;
+            let batch_paths: Vec<std::path::PathBuf> = slf.paths[slf.current_idx..end_idx]
+                .iter()
+                .map(|p| p.as_path().to_path_buf())
+                .collect();
+
+            let raw_arrays = match batch_paths
+                .into_par_iter()
+                .map(|path| {
+                    let file = File::open(&path).ok()?;
+                    let reader = BufReader::new(file);
+                    let mut decoder = Decoder::new(reader).ok()?;
+                    Array4::<f32>::decode(&mut decoder).ok()
+                })
+                .collect::<Option<Vec<_>>>()
+            {
+                Some(arrays) => arrays,
+                None => {
+                    PyRuntimeError::new_err("Failed to load one or more TIFF files").restore(py);
+                    return None;
+                }
+            };
+
+            let arrays: Vec<_> = raw_arrays
+                .into_iter()
+                .map(|arr| arr.into_pyarray_bound(py))
+                .collect();
 
             let batch = PyList::new_bound(py, arrays).into();
             slf.current_idx = end_idx;

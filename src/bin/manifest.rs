@@ -289,6 +289,8 @@ mod tests {
 
     type IOResult<T> = Result<T, std::io::Error>;
 
+    const NUM_FILES: usize = 3;
+
     fn setup_test_dir() -> IOResult<(TempDir, Vec<PathBuf>)> {
         let temp_dir = TempDir::new()?;
 
@@ -300,9 +302,9 @@ mod tests {
 
         // Create test files
         let mut paths = Vec::new();
-        paths.push(create_test_tiff(&study1_dir, "image1.tiff")?);
-        paths.push(create_test_tiff(&study1_dir, "image2.tiff")?);
-        paths.push(create_test_tiff(&study2_dir, "image3.tiff")?);
+        for i in 0..NUM_FILES {
+            paths.push(create_test_tiff(&study1_dir, &format!("image{}.tiff", i))?);
+        }
 
         Ok((temp_dir, paths))
     }
@@ -341,7 +343,7 @@ mod tests {
 
         // Check we have 3 data rows (one per file)
         let num_lines = contents.lines().count();
-        assert_eq!(num_lines, 4); // Header + 3 data rows
+        assert_eq!(num_lines, NUM_FILES + 1); // Header + NUM_FILES data rows
 
         Ok(())
     }
@@ -383,8 +385,8 @@ mod tests {
             assert!(schema.field_with_name(field).is_ok());
         }
 
-        // Check we have 3 rows (one per file)
-        assert_eq!(batch.num_rows(), 3);
+        // Check we have NUM_FILES rows (one per file)
+        assert_eq!(batch.num_rows(), NUM_FILES);
 
         Ok(())
     }

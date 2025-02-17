@@ -71,17 +71,21 @@ def test_load_tiff_f32_batched(path, batch_size, num_paths, channels):
     assert seen == num_paths
 
 
-def test_load_tiff_f32_batched_deterministic_order(tmp_path):
-    N, H, W, C = 3, 10, 10, 1
+@pytest.mark.parametrize("channels", [1, 3])
+def test_load_tiff_f32_batched_deterministic_order(tmp_path, channels):
+    N, H, W, C = 3, 10, 10, channels
     num_paths = 10
     arrays = []
     paths = []
     for i in range(num_paths):
         path = tmp_path / f"test_{i}.tiff"
         array = np.random.randint(0, 255, size=(N, H, W, C), dtype=np.uint8)
-        img = Image.fromarray(array[0, ..., 0])
+        img = Image.fromarray(array[0, ..., 0] if C == 1 else array[0])
         img.save(
-            path, format="TIFF", save_all=True, append_images=[Image.fromarray(array[i, ..., 0]) for i in range(1, N)]
+            path,
+            format="TIFF",
+            save_all=True,
+            append_images=[Image.fromarray(array[i, ..., 0] if C == 1 else array[i]) for i in range(1, N)],
         )
         array = array.astype(np.float32) / 255
         arrays.append(array)

@@ -25,6 +25,12 @@ test-python:
 		-rs \
 		./tests/
 
+test-python-pdb: 
+	$(PYTHON) -m pytest \
+		-rs \
+		./tests/ \
+		--pdb
+
 test: 
 	cargo test
 	$(MAKE) test-python

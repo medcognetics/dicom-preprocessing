@@ -49,11 +49,17 @@ def test_load_tiff_f32(path):
 
 @pytest.mark.parametrize("batch_size", [1, 2, 3])
 @pytest.mark.parametrize("num_paths", [1, 4, 9])
-def test_load_tiff_f32_batched(path, batch_size, num_paths):
-    N, H, W, C = 3, 10, 10, 1
+@pytest.mark.parametrize("channels", [1, 3])
+def test_load_tiff_f32_batched(path, batch_size, num_paths, channels):
+    N, H, W, C = 3, 10, 10, channels
     array = np.random.randint(0, 255, size=(N, H, W, C), dtype=np.uint8)
-    img = Image.fromarray(array[0, ..., 0])
-    img.save(path, format="TIFF", save_all=True, append_images=[Image.fromarray(array[i, ..., 0]) for i in range(1, N)])
+    img = Image.fromarray(array[0, ..., 0] if C == 1 else array[0])
+    img.save(
+        path,
+        format="TIFF",
+        save_all=True,
+        append_images=[Image.fromarray(array[i, ..., 0] if C == 1 else array[i]) for i in range(1, N)],
+    )
     array = array.astype(np.float32) / 255
 
     seen = 0

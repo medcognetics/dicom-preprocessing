@@ -124,9 +124,9 @@ mod tests {
     use crate::color::DicomColorType;
     use crate::preprocess::Preprocessor;
     use crate::save::TiffSaver;
+    use crate::transform::resize::FilterType;
     use crate::transform::PaddingDirection;
     use crate::volume::{KeepVolume, VolumeHandler};
-    use image::imageops::FilterType;
     use image::DynamicImage;
     use image::ImageBuffer;
     use image::Luma;

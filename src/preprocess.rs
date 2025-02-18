@@ -3,10 +3,10 @@ use image::DynamicImage;
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use image::imageops::FilterType;
 
 use crate::errors::DicomError;
 use crate::metadata::{PreprocessingMetadata, Resolution};
+use crate::transform::resize;
 use crate::transform::{
     Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
@@ -16,7 +16,7 @@ use crate::transform::{
 pub struct Preprocessor {
     pub crop: bool,
     pub size: Option<(u32, u32)>,
-    pub filter: FilterType,
+    pub filter: resize::FilterType,
     pub padding_direction: PaddingDirection,
     pub crop_max: bool,
     pub volume_handler: VolumeHandler,
@@ -29,7 +29,7 @@ impl Default for Preprocessor {
         Preprocessor {
             crop: true,
             size: None,
-            filter: FilterType::Triangle,
+            filter: resize::FilterType::Triangle,
             padding_direction: PaddingDirection::Zero,
             crop_max: true,
             volume_handler: VolumeHandler::default(),
@@ -173,7 +173,7 @@ mod tests {
         Preprocessor {
             crop: true,
             size: Some((64, 64)),
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
@@ -187,7 +187,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
@@ -201,7 +201,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
@@ -215,7 +215,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
@@ -229,7 +229,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
@@ -243,7 +243,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
@@ -323,7 +323,7 @@ mod tests {
         let preprocessor = Preprocessor {
             crop: false,
             size: Some((target_width, target_height)),
-            filter: FilterType::Nearest,
+            filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::Center,
             crop_max: false,
             volume_handler: VolumeHandler::default(),

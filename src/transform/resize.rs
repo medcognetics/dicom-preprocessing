@@ -1,5 +1,5 @@
-use image::imageops::FilterType;
-use image::{DynamicImage, GenericImageView};
+use image::imageops;
+use image::{DynamicImage, GenericImage, GenericImageView, Pixel};
 use std::fmt;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
@@ -16,36 +16,51 @@ use crate::transform::Transform;
 pub const DEFAULT_SCALE: u16 = 50718;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum DisplayFilterType {
+pub enum FilterType {
     #[default]
     Triangle,
     Nearest,
     CatmullRom,
     Gaussian,
     Lanczos3,
+    MaxPool,
 }
 
-impl fmt::Display for DisplayFilterType {
+impl fmt::Display for FilterType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let filter_str = match self {
-            DisplayFilterType::Triangle => "triangle",
-            DisplayFilterType::Nearest => "nearest",
-            DisplayFilterType::CatmullRom => "catmull-rom",
-            DisplayFilterType::Gaussian => "gaussian",
-            DisplayFilterType::Lanczos3 => "lanczos3",
+            FilterType::Triangle => "triangle",
+            FilterType::Nearest => "nearest",
+            FilterType::CatmullRom => "catmull-rom",
+            FilterType::Gaussian => "gaussian",
+            FilterType::Lanczos3 => "lanczos3",
+            FilterType::MaxPool => "maxpool",
         };
         write!(f, "{}", filter_str)
     }
 }
 
-impl From<DisplayFilterType> for FilterType {
-    fn from(filter: DisplayFilterType) -> Self {
+impl From<FilterType> for imageops::FilterType {
+    fn from(filter: FilterType) -> Self {
         match filter {
-            DisplayFilterType::Nearest => FilterType::Nearest,
-            DisplayFilterType::Triangle => FilterType::Triangle,
-            DisplayFilterType::CatmullRom => FilterType::CatmullRom,
-            DisplayFilterType::Gaussian => FilterType::Gaussian,
-            DisplayFilterType::Lanczos3 => FilterType::Lanczos3,
+            FilterType::Nearest => imageops::FilterType::Nearest,
+            FilterType::Triangle => imageops::FilterType::Triangle,
+            FilterType::CatmullRom => imageops::FilterType::CatmullRom,
+            FilterType::Gaussian => imageops::FilterType::Gaussian,
+            FilterType::Lanczos3 => imageops::FilterType::Lanczos3,
+            FilterType::MaxPool => imageops::FilterType::Nearest, // Default for image crate compatibility
+        }
+    }
+}
+
+impl From<imageops::FilterType> for FilterType {
+    fn from(filter: imageops::FilterType) -> Self {
+        match filter {
+            imageops::FilterType::Nearest => FilterType::Nearest,
+            imageops::FilterType::Triangle => FilterType::Triangle,
+            imageops::FilterType::CatmullRom => FilterType::CatmullRom,
+            imageops::FilterType::Gaussian => FilterType::Gaussian,
+            imageops::FilterType::Lanczos3 => FilterType::Lanczos3,
         }
     }
 }
@@ -84,7 +99,39 @@ impl Transform<DynamicImage> for Resize {
         let (width, height) = image.dimensions();
         let target_width = (width as f32 * self.scale_x) as u32;
         let target_height = (height as f32 * self.scale_y) as u32;
-        image.resize(target_width, target_height, self.filter)
+
+        // Special handling for MaxPool
+        if self.filter == FilterType::MaxPool {
+            let mut output = DynamicImage::new(target_width, target_height, image.color());
+
+            for y in 0..target_height {
+                for x in 0..target_width {
+                    let start_x = (x * width / target_width).min(width - 1);
+                    let start_y = (y * height / target_height).min(height - 1);
+                    let end_x = ((x + 1) * width / target_width).min(width);
+                    let end_y = ((y + 1) * height / target_height).min(height);
+
+                    if start_x >= end_x || start_y >= end_y {
+                        output.put_pixel(x, y, image.get_pixel(start_x, start_y));
+                        continue;
+                    }
+
+                    let mut max_pixel = image.get_pixel(start_x, start_y);
+
+                    for ky in start_y..end_y {
+                        for kx in start_x..end_x {
+                            let pixel = image.get_pixel(kx, ky);
+                            max_pixel.apply2(&pixel, |a, b| a.max(b));
+                        }
+                    }
+
+                    output.put_pixel(x, y, max_pixel);
+                }
+            }
+            output
+        } else {
+            image.resize(target_width, target_height, self.filter.into())
+        }
     }
 }
 
@@ -176,14 +223,30 @@ mod tests {
             vec![3, 3, 4, 4],
         ],
         (2, 2),
+        FilterType::Nearest,
         vec![
             vec![1, 2],
             vec![3, 4],
         ],
     )]
+    #[case(
+        vec![
+            vec![1, 2, 3, 4],
+            vec![5, 6, 7, 8],
+            vec![9, 10, 11, 12],
+            vec![13, 14, 15, 16],
+        ],
+        (2, 2),
+        FilterType::MaxPool,
+        vec![
+            vec![6, 8],
+            vec![14, 16],
+        ],
+    )]
     fn test_resize(
         #[case] pixels: Vec<Vec<u8>>,
         #[case] target_size: (u32, u32),
+        #[case] filter: FilterType,
         #[case] expected_pixels: Vec<Vec<u8>>,
     ) {
         // Create a new image from the pixel data
@@ -206,12 +269,7 @@ mod tests {
         }
         let expected_dynamic_image = DynamicImage::ImageRgba8(expected_img);
 
-        let resize = Resize::new(
-            &dynamic_image,
-            target_size.0,
-            target_size.1,
-            FilterType::Nearest,
-        );
+        let resize = Resize::new(&dynamic_image, target_size.0, target_size.1, filter);
         assert_eq!(resize.apply(&dynamic_image), expected_dynamic_image);
     }
 

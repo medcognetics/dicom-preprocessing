@@ -111,11 +111,6 @@ impl Transform<DynamicImage> for Resize {
                     let end_x = ((x + 1) * width / target_width).min(width);
                     let end_y = ((y + 1) * height / target_height).min(height);
 
-                    if start_x >= end_x || start_y >= end_y {
-                        output.put_pixel(x, y, image.get_pixel(start_x, start_y));
-                        continue;
-                    }
-
                     let mut max_pixel = image.get_pixel(start_x, start_y);
 
                     for ky in start_y..end_y {

@@ -14,7 +14,6 @@ use tracing::{error, Level};
 
 use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::Preprocessor;
-use dicom_preprocessing::resize::DisplayFilterType;
 use indicatif::{ProgressBar, ProgressStyle};
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::num::NonZero;
@@ -27,6 +26,7 @@ use dicom_preprocessing::errors::{
 };
 use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
+use dicom_preprocessing::transform::resize::FilterType;
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 
 #[derive(Debug, Snafu)]
@@ -153,10 +153,10 @@ struct Args {
         help = "Filter type",
         long = "filter",
         short = 'f',
-        value_parser = clap::value_parser!(DisplayFilterType),
-        default_value_t = DisplayFilterType::default(),
+        value_parser = clap::value_parser!(FilterType),
+        default_value_t = FilterType::default(),
     )]
-    filter: DisplayFilterType,
+    filter: FilterType,
 
     #[arg(
         help = "Padding direction",
@@ -400,7 +400,7 @@ fn run(args: Args) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::{run, Args};
-    use crate::DisplayFilterType;
+    use crate::FilterType;
     use crate::PaddingDirection;
     use crate::SupportedCompressor;
     use dicom::dictionary_std::tags;
@@ -452,7 +452,7 @@ mod tests {
             output: output_dir.path().to_path_buf(),
             crop: true,
             size: Some((64, 64)),
-            filter: DisplayFilterType::default(),
+            filter: FilterType::default(),
             padding_direction: PaddingDirection::default(),
             strict: true,
             compressor: SupportedCompressor::default(),

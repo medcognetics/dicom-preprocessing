@@ -251,7 +251,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::imageops::FilterType;
+    use crate::transform::resize::FilterType;
 
     use rstest::rstest;
     use std::fs::File;

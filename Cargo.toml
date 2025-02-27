@@ -62,6 +62,10 @@ path = "src/bin/manifest.rs"
 name = "dicom-voilut"
 path = "src/voilut/main.rs"
 
+[[bin]]
+name = "dicom-voilut"
+path = "src/bin/trace.rs"
+
 [[bench]]
 name = "inode_sort"
 harness = false

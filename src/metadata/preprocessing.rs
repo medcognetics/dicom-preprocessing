@@ -12,7 +12,7 @@ use tiff::tags::Tag;
 use crate::dicom::ConvertValueSnafu;
 use crate::errors::{DicomError, TiffError};
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::{Crop, Padding, Resize};
+use crate::transform::{Coord, Crop, InvertibleTransform, Padding, Resize, Transform};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -188,6 +188,50 @@ pub struct PreprocessingMetadata {
     pub num_frames: FrameCount,
 }
 
+impl Transform<Coord> for PreprocessingMetadata {
+    fn apply(&self, coord: &Coord) -> Coord {
+        // Forward application order is crop, resize, padding
+        let coord = self
+            .crop
+            .as_ref()
+            .map(|crop| crop.apply(coord))
+            .unwrap_or(*coord);
+        let coord = self
+            .resize
+            .as_ref()
+            .map(|resize| resize.apply(&coord))
+            .unwrap_or(coord);
+        let coord = self
+            .padding
+            .as_ref()
+            .map(|padding| padding.apply(&coord))
+            .unwrap_or(coord);
+        coord
+    }
+}
+
+impl InvertibleTransform<Coord> for PreprocessingMetadata {
+    fn invert(&self, coord: &Coord) -> Coord {
+        // Invert application order is padding, resize, crop
+        let coord = self
+            .padding
+            .as_ref()
+            .map(|padding| padding.invert(coord))
+            .unwrap_or(*coord);
+        let coord = self
+            .resize
+            .as_ref()
+            .map(|resize| resize.invert(&coord))
+            .unwrap_or(coord);
+        let coord = self
+            .crop
+            .as_ref()
+            .map(|crop| crop.invert(&coord))
+            .unwrap_or(coord);
+        coord
+    }
+}
+
 impl WriteTags for PreprocessingMetadata {
     /// Writes TIFF tags for the respective transforms, along with version and resolution metadata
     fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
@@ -252,7 +296,7 @@ where
 mod tests {
     use super::*;
     use crate::transform::resize::FilterType;
-
+    use crate::transform::Coord;
     use rstest::rstest;
     use std::fs::File;
     use tempfile::tempdir;
@@ -310,5 +354,79 @@ mod tests {
         let mut tiff = Decoder::new(File::open(temp_file_path).unwrap()).unwrap();
         let frame_count = FrameCount::try_from(&mut tiff).unwrap();
         assert_eq!(frame_count, FrameCount(3));
+    }
+
+    #[rstest]
+    #[case(Coord::new(0, 0), Coord::new(0, 0))] // Unchanged
+    #[case(Coord::new(1, 1), Coord::new(2, 2))] // Scaled 2x
+    #[case(Coord::new(7, 7), Coord::new(8, 8))] // Out of bounds
+    fn test_apply_coord_upper_left(#[case] input: Coord, #[case] expected: Coord) {
+        // Assume image is 8x8 pixels
+        // We crop to the top left quadrant and then scale that by 2x
+        // Then we pad the right and bottom by 1 pixel each
+        let metadata = PreprocessingMetadata {
+            crop: Some(Crop {
+                left: 0,
+                top: 0,
+                width: 4,
+                height: 4,
+            }),
+            resize: Some(Resize {
+                scale_x: 2.0,
+                scale_y: 2.0,
+                filter: FilterType::Nearest,
+            }),
+            padding: Some(Padding {
+                left: 0,
+                top: 0,
+                right: 1,
+                bottom: 1,
+            }),
+            resolution: Some(Resolution {
+                pixels_per_mm_x: 1.0,
+                pixels_per_mm_y: 1.0,
+            }),
+            num_frames: FrameCount(1),
+        };
+
+        let result = metadata.apply(&input);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(Coord::new(0, 0), Coord::new(1, 1))] // Clipped to upper left corner, plus 1 padding px
+    #[case(Coord::new(4, 4), Coord::new(1, 1))] // At upper left corner of crop, plus 1 padding px
+    #[case(Coord::new(7, 7), Coord::new(7, 7))] // (3, 3), scaled 2x, plus 1 padding px
+    fn test_apply_coord_lower_right(#[case] input: Coord, #[case] expected: Coord) {
+        // Assume image is 8x8 pixels
+        // We crop to the bottom right quadrant and then scale that by 2x
+        // Then we pad the top and left by 1 pixel each
+        let metadata = PreprocessingMetadata {
+            crop: Some(Crop {
+                left: 4,
+                top: 4,
+                width: 4,
+                height: 4,
+            }),
+            resize: Some(Resize {
+                scale_x: 2.0,
+                scale_y: 2.0,
+                filter: FilterType::Nearest,
+            }),
+            padding: Some(Padding {
+                left: 1,
+                top: 1,
+                right: 0,
+                bottom: 0,
+            }),
+            resolution: Some(Resolution {
+                pixels_per_mm_x: 1.0,
+                pixels_per_mm_y: 1.0,
+            }),
+            num_frames: FrameCount(1),
+        };
+
+        let result = metadata.apply(&input);
+        assert_eq!(result, expected);
     }
 }

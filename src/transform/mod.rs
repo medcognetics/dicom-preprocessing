@@ -15,6 +15,14 @@ impl Coord {
     pub fn new(x: u32, y: u32) -> Self {
         Self(x, y)
     }
+
+    pub fn clip(&self, width: u32, height: u32) -> Self {
+        Self(self.0.clamp(0, width - 1), self.1.clamp(0, height - 1))
+    }
+
+    pub fn is_in_bounds(&self, width: u32, height: u32) -> bool {
+        self.0 < width && self.1 < height
+    }
 }
 
 pub trait Transform<T> {

@@ -14,7 +14,6 @@ use tracing::{error, Level};
 
 use dicom_preprocessing::pad::PaddingDirection;
 use dicom_preprocessing::preprocess::Preprocessor;
-use dicom_preprocessing::resize::DisplayFilterType;
 use indicatif::{ProgressBar, ProgressStyle};
 use snafu::{OptionExt, Report, ResultExt, Snafu, Whatever};
 use std::num::NonZero;
@@ -27,6 +26,7 @@ use dicom_preprocessing::errors::{
 };
 use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
+use dicom_preprocessing::transform::resize::FilterType;
 use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
 
 #[derive(Debug, Snafu)]
@@ -125,6 +125,29 @@ struct Args {
     crop_max: bool,
 
     #[arg(
+        help = "Do not use connected components for the crop calculation",
+        long = "no-components",
+        short = 'n',
+        default_value_t = false
+    )]
+    no_components: bool,
+
+    #[arg(
+        help = "Border fraction to exclude from crop calculation and grow final crop by",
+        long = "border-frac",
+        short = 'b',
+        value_parser = clap::builder::ValueParser::new(|s: &str| {
+            let value = s.parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid border fraction"))?;
+            if value < 0.0 || value > 0.5 {
+                Err(clap::Error::raw(ErrorKind::InvalidValue, "Border fraction must be between 0.0 and 0.5"))
+            } else {
+                Ok(value)
+            }
+        })
+    )]
+    border_frac: Option<f32>,
+
+    #[arg(
         help = "Target size (width,height)",
         long = "size",
         short = 's',
@@ -145,10 +168,10 @@ struct Args {
         help = "Filter type",
         long = "filter",
         short = 'f',
-        value_parser = clap::value_parser!(DisplayFilterType),
-        default_value_t = DisplayFilterType::default(),
+        value_parser = clap::value_parser!(FilterType),
+        default_value_t = FilterType::default(),
     )]
-    filter: DisplayFilterType,
+    filter: FilterType,
 
     #[arg(
         help = "Padding direction",
@@ -158,6 +181,9 @@ struct Args {
         default_value_t = PaddingDirection::default(),
     )]
     padding_direction: PaddingDirection,
+
+    #[arg(help = "Disable padding", long = "no-padding", default_value_t = false)]
+    no_padding: bool,
 
     #[arg(
         help = "Compression type",
@@ -313,7 +339,10 @@ fn run(args: Args) -> Result<(), Error> {
     } else {
         vec![args.source.clone()]
     };
-    let source = source.into_iter().sorted_by_inode().collect::<Vec<_>>();
+    let source = source
+        .into_iter()
+        .sorted_by_inode_with_progress()
+        .collect::<Vec<_>>();
 
     tracing::info!("Number of sources found: {}", source.len());
 
@@ -337,6 +366,9 @@ fn run(args: Args) -> Result<(), Error> {
         padding_direction: args.padding_direction,
         crop_max: args.crop_max,
         volume_handler: args.volume_handler.into(),
+        use_components: !args.no_components,
+        use_padding: !args.no_padding,
+        border_frac: args.border_frac,
     };
     let compressor = args.compressor;
 
@@ -384,7 +416,7 @@ fn run(args: Args) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::{run, Args};
-    use crate::DisplayFilterType;
+    use crate::FilterType;
     use crate::PaddingDirection;
     use crate::SupportedCompressor;
     use dicom::dictionary_std::tags;
@@ -436,12 +468,15 @@ mod tests {
             output: output_dir.path().to_path_buf(),
             crop: true,
             size: Some((64, 64)),
-            filter: DisplayFilterType::default(),
+            filter: FilterType::default(),
             padding_direction: PaddingDirection::default(),
             strict: true,
             compressor: SupportedCompressor::default(),
             crop_max: false,
+            no_components: false,
             volume_handler: DisplayVolumeHandler::default(),
+            no_padding: false,
+            border_frac: None,
         };
         run(args).unwrap();
 

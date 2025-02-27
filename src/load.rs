@@ -124,9 +124,9 @@ mod tests {
     use crate::color::DicomColorType;
     use crate::preprocess::Preprocessor;
     use crate::save::TiffSaver;
+    use crate::transform::resize::FilterType;
     use crate::transform::PaddingDirection;
     use crate::volume::{KeepVolume, VolumeHandler};
-    use image::imageops::FilterType;
     use image::DynamicImage;
     use image::ImageBuffer;
     use image::Luma;
@@ -159,6 +159,9 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: true,
+            border_frac: None,
         };
 
         let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
@@ -286,6 +289,9 @@ mod tests {
             padding_direction: PaddingDirection::default(),
             crop_max: false,
             volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: true,
+            border_frac: None,
         };
 
         let dicom_file_path = "pydicom/emri_small.dcm";

@@ -1,5 +1,5 @@
 PYTHON=pdm run python
-PYTHON_DIRS=tests examples
+PYTHON_DIRS=tests examples dicom_preprocessing.pyi
 
 init:
 	which pdm || pip install --user pdm
@@ -20,8 +20,17 @@ style:
 	$(PYTHON) -m autopep8 -a $(PYTHON_DIRS)
 	$(PYTHON) -m black $(PYTHON_DIRS)
 
-test: 
-	cargo test
+test-python: 
 	$(PYTHON) -m pytest \
 		-rs \
 		./tests/
+
+test-python-pdb: 
+	$(PYTHON) -m pytest \
+		-rs \
+		./tests/ \
+		--pdb
+
+test: 
+	cargo test
+	$(MAKE) test-python

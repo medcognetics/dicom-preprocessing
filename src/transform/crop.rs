@@ -1,4 +1,8 @@
-use image::{DynamicImage, GenericImageView, Pixel};
+use image::imageops::FilterType;
+use image::{DynamicImage, GenericImageView, Luma, Pixel};
+use imageproc::contrast::{threshold, ThresholdType};
+use imageproc::region_labelling::{connected_components, Connectivity};
+use itertools::Itertools;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
@@ -14,6 +18,8 @@ use crate::transform::{Coord, InvertibleTransform, Transform};
 pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
 pub const DEFAULT_CROP_SIZE: u16 = 50720;
 const DEFAULT_CHECK_MAX: bool = false;
+const DEFAULT_RESIZE_SIZE: u32 = 512;
+const NONZERO_THRESHOLD: u8 = 1;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Crop {
@@ -26,26 +32,51 @@ pub struct Crop {
 impl Crop {
     const TAG_CARDINALITY: usize = 2;
 
-    pub fn new(image: &DynamicImage, check_max: bool) -> Self {
+    pub fn new(image: &DynamicImage, check_max: bool, border_frac: Option<f32>) -> Self {
         let (width, height) = image.dimensions();
 
-        let left = (0..width)
-            .find(|&x| (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)))
+        let (start_w, start_h, end_w, end_h) = if let Some(border_frac) = border_frac {
+            (
+                (width as f32 * border_frac) as u32,
+                (height as f32 * border_frac) as u32,
+                (width as f32 * (1.0 - border_frac)) as u32,
+                (height as f32 * (1.0 - border_frac)) as u32,
+            )
+        } else {
+            (0, 0, width, height)
+        };
+
+        let left = (start_w..end_w)
+            .find(|&x| (start_h..end_h).any(|y| is_uncroppable_pixel(x, y, image, check_max)))
             .unwrap_or(0);
 
-        let right = (0..width)
+        let right = (start_w..end_w)
             .rev()
-            .find(|&x| (0..height).any(|y| is_uncroppable_pixel(x, y, image, check_max)))
+            .find(|&x| (start_h..end_h).any(|y| is_uncroppable_pixel(x, y, image, check_max)))
             .unwrap_or(width - 1);
 
-        let top = (0..height)
-            .find(|&y| (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)))
+        let top = (start_h..end_h)
+            .find(|&y| (start_w..end_w).any(|x| is_uncroppable_pixel(x, y, image, check_max)))
             .unwrap_or(0);
 
-        let bottom = (0..height)
+        let bottom = (start_h..end_h)
             .rev()
-            .find(|&y| (0..width).any(|x| is_uncroppable_pixel(x, y, image, check_max)))
+            .find(|&y| (start_w..end_w).any(|x| is_uncroppable_pixel(x, y, image, check_max)))
             .unwrap_or(height - 1);
+
+        // Expand the crop by the border fraction if provided
+        let (left, right, top, bottom) = if let Some(border_frac) = border_frac {
+            let offset_w = (width as f32 * border_frac) as u32;
+            let offset_h = (height as f32 * border_frac) as u32;
+
+            let left = (left - offset_w).max(0) as u32;
+            let right = (right + offset_w).min(width - 1) as u32;
+            let top = (top - offset_h).max(0) as u32;
+            let bottom = (bottom + offset_h).min(height - 1) as u32;
+            (left, right, top, bottom)
+        } else {
+            (left, right, top, bottom)
+        };
 
         let width = right - left + 1;
         let height = bottom - top + 1;
@@ -57,10 +88,101 @@ impl Crop {
         }
     }
 
-    pub fn new_from_images(images: &[&DynamicImage], check_max: bool) -> Self {
+    pub fn new_from_components(
+        image: &DynamicImage,
+        check_max: bool,
+        border_frac: Option<f32>,
+    ) -> Self {
+        // First generate a baseline crop
+        let mut image = image.clone();
+        let crop = Crop::new(&mut image, check_max, border_frac);
+        let thumbnail = image.crop_imm(crop.left, crop.top, crop.width, crop.height);
+
+        // Resize the image to smaller size for fast computation of crop boundaries
+        let thumbnail = if thumbnail.width() > DEFAULT_RESIZE_SIZE
+            || thumbnail.height() > DEFAULT_RESIZE_SIZE
+        {
+            thumbnail.resize(
+                DEFAULT_RESIZE_SIZE,
+                DEFAULT_RESIZE_SIZE,
+                FilterType::Nearest,
+            )
+        } else {
+            thumbnail
+        };
+
+        // Threshold the image to find the background
+        // NOTE: This assumes that the background is black
+        let thumbnail = thumbnail.into_luma8();
+        let thumbnail = threshold(&thumbnail, NONZERO_THRESHOLD, ThresholdType::Binary);
+
+        // Compute connected components
+        let bg = Luma([0]);
+        let components = connected_components(&thumbnail, Connectivity::Four, bg);
+
+        // Find the largest connected component
+        let (max_component, _) = components
+            .iter()
+            .filter(|&&c| c > 0)
+            .counts()
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .unwrap_or((&0, 0));
+
+        // Compute crop bounds from the largest connected component
+        let (left, right, top, bottom) = components
+            .enumerate_pixels()
+            .filter(|&(_, _, c)| c[0] == *max_component)
+            .fold(
+                (thumbnail.width() - 1, 0, thumbnail.height() - 1, 0),
+                |(min_x, max_x, min_y, max_y), (x, y, _)| {
+                    (min_x.min(x), max_x.max(x), min_y.min(y), max_y.max(y))
+                },
+            );
+
+        // Determine scale factor between resized and original cropped image
+        let orig_width = crop.width;
+        let orig_height = crop.height;
+        let scale_w = orig_width as f32 / thumbnail.width() as f32;
+        let scale_h = orig_height as f32 / thumbnail.height() as f32;
+
+        // Scale crop coordinates to the original image size
+        let left = (left as f32 * scale_w).round() as u32;
+        let top = (top as f32 * scale_h).round() as u32;
+        let right = (right as f32 * scale_w).round() as u32;
+        let bottom = (bottom as f32 * scale_h).round() as u32;
+
+        // Offset crop coordinates to the original image
+        let left = left + crop.left;
+        let top = top + crop.top;
+        let right = right + crop.left;
+        let bottom = bottom + crop.top;
+
+        let width = right - left + 1;
+        let height = bottom - top + 1;
+        Crop {
+            left,
+            top,
+            width,
+            height,
+        }
+    }
+
+    pub fn new_from_images(
+        images: &[&DynamicImage],
+        check_max: bool,
+        use_components: bool,
+        border_frac: Option<f32>,
+    ) -> Self {
         images
             .iter()
-            .map(|&image| Crop::new(image, check_max))
+            .map(|&image| {
+                if use_components {
+                    Crop::new_from_components(image, check_max, border_frac)
+                } else {
+                    Crop::new(image, check_max, border_frac)
+                }
+            })
             .reduce(|a, b| a.union(&b))
             .unwrap()
     }
@@ -138,7 +260,7 @@ fn is_uncroppable_pixel(x: u32, y: u32, image: &DynamicImage, check_max: bool) -
 
 impl From<&DynamicImage> for Crop {
     fn from(image: &DynamicImage) -> Self {
-        Crop::new(image, DEFAULT_CHECK_MAX)
+        Crop::new_from_components(image, DEFAULT_CHECK_MAX, None)
     }
 }
 
@@ -327,7 +449,74 @@ mod tests {
         }
         let dynamic_image = DynamicImage::ImageRgba8(img);
 
-        let crop = Crop::new(&dynamic_image, crop_max);
+        let crop = Crop::new(&dynamic_image, crop_max, None);
+        let expected_crop = Crop {
+            left: expected_crop.0,
+            top: expected_crop.1,
+            width: expected_crop.2,
+            height: expected_crop.3,
+        };
+        assert_eq!(crop, expected_crop);
+    }
+
+    #[rstest]
+    #[case(
+        vec![
+            vec![0, 0, 0, 0],
+            vec![0, 1, 1, 0],
+            vec![0, 1, 1, 0],
+            vec![0, 0, 0, 0],
+        ],
+        false,
+        (1, 1, 2, 2)
+    )]
+    #[case(
+        vec![
+            vec![0, 0, 0, 0],
+            vec![0, 0, 0, 0],
+            vec![0, 0, 0, 0],
+            vec![0, 0, 0, 0],
+        ],
+        false,
+        (0, 0, 4, 4)
+    )]
+    #[case(
+        vec![
+            vec![1, 1, 1, 1],
+            vec![1, 1, 1, 1],
+            vec![1, 1, 1, 1],
+            vec![1, 1, 1, 1],
+        ],
+        false,
+        (0, 0, 4, 4)
+    )]
+    #[case(
+        vec![
+            vec![255, 0, 0, 0],
+            vec![0, 1, 1, 0],
+            vec![0, 1, 1, 0],
+            vec![0, 0, 0, 255],
+        ],
+        true,
+        (1, 1, 2, 2)
+    )]
+    fn test_find_non_zero_boundaries_components(
+        #[case] pixels: Vec<Vec<u8>>,
+        #[case] check_max: bool,
+        #[case] expected_crop: (u32, u32, u32, u32),
+    ) {
+        // Create a new image from the pixel data
+        let width = pixels[0].len() as u32;
+        let height = pixels.len() as u32;
+        let mut img = RgbaImage::new(width, height);
+        for (y, row) in pixels.iter().enumerate() {
+            for (x, &value) in row.iter().enumerate() {
+                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
+            }
+        }
+        let dynamic_image = DynamicImage::ImageRgba8(img);
+
+        let crop = Crop::new_from_components(&dynamic_image, check_max, None);
         let expected_crop = Crop {
             left: expected_crop.0,
             top: expected_crop.1,
@@ -435,6 +624,60 @@ mod tests {
 
     #[rstest]
     #[case(
+        vec![
+            vec![0, 0, 0, 0, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 0, 0, 0, 0],
+        ],
+        0.2,
+        false,
+        (1, 0, 4, 5)  // Actual behavior with border exclusion
+    )]
+    #[case(
+        vec![
+            vec![1, 1, 1, 1, 1, 1],
+            vec![1, 0, 0, 0, 0, 1],
+            vec![1, 0, 1, 1, 0, 1],
+            vec![1, 0, 1, 1, 0, 1],
+            vec![1, 0, 0, 0, 0, 1],
+            vec![1, 1, 1, 1, 1, 1],
+        ],
+        0.1,
+        false,
+        (0, 0, 5, 5)  // Actual behavior with border exclusion
+    )]
+    fn test_border_exclusion(
+        #[case] pixels: Vec<Vec<u8>>,
+        #[case] border_frac: f32,
+        #[case] check_max: bool,
+        #[case] expected_crop: (u32, u32, u32, u32),
+    ) {
+        // Create a new image from the pixel data
+        let width = pixels[0].len() as u32;
+        let height = pixels.len() as u32;
+        let mut img = RgbaImage::new(width, height);
+        for (y, row) in pixels.iter().enumerate() {
+            for (x, &value) in row.iter().enumerate() {
+                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
+            }
+        }
+        let dynamic_image = DynamicImage::ImageRgba8(img);
+
+        let crop = Crop::new(&dynamic_image, check_max, Some(border_frac));
+        let expected_crop = Crop {
+            left: expected_crop.0,
+            top: expected_crop.1,
+            width: expected_crop.2,
+            height: expected_crop.3,
+        };
+        assert_eq!(crop, expected_crop);
+    }
+
+    #[rstest]
+    #[case(
         Crop { left: 1, top: 1, width: 2, height: 2 },
         Coord::new(1, 1),
         Coord::new(2, 2)
@@ -452,5 +695,59 @@ mod tests {
     fn test_invert_coord(#[case] crop: Crop, #[case] coord: Coord, #[case] expected: Coord) {
         let result = crop.invert(&coord);
         assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
+        vec![
+            vec![0, 0, 0, 0, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 1, 1, 0, 0],
+            vec![0, 0, 0, 0, 0, 0],
+        ],
+        Some(0.2),
+        false,
+        (1, 0, 4, 5)  // Actual behavior with border exclusion
+    )]
+    #[case(
+        vec![
+            vec![1, 1, 1, 1, 1, 1],
+            vec![1, 0, 0, 0, 0, 1],
+            vec![1, 0, 1, 1, 0, 1],
+            vec![1, 0, 1, 1, 0, 1],
+            vec![1, 0, 0, 0, 0, 1],
+            vec![1, 1, 1, 1, 1, 1],
+        ],
+        None,
+        false,
+        (0, 0, 6, 6)  // Without border exclusion, should include the whole image
+    )]
+    fn test_new_from_images_with_border(
+        #[case] pixels: Vec<Vec<u8>>,
+        #[case] border_frac: Option<f32>,
+        #[case] check_max: bool,
+        #[case] expected_crop: (u32, u32, u32, u32),
+    ) {
+        // Create a new image from the pixel data
+        let width = pixels[0].len() as u32;
+        let height = pixels.len() as u32;
+        let mut img = RgbaImage::new(width, height);
+        for (y, row) in pixels.iter().enumerate() {
+            for (x, &value) in row.iter().enumerate() {
+                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
+            }
+        }
+        let dynamic_image = DynamicImage::ImageRgba8(img);
+
+        let crop = Crop::new_from_images(&[&dynamic_image], check_max, true, border_frac);
+        let expected_crop = Crop {
+            left: expected_crop.0,
+            top: expected_crop.1,
+            width: expected_crop.2,
+            height: expected_crop.3,
+        };
+        assert_eq!(crop, expected_crop);
     }
 }

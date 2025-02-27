@@ -133,6 +133,21 @@ struct Args {
     no_components: bool,
 
     #[arg(
+        help = "Border fraction to exclude from crop calculation and grow final crop by",
+        long = "border-frac",
+        short = 'b',
+        value_parser = clap::builder::ValueParser::new(|s: &str| {
+            let value = s.parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid border fraction"))?;
+            if value < 0.0 || value > 0.5 {
+                Err(clap::Error::raw(ErrorKind::InvalidValue, "Border fraction must be between 0.0 and 0.5"))
+            } else {
+                Ok(value)
+            }
+        })
+    )]
+    border_frac: Option<f32>,
+
+    #[arg(
         help = "Target size (width,height)",
         long = "size",
         short = 's',
@@ -353,6 +368,7 @@ fn run(args: Args) -> Result<(), Error> {
         volume_handler: args.volume_handler.into(),
         use_components: !args.no_components,
         use_padding: !args.no_padding,
+        border_frac: args.border_frac,
     };
     let compressor = args.compressor;
 
@@ -460,6 +476,7 @@ mod tests {
             no_components: false,
             volume_handler: DisplayVolumeHandler::default(),
             no_padding: false,
+            border_frac: None,
         };
         run(args).unwrap();
 

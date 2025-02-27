@@ -152,9 +152,8 @@ impl InvertibleTransform<Resolution> for Resize {
 impl Transform<Coord> for Resize {
     fn apply(&self, coord: &Coord) -> Coord {
         let (x, y): (u32, u32) = coord.into();
-        let (scale_x, scale_y) = (self.scale_x, self.scale_y);
-        let new_x = (x as f32 * scale_x) as u32;
-        let new_y = (y as f32 * scale_y) as u32;
+        let new_x = (x as f32 * self.scale_x) as u32;
+        let new_y = (y as f32 * self.scale_y) as u32;
         Coord::new(new_x, new_y)
     }
 }
@@ -162,9 +161,8 @@ impl Transform<Coord> for Resize {
 impl InvertibleTransform<Coord> for Resize {
     fn invert(&self, coord: &Coord) -> Coord {
         let (x, y): (u32, u32) = coord.into();
-        let (scale_x, scale_y) = (self.scale_x, self.scale_y);
-        let new_x = (x as f32 / scale_x) as u32;
-        let new_y = (y as f32 / scale_y) as u32;
+        let new_x = (x as f32 / self.scale_x) as u32;
+        let new_y = (y as f32 / self.scale_y) as u32;
         Coord::new(new_x, new_y)
     }
 }

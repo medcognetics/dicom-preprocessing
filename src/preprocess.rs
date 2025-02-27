@@ -22,6 +22,7 @@ pub struct Preprocessor {
     pub volume_handler: VolumeHandler,
     pub use_components: bool,
     pub use_padding: bool,
+    pub use_otsu: bool,
 }
 
 impl Default for Preprocessor {
@@ -35,6 +36,7 @@ impl Default for Preprocessor {
             volume_handler: VolumeHandler::default(),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
         }
     }
 }
@@ -46,6 +48,7 @@ impl Preprocessor {
                 &images.iter().collect::<Vec<_>>(),
                 self.crop_max,
                 self.use_components,
+                self.use_otsu,
             )),
             false => None,
         }
@@ -179,6 +182,7 @@ mod tests {
             volume_handler: VolumeHandler::Keep(KeepVolume),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
         },
         false
     )]
@@ -193,6 +197,7 @@ mod tests {
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
         },
         true
     )]
@@ -207,6 +212,7 @@ mod tests {
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
         },
         false
     )]
@@ -221,6 +227,7 @@ mod tests {
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
         },
         false
     )]
@@ -235,6 +242,7 @@ mod tests {
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
         },
         false
     )]
@@ -249,6 +257,22 @@ mod tests {
             volume_handler: VolumeHandler::CentralSlice(CentralSlice),
             use_components: true,
             use_padding: true,
+            use_otsu: false,
+        },
+        false
+    )]
+    #[case(
+        "pydicom/CT_small.dcm", 
+        Preprocessor {
+            crop: true,
+            size: Some((64, 64)),
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: false,
+            use_padding: true,
+            use_otsu: true,
         },
         false
     )]
@@ -329,6 +353,7 @@ mod tests {
             volume_handler: VolumeHandler::default(),
             use_components: true,
             use_padding,
+            use_otsu: false,
         };
 
         let padding = preprocessor.get_padding(&vec![dynamic_image]);

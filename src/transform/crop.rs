@@ -1,6 +1,6 @@
 use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, Luma, Pixel};
-use imageproc::contrast::{threshold, ThresholdType};
+use imageproc::contrast::{otsu_level, threshold, ThresholdType};
 use imageproc::region_labelling::{connected_components, Connectivity};
 use itertools::Itertools;
 use std::io::{Read, Seek, Write};
@@ -138,15 +138,97 @@ impl Crop {
         }
     }
 
+    pub fn new_with_otsu(image: &DynamicImage, check_max: bool) -> Self {
+        // First generate a baseline crop
+        let crop = Crop::new(image, check_max);
+        let thumbnail = image.crop_imm(crop.left, crop.top, crop.width, crop.height);
+
+        // Resize the image to smaller size for fast computation of crop boundaries
+        let thumbnail = if thumbnail.width() > DEFAULT_RESIZE_SIZE
+            || thumbnail.height() > DEFAULT_RESIZE_SIZE
+        {
+            thumbnail.resize(
+                DEFAULT_RESIZE_SIZE,
+                DEFAULT_RESIZE_SIZE,
+                FilterType::Nearest,
+            )
+        } else {
+            thumbnail
+        };
+
+        // Convert to grayscale
+        let thumbnail_gray = thumbnail.into_luma8();
+
+        // Compute Otsu threshold level
+        let otsu_thresh = otsu_level(&thumbnail_gray);
+
+        // Apply thresholding with the computed Otsu level
+        let thumbnail = threshold(&thumbnail_gray, otsu_thresh, ThresholdType::Binary);
+
+        // Compute connected components
+        let bg = Luma([0]);
+        let components = connected_components(&thumbnail, Connectivity::Four, bg);
+
+        // Find the largest connected component
+        let (max_component, _) = components
+            .iter()
+            .filter(|&&c| c > 0)
+            .counts()
+            .into_iter()
+            .max_by_key(|&(_, count)| count)
+            .unwrap_or((&0, 0));
+
+        // Compute crop bounds from the largest connected component
+        let (left, right, top, bottom) = components
+            .enumerate_pixels()
+            .filter(|&(_, _, c)| c[0] == *max_component)
+            .fold(
+                (thumbnail.width() - 1, 0, thumbnail.height() - 1, 0),
+                |(min_x, max_x, min_y, max_y), (x, y, _)| {
+                    (min_x.min(x), max_x.max(x), min_y.min(y), max_y.max(y))
+                },
+            );
+
+        // Determine scale factor between resized and original cropped image
+        let orig_width = crop.width;
+        let orig_height = crop.height;
+        let scale_w = orig_width as f32 / thumbnail.width() as f32;
+        let scale_h = orig_height as f32 / thumbnail.height() as f32;
+
+        // Scale crop coordinates to the original image size
+        let left = (left as f32 * scale_w).round() as u32;
+        let top = (top as f32 * scale_h).round() as u32;
+        let right = (right as f32 * scale_w).round() as u32;
+        let bottom = (bottom as f32 * scale_h).round() as u32;
+
+        // Offset crop coordinates to the original image
+        let left = left + crop.left;
+        let top = top + crop.top;
+        let right = right + crop.left;
+        let bottom = bottom + crop.top;
+
+        let width = right - left + 1;
+        let height = bottom - top + 1;
+        Crop {
+            left,
+            top,
+            width,
+            height,
+        }
+    }
+
     pub fn new_from_images(
         images: &[&DynamicImage],
         check_max: bool,
         use_components: bool,
+        use_otsu: bool,
     ) -> Self {
         images
             .iter()
             .map(|&image| {
-                if use_components {
+                if use_otsu {
+                    Crop::new_with_otsu(image, check_max)
+                } else if use_components {
                     Crop::new_from_components(image, check_max)
                 } else {
                     Crop::new(image, check_max)
@@ -458,6 +540,63 @@ mod tests {
         let dynamic_image = DynamicImage::ImageRgba8(img);
 
         let crop = Crop::new_from_components(&dynamic_image, check_max);
+        let expected_crop = Crop {
+            left: expected_crop.0,
+            top: expected_crop.1,
+            width: expected_crop.2,
+            height: expected_crop.3,
+        };
+        assert_eq!(crop, expected_crop);
+    }
+
+    #[rstest]
+    #[case(
+        vec![
+            vec![0, 0, 0, 0],
+            vec![0, 100, 100, 0],
+            vec![0, 100, 100, 0],
+            vec![0, 0, 0, 0],
+        ],
+        false,
+        (1, 1, 2, 2)
+    )]
+    #[case(
+        vec![
+            vec![10, 10, 10, 10],
+            vec![10, 200, 200, 10],
+            vec![10, 200, 200, 10],
+            vec![10, 10, 10, 10],
+        ],
+        false,
+        (1, 1, 2, 2)
+    )]
+    #[case(
+        vec![
+            vec![100, 100, 100, 100],
+            vec![100, 150, 150, 100],
+            vec![100, 150, 150, 100],
+            vec![100, 100, 100, 100],
+        ],
+        false,
+        (1, 1, 2, 2)
+    )]
+    fn test_find_non_zero_boundaries_otsu(
+        #[case] pixels: Vec<Vec<u8>>,
+        #[case] check_max: bool,
+        #[case] expected_crop: (u32, u32, u32, u32),
+    ) {
+        // Create a new image from the pixel data
+        let width = pixels[0].len() as u32;
+        let height = pixels.len() as u32;
+        let mut img = RgbaImage::new(width, height);
+        for (y, row) in pixels.iter().enumerate() {
+            for (x, &value) in row.iter().enumerate() {
+                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
+            }
+        }
+        let dynamic_image = DynamicImage::ImageRgba8(img);
+
+        let crop = Crop::new_with_otsu(&dynamic_image, check_max);
         let expected_crop = Crop {
             left: expected_crop.0,
             top: expected_crop.1,

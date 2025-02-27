@@ -133,6 +133,14 @@ struct Args {
     no_components: bool,
 
     #[arg(
+        help = "Use Otsu thresholding for the crop calculation",
+        long = "otsu",
+        short = 'o',
+        default_value_t = false
+    )]
+    use_otsu: bool,
+
+    #[arg(
         help = "Target size (width,height)",
         long = "size",
         short = 's',
@@ -353,6 +361,7 @@ fn run(args: Args) -> Result<(), Error> {
         volume_handler: args.volume_handler.into(),
         use_components: !args.no_components,
         use_padding: !args.no_padding,
+        use_otsu: args.use_otsu,
     };
     let compressor = args.compressor;
 
@@ -460,6 +469,7 @@ mod tests {
             no_components: false,
             volume_handler: DisplayVolumeHandler::default(),
             no_padding: false,
+            use_otsu: false,
         };
         run(args).unwrap();
 

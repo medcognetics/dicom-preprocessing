@@ -47,6 +47,12 @@ impl From<(u32, u32)> for Coord {
     }
 }
 
+impl Into<(u32, u32)> for Coord {
+    fn into(self) -> (u32, u32) {
+        (self.0, self.1)
+    }
+}
+
 pub trait InvertibleTransform<T>: Transform<T> {
     /// Invert the transform.
     fn invert(&self, target: &T) -> T;

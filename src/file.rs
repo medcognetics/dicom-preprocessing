@@ -22,7 +22,7 @@ pub const DICM_PREFIX_LOCATION: u64 = 128;
 
 type IOResult<T> = Result<T, std::io::Error>;
 
-pub(crate) fn default_bar(len: u64) -> ProgressBar {
+pub fn default_bar(len: u64) -> ProgressBar {
     let pb = ProgressBar::new(len);
     pb.set_style(
         ProgressStyle::default_bar()
@@ -34,7 +34,7 @@ pub(crate) fn default_bar(len: u64) -> ProgressBar {
     pb
 }
 
-pub(crate) fn default_spinner() -> ProgressBar {
+pub fn default_spinner() -> ProgressBar {
     let spinner = ProgressBar::new_spinner();
     spinner.set_style(
         ProgressStyle::default_spinner()

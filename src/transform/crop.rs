@@ -285,12 +285,12 @@ impl Transform<Coord> for Crop {
         let (x, y): (u32, u32) = coord.into();
         let (left, top, _, _) = self.xyxy();
         let new_x = if x > left {
-            (x - left).min(self.width)
+            (x - left).min(self.width - 1)
         } else {
             0
         };
         let new_y = if y > top {
-            (y - top).min(self.height)
+            (y - top).min(self.height - 1)
         } else {
             0
         };
@@ -605,7 +605,7 @@ mod tests {
     #[case(
         Crop { left: 1, top: 1, width: 2, height: 2 },
         Coord::new(3, 3),
-        Coord::new(2, 2)
+        Coord::new(1, 1)
     )]
     #[case(
         Crop { left: 1, top: 1, width: 2, height: 2 },
@@ -615,7 +615,7 @@ mod tests {
     #[case(
         Crop { left: 1, top: 1, width: 2, height: 2 },
         Coord::new(4, 4),
-        Coord::new(2, 2)
+        Coord::new(1, 1)
     )]
     fn test_apply_coord(#[case] crop: Crop, #[case] coord: Coord, #[case] expected: Coord) {
         let result = crop.apply(&coord);

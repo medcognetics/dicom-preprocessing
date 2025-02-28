@@ -359,7 +359,7 @@ mod tests {
     #[rstest]
     #[case(Coord::new(0, 0), Coord::new(0, 0))] // Unchanged
     #[case(Coord::new(1, 1), Coord::new(2, 2))] // Scaled 2x
-    #[case(Coord::new(7, 7), Coord::new(8, 8))] // Out of bounds
+    #[case(Coord::new(7, 7), Coord::new(6, 6))] // Out of bounds
     fn test_apply_coord_upper_left(#[case] input: Coord, #[case] expected: Coord) {
         // Assume image is 8x8 pixels
         // We crop to the top left quadrant and then scale that by 2x

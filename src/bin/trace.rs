@@ -121,6 +121,103 @@ impl OutputFormat {
     }
 }
 
+struct Trace {
+    sop_instance_uid: String,
+    hash: i64,
+    x_min: u32,
+    x_max: u32,
+    y_min: u32,
+    y_max: u32,
+}
+
+impl Trace {
+    pub fn new(
+        sop_instance_uid: String,
+        hash: i64,
+        x_min: u32,
+        x_max: u32,
+        y_min: u32,
+        y_max: u32,
+    ) -> Self {
+        Self {
+            sop_instance_uid,
+            hash,
+            x_min,
+            x_max,
+            y_min,
+            y_max,
+        }
+    }
+
+    pub fn sop_instance_uid(&self) -> &str {
+        &self.sop_instance_uid
+    }
+
+    pub fn hash(&self) -> i64 {
+        self.hash
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.x_min < self.x_max && self.y_min < self.y_max
+    }
+
+    pub fn x_min(&self) -> u32 {
+        self.x_min
+    }
+
+    pub fn x_max(&self) -> u32 {
+        self.x_max
+    }
+
+    pub fn y_min(&self) -> u32 {
+        self.y_min
+    }
+
+    pub fn y_max(&self) -> u32 {
+        self.y_max
+    }
+}
+
+impl Into<(Coord, Coord)> for Trace {
+    fn into(self) -> (Coord, Coord) {
+        (
+            Coord::new(self.x_min, self.y_min),
+            Coord::new(self.x_max, self.y_max),
+        )
+    }
+}
+
+impl Into<(Coord, Coord)> for &Trace {
+    fn into(self) -> (Coord, Coord) {
+        (
+            Coord::new(self.x_min, self.y_min),
+            Coord::new(self.x_max, self.y_max),
+        )
+    }
+}
+
+impl<T: From<u32>> Into<(T, T, T, T)> for Trace {
+    fn into(self) -> (T, T, T, T) {
+        (
+            self.x_min.into(),
+            self.y_min.into(),
+            self.x_max.into(),
+            self.y_max.into(),
+        )
+    }
+}
+
+impl<T: From<u32>> Into<(T, T, T, T)> for &Trace {
+    fn into(self) -> (T, T, T, T) {
+        (
+            self.x_min.into(),
+            self.y_min.into(),
+            self.x_max.into(),
+            self.y_max.into(),
+        )
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author = "Scott Chase Waggener", version = env!("CARGO_PKG_VERSION"), about = "Visualize traces on preprocessed TIFF files", long_about = None)]
 struct Args {
@@ -210,14 +307,22 @@ fn run(args: Args) -> Result<(), Error> {
             for result in reader.deserialize() {
                 let record: HashMap<String, String> = result.context(CSVSnafu)?;
                 let sop_instance_uid = record["sop_instance_uid"].clone();
+                let hash = record["trace_hash"].parse::<i64>().context(ParseIntSnafu)?;
                 let x_min = record["x_min"].parse::<u32>().context(ParseIntSnafu)?;
                 let x_max = record["x_max"].parse::<u32>().context(ParseIntSnafu)?;
                 let y_min = record["y_min"].parse::<u32>().context(ParseIntSnafu)?;
                 let y_max = record["y_max"].parse::<u32>().context(ParseIntSnafu)?;
                 traces
-                    .entry(sop_instance_uid)
+                    .entry(sop_instance_uid.clone())
                     .or_insert_with(Vec::new)
-                    .push((x_min, x_max, y_min, y_max));
+                    .push(Trace::new(
+                        sop_instance_uid,
+                        hash,
+                        x_min,
+                        x_max,
+                        y_min,
+                        y_max,
+                    ));
             }
             traces
         }
@@ -234,6 +339,12 @@ fn run(args: Args) -> Result<(), Error> {
                     .as_any()
                     .downcast_ref::<StringArray>()
                     .expect("Failed to downcast sop_instance_uid to StringArray");
+                let hash_array = batch
+                    .column_by_name("trace_hash")
+                    .expect("Failed to get trace_hash column")
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .expect("Failed to downcast trace_hash to Int64Array");
                 let x_min_array = batch
                     .column_by_name("x_min")
                     .expect("Failed to get x_min column")
@@ -261,14 +372,22 @@ fn run(args: Args) -> Result<(), Error> {
 
                 for i in 0..batch.num_rows() {
                     let sop_instance_uid = sop_array.value(i).to_string();
+                    let hash = hash_array.value(i) as i64;
                     let x_min = x_min_array.value(i) as u32;
                     let x_max = x_max_array.value(i) as u32;
                     let y_min = y_min_array.value(i) as u32;
                     let y_max = y_max_array.value(i) as u32;
                     traces
-                        .entry(sop_instance_uid)
+                        .entry(sop_instance_uid.clone())
                         .or_insert_with(Vec::new)
-                        .push((x_min, x_max, y_min, y_max));
+                        .push(Trace::new(
+                            sop_instance_uid,
+                            hash,
+                            x_min,
+                            x_max,
+                            y_min,
+                            y_max,
+                        ));
                 }
             }
             traces
@@ -307,9 +426,9 @@ fn run(args: Args) -> Result<(), Error> {
 
 fn process(
     source: &PathBuf,
-    trace_metadata: &HashMap<String, Vec<(u32, u32, u32, u32)>>,
+    trace_metadata: &HashMap<String, Vec<Trace>>,
     output: Option<&PathBuf>,
-) -> Result<(String, Vec<(u32, u32, u32, u32)>), Error> {
+) -> Result<(String, Vec<Trace>), Error> {
     // Open TIFF
     let file = File::open(&source).context(IOSnafu)?;
     let reader = BufReader::new(file);
@@ -332,14 +451,22 @@ fn process(
     // Adjust traces
     let traces = traces
         .into_iter()
-        .map(|(x_min, x_max, y_min, y_max)| {
-            let min = metadata.apply(&Coord::new(*x_min, *y_min));
-            let max = metadata.apply(&Coord::new(*x_max, *y_max));
+        .map(|trace| {
+            let (min, max): (Coord, Coord) = trace.into();
+            let min = metadata.apply(&min);
+            let max = metadata.apply(&max);
             let (x_min, y_min): (u32, u32) = min.into();
             let (x_max, y_max): (u32, u32) = max.into();
-            (x_min, y_min, x_max, y_max)
+            Trace::new(
+                trace.sop_instance_uid().to_string(),
+                trace.hash(),
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            )
         })
-        .filter(|(x_min, y_min, x_max, y_max)| *x_min < *x_max && *y_min < *y_max)
+        .filter(|trace| trace.is_valid())
         .collect::<Vec<_>>();
 
     if traces.is_empty() {
@@ -381,9 +508,10 @@ fn process(
         };
 
         // Overlay traces
-        for (x_min, y_min, x_max, y_max) in traces.iter() {
-            for x in *x_min..*x_max {
-                for y in *y_min..*y_max {
+        for trace in traces.iter() {
+            let (x_min, y_min, x_max, y_max): (u32, u32, u32, u32) = trace.into();
+            for x in x_min..x_max {
+                for y in y_min..y_max {
                     if x < x_min + BORDER as u32
                         || x >= x_max - BORDER as u32
                         || y < y_min + BORDER as u32
@@ -425,7 +553,7 @@ fn process(
 }
 
 fn write_traces_csv(
-    entries: &Vec<(String, Vec<(u32, u32, u32, u32)>)>,
+    entries: &Vec<(String, Vec<Trace>)>,
     dest: &Path,
     pb: &ProgressBar,
 ) -> Result<(), Error> {
@@ -434,7 +562,8 @@ fn write_traces_csv(
         .write_all(b"sop_instance_uid,x_min,x_max,y_min,y_max\n")
         .context(IOSnafu)?;
     for (sop_instance_uid, traces) in entries {
-        for (x_min, x_max, y_min, y_max) in traces {
+        for trace in traces {
+            let (x_min, y_min, x_max, y_max): (u32, u32, u32, u32) = trace.into();
             writeln!(
                 csv_file,
                 "{},{},{},{},{}",
@@ -448,7 +577,7 @@ fn write_traces_csv(
 }
 
 fn write_traces_parquet(
-    entries: &Vec<(String, Vec<(u32, u32, u32, u32)>)>,
+    entries: &Vec<(String, Vec<Trace>)>,
     dest: &Path,
     pb: &ProgressBar,
 ) -> Result<(), Error> {
@@ -472,10 +601,14 @@ fn write_traces_parquet(
     for (sop_instance_uid, traces) in entries {
         let sop_instance_uid_array =
             StringArray::from(vec![sop_instance_uid.clone(); traces.len()]);
-        let x_min_array = Int64Array::from(traces.iter().map(|t| t.0 as i64).collect::<Vec<_>>());
-        let x_max_array = Int64Array::from(traces.iter().map(|t| t.1 as i64).collect::<Vec<_>>());
-        let y_min_array = Int64Array::from(traces.iter().map(|t| t.2 as i64).collect::<Vec<_>>());
-        let y_max_array = Int64Array::from(traces.iter().map(|t| t.3 as i64).collect::<Vec<_>>());
+        let x_min_array =
+            Int64Array::from(traces.iter().map(|t| t.x_min() as i64).collect::<Vec<_>>());
+        let x_max_array =
+            Int64Array::from(traces.iter().map(|t| t.x_max() as i64).collect::<Vec<_>>());
+        let y_min_array =
+            Int64Array::from(traces.iter().map(|t| t.y_min() as i64).collect::<Vec<_>>());
+        let y_max_array =
+            Int64Array::from(traces.iter().map(|t| t.y_max() as i64).collect::<Vec<_>>());
 
         let batch = RecordBatch::try_new(
             schema_arc.clone(),

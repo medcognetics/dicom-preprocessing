@@ -225,7 +225,9 @@ struct Args {
     #[arg(help = "Source TIFF or directory of TIFFs")]
     source: PathBuf,
 
-    #[arg(help = "CSV or Parquet file with sop_instance_uid, x_min, x_max, y_min, y_max")]
+    #[arg(
+        help = "CSV or Parquet file with sop_instance_uid, trace_hash, x_min, x_max, y_min, y_max"
+    )]
     traces: PathBuf,
 
     #[arg(help = "Output file or directory")]

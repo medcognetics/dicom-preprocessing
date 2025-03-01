@@ -121,6 +121,7 @@ impl OutputFormat {
     }
 }
 
+#[derive(Debug)]
 struct Trace {
     sop_instance_uid: String,
     hash: i64,
@@ -237,14 +238,27 @@ struct Args {
         default_value = None,
     )]
     preview: Option<PathBuf>,
+
+    #[arg(
+        help = "Enable verbose logging",
+        long = "verbose",
+        short = 'v',
+        default_value = "false"
+    )]
+    verbose: bool,
 }
 
 fn main() {
     let args = Args::parse();
 
+    let level = if args.verbose {
+        Level::DEBUG
+    } else {
+        Level::ERROR
+    };
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
-            .with_max_level(Level::ERROR)
+            .with_max_level(level)
             .finish(),
     )
     .whatever_context("Could not set up global logging subscriber")
@@ -258,7 +272,7 @@ fn main() {
     });
 }
 
-fn run(args: Args) -> Result<(), Error> {
+fn run(args: Args) -> Result<(usize, usize), Error> {
     // Validate that the preview directory exists
     let preview = match &args.preview {
         Some(preview) if !preview.is_dir() => {
@@ -286,8 +300,12 @@ fn run(args: Args) -> Result<(), Error> {
                 path: args.source.to_path_buf(),
             })?
             .collect::<Vec<_>>()
-    } else {
+    } else if args.source.is_file() {
         vec![args.source.clone()]
+    } else {
+        return Err(Error::InvalidSourcePath {
+            path: args.source.to_path_buf(),
+        });
     };
     let source = source
         .into_iter()
@@ -407,6 +425,13 @@ fn run(args: Args) -> Result<(), Error> {
         .into_iter()
         .filter(|(_, traces)| !traces.is_empty())
         .collect::<Vec<_>>();
+    tracing::info!(
+        "Found {} traces",
+        results
+            .iter()
+            .map(|(_, traces)| traces.len())
+            .sum::<usize>()
+    );
 
     // Write the results to the output path
     let output_format =
@@ -421,7 +446,15 @@ fn run(args: Args) -> Result<(), Error> {
         OutputFormat::Csv => write_traces_csv(&results, &args.output, &pb)?,
         OutputFormat::Parquet => write_traces_parquet(&results, &args.output, &pb)?,
     }
-    Ok(())
+    pb.finish();
+
+    let num_images = results.len();
+    let num_traces = results
+        .iter()
+        .map(|(_, traces)| traces.len())
+        .sum::<usize>();
+    println!("Wrote {} traces across {} images", num_traces, num_images);
+    Ok((num_images, num_traces))
 }
 
 fn process(
@@ -435,8 +468,12 @@ fn process(
     let mut decoder = Decoder::new(reader)
         .map_err(|e| TiffError::from(e))
         .context(TiffReadSnafu)?;
+    let (width, height) = decoder
+        .dimensions()
+        .map_err(|e| TiffError::from(e))
+        .context(TiffReadSnafu)?;
 
-    // Read metadata find corresponding traces
+    // Read metadata and find corresponding traces
     let sop_instance_uid = source
         .file_stem()
         .unwrap_or_default()
@@ -445,31 +482,41 @@ fn process(
     let metadata = PreprocessingMetadata::try_from(&mut decoder).context(TiffReadSnafu)?;
     let traces = match trace_metadata.get(sop_instance_uid) {
         Some(traces) => traces,
-        None => return Ok((sop_instance_uid.to_string(), vec![])),
+        None => {
+            tracing::debug!(
+                "sop_instance_uid {} not found in trace metadata",
+                sop_instance_uid
+            );
+            return Ok((sop_instance_uid.to_string(), vec![]));
+        }
     };
 
     // Adjust traces
     let traces = traces
         .into_iter()
         .map(|trace| {
+            tracing::debug!("Processing trace: {:?}", trace);
             let (min, max): (Coord, Coord) = trace.into();
             let min = metadata.apply(&min);
             let max = metadata.apply(&max);
             let (x_min, y_min): (u32, u32) = min.into();
             let (x_max, y_max): (u32, u32) = max.into();
-            Trace::new(
+            let processed_trace = Trace::new(
                 trace.sop_instance_uid().to_string(),
                 trace.hash(),
                 x_min,
-                x_max,
+                x_max.min(width - 1),
                 y_min,
-                y_max,
-            )
+                y_max.min(height - 1),
+            );
+            tracing::debug!("Processed trace: {:?}", processed_trace);
+            processed_trace
         })
         .filter(|trace| trace.is_valid())
         .collect::<Vec<_>>();
 
     if traces.is_empty() {
+        tracing::debug!("No traces found for {}", sop_instance_uid);
         return Ok((sop_instance_uid.to_string(), vec![]));
     }
 
@@ -627,4 +674,255 @@ fn write_traces_parquet(
     writer.close().context(ParquetSnafu)?;
     pb.inc(entries.len() as u64);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dicom_preprocessing::FrameCount;
+    use ndarray::Array4;
+    use rstest::rstest;
+    use std::fs;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn create_test_tiff(
+        tmp_dir: &Path,
+        sop_instance_uid: &str,
+        study_instance_uid: &str,
+        width: u32,
+        height: u32,
+    ) -> PathBuf {
+        let array = Array4::<u8>::zeros((1, height as usize, width as usize, 1));
+        let metadata = PreprocessingMetadata {
+            crop: None,
+            resize: None,
+            padding: None,
+            resolution: None,
+            num_frames: FrameCount::from(1 as u16),
+        };
+        let saver = TiffSaver::new(
+            Compressor::Uncompressed(Uncompressed),
+            DicomColorType::Gray8(tiff::encoder::colortype::Gray8),
+        );
+        let path = tmp_dir
+            .join(study_instance_uid)
+            .join(format!("{}.tiff", sop_instance_uid));
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        let mut encoder = saver.open_tiff(&path).unwrap();
+
+        let dynamic_image = DynamicImage::ImageLuma8(
+            image::ImageBuffer::from_raw(
+                array.shape()[2] as u32,
+                array.shape()[1] as u32,
+                array.into_raw_vec_and_offset().0,
+            )
+            .unwrap(),
+        );
+
+        saver.save(&mut encoder, &dynamic_image, &metadata).unwrap();
+        path
+    }
+
+    fn create_test_traces_csv(tmp_dir: &Path) -> PathBuf {
+        let path = tmp_dir.join("traces.csv");
+        let mut writer = csv::Writer::from_path(&path).unwrap();
+        writer
+            .write_record(&[
+                "sop_instance_uid",
+                "trace_hash",
+                "x_min",
+                "x_max",
+                "y_min",
+                "y_max",
+            ])
+            .unwrap();
+        writer
+            .write_record(&["test1", "1", "10", "20", "30", "40"])
+            .unwrap();
+        writer
+            .write_record(&["test2", "2", "15", "25", "35", "45"])
+            .unwrap();
+        writer.flush().unwrap();
+        path
+    }
+
+    fn create_test_traces_parquet(tmp_dir: &Path) -> PathBuf {
+        let path = tmp_dir.join("traces.parquet");
+        let schema = Arc::new(arrow::datatypes::Schema::new(vec![
+            arrow::datatypes::Field::new(
+                "sop_instance_uid",
+                arrow::datatypes::DataType::Utf8,
+                false,
+            ),
+            arrow::datatypes::Field::new("trace_hash", arrow::datatypes::DataType::Int64, false),
+            arrow::datatypes::Field::new("x_min", arrow::datatypes::DataType::Int64, false),
+            arrow::datatypes::Field::new("x_max", arrow::datatypes::DataType::Int64, false),
+            arrow::datatypes::Field::new("y_min", arrow::datatypes::DataType::Int64, false),
+            arrow::datatypes::Field::new("y_max", arrow::datatypes::DataType::Int64, false),
+        ]));
+
+        let sop_array = StringArray::from(vec!["test1", "test2"]);
+        let hash_array = Int64Array::from(vec![1, 2]);
+        let x_min_array = Int64Array::from(vec![10, 15]);
+        let x_max_array = Int64Array::from(vec![20, 25]);
+        let y_min_array = Int64Array::from(vec![30, 35]);
+        let y_max_array = Int64Array::from(vec![40, 45]);
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(sop_array),
+                Arc::new(hash_array),
+                Arc::new(x_min_array),
+                Arc::new(x_max_array),
+                Arc::new(y_min_array),
+                Arc::new(y_max_array),
+            ],
+        )
+        .unwrap();
+
+        let file = File::create(&path).unwrap();
+        let props = WriterProperties::builder().build();
+        let mut writer = ArrowWriter::try_new(file, schema, Some(props)).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+        path
+    }
+
+    #[rstest]
+    #[case("csv")]
+    #[case("parquet")]
+    fn test_trace_processing(#[case] format: &str) {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+
+        // Create test TIFFs
+        create_test_tiff(&source_dir, "test1", "study1", 100, 100);
+        create_test_tiff(&source_dir, "test2", "study1", 100, 100);
+
+        // Create test traces file
+        let traces_path = match format {
+            "csv" => create_test_traces_csv(tmp_dir.path()),
+            "parquet" => create_test_traces_parquet(tmp_dir.path()),
+            _ => panic!("Unsupported format"),
+        };
+
+        // Create output directory
+        let output_dir = tmp_dir.path().join("output");
+        fs::create_dir(&output_dir).unwrap();
+        let output_path = output_dir.join(format!("output.{}", format));
+
+        // Create preview directory
+        let preview_dir = tmp_dir.path().join("preview");
+        fs::create_dir(&preview_dir).unwrap();
+
+        // Run the CLI
+        let args = Args {
+            source: source_dir,
+            traces: traces_path,
+            output: output_path.clone(),
+            preview: Some(preview_dir.clone()),
+            verbose: true,
+        };
+        run(args).unwrap();
+
+        // Verify output file exists
+        assert!(output_path.exists());
+
+        // Verify preview files were created
+        assert!(preview_dir.join("study1").join("test1.tiff").exists());
+        assert!(preview_dir.join("study1").join("test2.tiff").exists());
+
+        // Verify output contents
+        match format {
+            "csv" => {
+                let mut reader = csv::Reader::from_path(output_path).unwrap();
+                let records: Vec<_> = reader.records().collect();
+                assert_eq!(records.len(), 2);
+            }
+            "parquet" => {
+                let file = File::open(output_path).unwrap();
+                let reader = ParquetRecordBatchReader::try_new(file, 1024).unwrap();
+                let batches: Vec<_> = reader.collect();
+                assert_eq!(batches.len(), 1);
+                assert_eq!(batches[0].as_ref().unwrap().num_rows(), 2);
+            }
+            _ => panic!("Unsupported format"),
+        }
+    }
+
+    #[test]
+    fn test_invalid_source_path() {
+        let tmp_dir = TempDir::new().unwrap();
+        let args = Args {
+            source: tmp_dir.path().join("nonexistent"),
+            traces: tmp_dir.path().join("traces.csv"),
+            output: tmp_dir.path().join("output.csv"),
+            preview: None,
+            verbose: true,
+        };
+        assert!(matches!(run(args), Err(Error::InvalidSourcePath { .. })));
+    }
+
+    #[test]
+    fn test_invalid_traces_format() {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+        create_test_tiff(&source_dir, "test1", "study1", 100, 100);
+
+        let args = Args {
+            source: source_dir,
+            traces: tmp_dir.path().join("traces.txt"),
+            output: tmp_dir.path().join("output.csv"),
+            preview: None,
+            verbose: true,
+        };
+        assert!(matches!(run(args), Err(Error::InvalidTracesFormat { .. })));
+    }
+
+    #[test]
+    fn test_invalid_output_extension() {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+        create_test_tiff(&source_dir, "test1", "study1", 100, 100);
+
+        let args = Args {
+            source: source_dir,
+            traces: create_test_traces_csv(tmp_dir.path()),
+            output: tmp_dir.path().join("output.txt"),
+            preview: None,
+            verbose: true,
+        };
+        assert!(matches!(
+            run(args),
+            Err(Error::InvalidOutputExtension { .. })
+        ));
+    }
+
+    #[test]
+    fn test_invalid_preview_path() {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+        create_test_tiff(&source_dir, "test1", "study1", 100, 100);
+
+        // Create a file instead of a directory for preview path
+        let preview_path = tmp_dir.path().join("preview");
+        fs::write(&preview_path, "").unwrap();
+
+        let args = Args {
+            source: source_dir,
+            traces: create_test_traces_csv(tmp_dir.path()),
+            output: tmp_dir.path().join("output.csv"),
+            preview: Some(preview_path),
+            verbose: true,
+        };
+        assert!(matches!(run(args), Err(Error::InvalidPreviewPath { .. })));
+    }
 }

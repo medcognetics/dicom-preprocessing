@@ -220,9 +220,9 @@ impl<T: From<u32>> Into<(T, T, T, T)> for &Trace {
 }
 
 #[derive(Parser, Debug)]
-#[command(author = "Scott Chase Waggener", version = env!("CARGO_PKG_VERSION"), about = "Visualize traces on preprocessed TIFF files", long_about = None)]
+#[command(author = "Scott Chase Waggener", version = env!("CARGO_PKG_VERSION"), about = "Preprocess traces into a preprocessed image coordinate system", long_about = None)]
 struct Args {
-    #[arg(help = "Source TIFF or directory of TIFFs")]
+    #[arg(help = "Source TIFF, directory of TIFFs, or .txt file with TIFF paths")]
     source: PathBuf,
 
     #[arg(
@@ -234,7 +234,7 @@ struct Args {
     output: PathBuf,
 
     #[arg(
-        help = "Directory to save previews to",
+        help = "Optional directory to save previews to",
         long = "preview",
         short = 'p',
         default_value = None,

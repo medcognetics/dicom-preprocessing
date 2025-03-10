@@ -1,7 +1,7 @@
 pub mod manifest;
 pub mod path;
-pub mod tiff;
 pub mod preprocess;
+pub mod tiff;
 
 use pyo3::prelude::*;
 

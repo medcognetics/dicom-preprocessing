@@ -1,7 +1,7 @@
 use image::DynamicImage;
 use image::GenericImageView;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use tiff::encoder::colortype::ColorType;
 use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
@@ -24,9 +24,9 @@ where
     C: ColorType,
     D: Compression + Clone,
 {
-    fn save(
+    fn save<T: Write + Seek>(
         &self,
-        encoder: &mut TiffEncoder<BufWriter<File>>,
+        encoder: &mut TiffEncoder<T>,
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
         compression: D,
@@ -42,9 +42,9 @@ pub struct TiffSaver {
 macro_rules! impl_save_frame {
     ($color_type:ty, $compression:ty, $as_fn:ident) => {
         impl SaveToTiff<$color_type, $compression> for TiffSaver {
-            fn save(
+            fn save<T: Write + Seek>(
                 &self,
-                encoder: &mut TiffEncoder<BufWriter<File>>,
+                encoder: &mut TiffEncoder<T>,
                 image: &DynamicImage,
                 metadata: &PreprocessingMetadata,
                 compression: $compression,
@@ -100,9 +100,9 @@ impl TiffSaver {
         TiffEncoder::new(file).context(WriteSnafu { path: output })
     }
 
-    pub fn save(
+    pub fn save<T: Write + Seek>(
         &self,
-        encoder: &mut TiffEncoder<BufWriter<File>>,
+        encoder: &mut TiffEncoder<T>,
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
     ) -> Result<(), TiffError> {

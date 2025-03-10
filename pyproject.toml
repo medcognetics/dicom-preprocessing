@@ -43,6 +43,7 @@ test = [
   "pytest",
   "numpy",
   "Pillow",
+  "pydicom",
 ]
 quality = [
   "autoflake",

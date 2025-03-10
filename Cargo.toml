@@ -32,9 +32,10 @@ pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
 numpy = { version = "0.22", optional = true }
 arrow = "50.0"
 parquet = "50.0"
+tempfile = { version = "3.10", optional = true }
 
 [features]
-python = ["pyo3", "numpy"]
+python = ["pyo3", "numpy", "tempfile"]
 
 [dev-dependencies]
 tempfile = "3.10"

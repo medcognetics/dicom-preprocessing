@@ -1,5 +1,6 @@
 from pathlib import Path
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, List, Tuple
+from io import BytesIO
 
 import numpy as np
 import numpy.typing as npt
@@ -152,5 +153,39 @@ def load_tiff_f32_batched(paths: List[Path], batch_size: int) -> Iterator[List[n
 
     Yields:
         A batch of TIFF files as 32-bit floating-point numpy arrays
+    """
+    ...
+
+
+class PreprocessingMetadata:
+    ...
+    
+
+
+def preprocess(
+    target: str | Path | BytesIO,
+    crop: bool = True,
+    size: Tuple[int, int] | None = None,
+    filter: str = "triangle",
+    padding_direction: str = "zero",
+    crop_max: bool = True,
+    volume_handler: str = "keep",
+    use_components: bool = True,
+    use_padding: bool = True,
+    border_frac: float | None = None,
+) -> Tuple[npt.NDArray[np.float32], :
+    """Preprocess a DICOM file or byte stream of a DICOM file.
+
+    Args:
+        target: Path to a DICOM file, a byte stream of a DICOM file, or a directory containing DICOM files
+        crop: Whether to crop the image
+        size: Tuple of width and height to resize the image to
+        filter: Filter to use for resizing the image
+        padding_direction: Direction to pad the image
+        crop_max: Whether to crop the image to the maximum possible size
+        volume_handler: Handler to use for volume handling
+
+    Returns:
+        Preprocess
     """
     ...

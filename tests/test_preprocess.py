@@ -1,11 +1,11 @@
+import shutil
 from pathlib import Path
 
-import numpy as np
-import shutil
-import pytest
-import pydicom
 import dicom_preprocessing as dp
-from PIL import Image
+import numpy as np
+import pydicom
+import pytest
+
 
 def test_preprocessor():
     preprocessor = dp.Preprocessor()
@@ -42,6 +42,7 @@ def test_preprocess_u8(dicom_path):
     assert result.min() >= 0
     assert result.max() <= 255
 
+
 def test_preprocess_u16(dicom_path):
     preprocessor = dp.Preprocessor(size=(32, 32))
     result = dp.preprocess_u16(dicom_path, preprocessor)
@@ -49,6 +50,7 @@ def test_preprocess_u16(dicom_path):
     assert result.dtype == np.uint16
     assert result.min() >= 0
     assert result.max() <= 65535
+
 
 def test_preprocess_f32(dicom_path):
     preprocessor = dp.Preprocessor(size=(32, 32))
@@ -58,6 +60,7 @@ def test_preprocess_f32(dicom_path):
     assert result.min() >= 0
     assert result.max() <= 1
 
+
 def test_preprocess_u8_stream(dicom_stream):
     preprocessor = dp.Preprocessor(size=(32, 32))
     result = dp.preprocess_stream_u8(dicom_stream, preprocessor)
@@ -66,6 +69,7 @@ def test_preprocess_u8_stream(dicom_stream):
     assert result.min() >= 0
     assert result.max() <= 255
 
+
 def test_preprocess_u16_stream(dicom_stream):
     preprocessor = dp.Preprocessor(size=(32, 32))
     result = dp.preprocess_stream_u16(dicom_stream, preprocessor)
@@ -73,6 +77,7 @@ def test_preprocess_u16_stream(dicom_stream):
     assert result.dtype == np.uint16
     assert result.min() >= 0
     assert result.max() <= 65535
+
 
 def test_preprocess_f32_stream(dicom_stream):
     preprocessor = dp.Preprocessor(size=(32, 32))

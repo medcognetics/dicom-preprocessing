@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Tuple, Union
-from io import BytesIO
 
 import numpy as np
 import numpy.typing as npt
@@ -22,6 +21,7 @@ class Preprocessor:
     Raises:
         ValueError: If invalid filter type, padding direction or volume handler specified
     """
+
     def __init__(
         self,
         crop: bool = True,
@@ -283,4 +283,3 @@ def load_tiff_f32_batched(paths: List[Path], batch_size: int) -> Iterator[List[n
         A batch of TIFF files as 32-bit floating-point numpy arrays
     """
     ...
-

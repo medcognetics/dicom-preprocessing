@@ -274,159 +274,173 @@ fn main() {
     });
 }
 
-fn run(args: Args) -> Result<(usize, usize), Error> {
-    // Validate that the preview directory exists
-    let preview = match &args.preview {
-        Some(preview) if !preview.is_dir() => {
+fn validate_paths(args: &Args) -> Result<Option<&PathBuf>, Error> {
+    if let Some(preview) = &args.preview {
+        if !preview.is_dir() {
             return Err(Error::InvalidPreviewPath {
                 path: preview.clone(),
-            })
+            });
         }
-        Some(preview) => Some(preview),
-        None => None,
-    };
+    }
+    Ok(args.preview.as_ref())
+}
 
-    // Parse the sources
-    let source = if args.source.is_dir() {
-        args.source
+fn load_source_files(source_path: &PathBuf) -> Result<Vec<PathBuf>, Error> {
+    let source = if source_path.is_dir() {
+        source_path
             .find_tiffs()
             .map_err(|_| Error::InvalidSourcePath {
-                path: args.source.to_path_buf(),
+                path: source_path.to_path_buf(),
             })?
             .collect::<Vec<_>>()
-    } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
-        args.source
+    } else if source_path.is_file() && source_path.extension().unwrap() == "txt" {
+        source_path
             .iter()
             .read_tiff_paths_with_bar()
             .map_err(|_| Error::InvalidSourcePath {
-                path: args.source.to_path_buf(),
+                path: source_path.to_path_buf(),
             })?
             .collect::<Vec<_>>()
-    } else if args.source.is_file() {
-        vec![args.source.clone()]
+    } else if source_path.is_file() {
+        vec![source_path.clone()]
     } else {
         return Err(Error::InvalidSourcePath {
-            path: args.source.to_path_buf(),
+            path: source_path.to_path_buf(),
         });
     };
+
     let source = source
         .into_iter()
         .sorted_by_inode_with_progress()
         .collect::<Vec<_>>();
 
-    tracing::info!("Number of sources found: {}", source.len());
-    if source.len() == 0 {
-        return Err(Error::NoSources { path: args.source });
+    if source.is_empty() {
+        return Err(Error::NoSources {
+            path: source_path.clone(),
+        });
     }
 
-    // Read the source into a hashmap of sop_instance_uid to list of traces
-    let traces = match args.traces.extension().and_then(|ext| ext.to_str()) {
-        Some("csv") => {
-            let mut reader = CsvReader::from_path(&args.traces).context(CSVSnafu)?;
-            let mut traces = HashMap::new();
-            for result in reader.deserialize() {
-                let record: HashMap<String, String> = result.context(CSVSnafu)?;
-                let sop_instance_uid = record["sop_instance_uid"].clone();
-                let hash = record["trace_hash"].parse::<i64>().context(ParseIntSnafu)?;
-                let x_min = record["x_min"].parse::<u32>().context(ParseIntSnafu)?;
-                let x_max = record["x_max"].parse::<u32>().context(ParseIntSnafu)?;
-                let y_min = record["y_min"].parse::<u32>().context(ParseIntSnafu)?;
-                let y_max = record["y_max"].parse::<u32>().context(ParseIntSnafu)?;
-                traces
-                    .entry(sop_instance_uid.clone())
-                    .or_insert_with(Vec::new)
-                    .push(Trace::new(
-                        sop_instance_uid,
-                        hash,
-                        x_min,
-                        x_max,
-                        y_min,
-                        y_max,
-                    ));
-            }
-            traces
-        }
-        Some("parquet") => {
-            let file = File::open(&args.traces).context(IOSnafu)?;
-            let mut reader =
-                ParquetRecordBatchReader::try_new(file, BATCH_SIZE).context(ParquetSnafu)?;
-            let mut traces = HashMap::new();
-            while let Some(result) = reader.next() {
-                let batch = result.context(ArrowSnafu)?;
-                let sop_array = batch
-                    .column_by_name("sop_instance_uid")
-                    .expect("Failed to get sop_instance_uid column")
-                    .as_any()
-                    .downcast_ref::<StringArray>()
-                    .expect("Failed to downcast sop_instance_uid to StringArray");
-                let hash_array = batch
-                    .column_by_name("trace_hash")
-                    .expect("Failed to get trace_hash column")
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .expect("Failed to downcast trace_hash to Int64Array");
-                let x_min_array = batch
-                    .column_by_name("x_min")
-                    .expect("Failed to get x_min column")
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .expect("Failed to downcast x_min to Int64Array");
-                let x_max_array = batch
-                    .column_by_name("x_max")
-                    .expect("Failed to get x_max column")
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .expect("Failed to downcast x_max to Int64Array");
-                let y_min_array = batch
-                    .column_by_name("y_min")
-                    .expect("Failed to get y_min column")
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .expect("Failed to downcast y_min to Int64Array");
-                let y_max_array = batch
-                    .column_by_name("y_max")
-                    .expect("Failed to get y_max column")
-                    .as_any()
-                    .downcast_ref::<Int64Array>()
-                    .expect("Failed to downcast y_max to Int64Array");
+    tracing::info!("Number of sources found: {}", source.len());
+    Ok(source)
+}
 
-                for i in 0..batch.num_rows() {
-                    let sop_instance_uid = sop_array.value(i).to_string();
-                    let hash = hash_array.value(i) as i64;
-                    let x_min = x_min_array.value(i) as u32;
-                    let x_max = x_max_array.value(i) as u32;
-                    let y_min = y_min_array.value(i) as u32;
-                    let y_max = y_max_array.value(i) as u32;
-                    traces
-                        .entry(sop_instance_uid.clone())
-                        .or_insert_with(Vec::new)
-                        .push(Trace::new(
-                            sop_instance_uid,
-                            hash,
-                            x_min,
-                            x_max,
-                            y_min,
-                            y_max,
-                        ));
-                }
-            }
-            traces
-        }
-        _ => return Err(Error::InvalidTracesFormat { path: args.traces }),
-    };
-    tracing::info!("Loaded {} traces", traces.len());
+fn load_traces_csv(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error> {
+    let mut reader = CsvReader::from_path(path).context(CSVSnafu)?;
+    let mut traces = HashMap::new();
+    for result in reader.deserialize() {
+        let record: HashMap<String, String> = result.context(CSVSnafu)?;
+        let sop_instance_uid = record["sop_instance_uid"].clone();
+        let hash = record["trace_hash"].parse::<i64>().context(ParseIntSnafu)?;
+        let x_min = record["x_min"].parse::<u32>().context(ParseIntSnafu)?;
+        let x_max = record["x_max"].parse::<u32>().context(ParseIntSnafu)?;
+        let y_min = record["y_min"].parse::<u32>().context(ParseIntSnafu)?;
+        let y_max = record["y_max"].parse::<u32>().context(ParseIntSnafu)?;
+        traces
+            .entry(sop_instance_uid.clone())
+            .or_insert_with(Vec::new)
+            .push(Trace::new(
+                sop_instance_uid,
+                hash,
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            ));
+    }
+    Ok(traces)
+}
 
-    // Process in parallel
-    let pb = default_bar(source.len() as u64);
+fn load_traces_parquet(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error> {
+    let file = File::open(path).context(IOSnafu)?;
+    let mut reader = ParquetRecordBatchReader::try_new(file, BATCH_SIZE).context(ParquetSnafu)?;
+    let mut traces = HashMap::new();
+
+    while let Some(result) = reader.next() {
+        let batch = result.context(ArrowSnafu)?;
+        let sop_array = batch
+            .column_by_name("sop_instance_uid")
+            .expect("Failed to get sop_instance_uid column")
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("Failed to downcast sop_instance_uid to StringArray");
+        let hash_array = batch
+            .column_by_name("trace_hash")
+            .expect("Failed to get trace_hash column")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Failed to downcast trace_hash to Int64Array");
+        let x_min_array = batch
+            .column_by_name("x_min")
+            .expect("Failed to get x_min column")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Failed to downcast x_min to Int64Array");
+        let x_max_array = batch
+            .column_by_name("x_max")
+            .expect("Failed to get x_max column")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Failed to downcast x_max to Int64Array");
+        let y_min_array = batch
+            .column_by_name("y_min")
+            .expect("Failed to get y_min column")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Failed to downcast y_min to Int64Array");
+        let y_max_array = batch
+            .column_by_name("y_max")
+            .expect("Failed to get y_max column")
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("Failed to downcast y_max to Int64Array");
+
+        for i in 0..batch.num_rows() {
+            let sop_instance_uid = sop_array.value(i).to_string();
+            let hash = hash_array.value(i) as i64;
+            let x_min = x_min_array.value(i) as u32;
+            let x_max = x_max_array.value(i) as u32;
+            let y_min = y_min_array.value(i) as u32;
+            let y_max = y_max_array.value(i) as u32;
+            traces
+                .entry(sop_instance_uid.clone())
+                .or_insert_with(Vec::new)
+                .push(Trace::new(
+                    sop_instance_uid,
+                    hash,
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                ));
+        }
+    }
+    Ok(traces)
+}
+
+fn load_traces(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("csv") => load_traces_csv(path),
+        Some("parquet") => load_traces_parquet(path),
+        _ => Err(Error::InvalidTracesFormat { path: path.clone() }),
+    }
+}
+
+fn process_traces(
+    source_files: Vec<PathBuf>,
+    trace_metadata: &HashMap<String, Vec<Trace>>,
+    preview: Option<&PathBuf>,
+) -> Result<Vec<(String, Vec<Trace>)>, Error> {
+    let pb = default_bar(source_files.len() as u64);
     pb.set_message("Processing traces");
-    let results = source
+    let results = source_files
         .into_par_iter()
         .progress_with(pb)
-        .map(|s| process(&s, &traces, preview))
+        .map(|s| process(&s, trace_metadata, preview))
         .collect::<Result<Vec<_>, Error>>()?
         .into_iter()
         .filter(|(_, traces)| !traces.is_empty())
         .collect::<Vec<_>>();
+
     tracing::info!(
         "Found {} traces",
         results
@@ -434,19 +448,25 @@ fn run(args: Args) -> Result<(usize, usize), Error> {
             .map(|(_, traces)| traces.len())
             .sum::<usize>()
     );
+    Ok(results)
+}
 
-    // Write the results to the output path
+fn write_output(
+    results: &Vec<(String, Vec<Trace>)>,
+    output_path: &PathBuf,
+) -> Result<(usize, usize), Error> {
     let output_format =
-        OutputFormat::from_extension(&args.output).map_err(|_| Error::InvalidOutputExtension {
-            path: args.output.clone(),
+        OutputFormat::from_extension(output_path).map_err(|_| Error::InvalidOutputExtension {
+            path: output_path.clone(),
             supported: vec!["csv", "parquet"],
         })?;
 
     let pb = default_bar(results.len() as u64);
     pb.set_message("Writing outputs");
+
     match output_format {
-        OutputFormat::Csv => write_traces_csv(&results, &args.output, &pb)?,
-        OutputFormat::Parquet => write_traces_parquet(&results, &args.output, &pb)?,
+        OutputFormat::Csv => write_traces_csv(results, output_path, &pb)?,
+        OutputFormat::Parquet => write_traces_parquet(results, output_path, &pb)?,
     }
     pb.finish();
 
@@ -457,6 +477,14 @@ fn run(args: Args) -> Result<(usize, usize), Error> {
         .sum::<usize>();
     println!("Wrote {} traces across {} images", num_traces, num_images);
     Ok((num_images, num_traces))
+}
+
+fn run(args: Args) -> Result<(usize, usize), Error> {
+    let preview = validate_paths(&args)?;
+    let source_files = load_source_files(&args.source)?;
+    let traces = load_traces(&args.traces)?;
+    let results = process_traces(source_files, &traces, preview)?;
+    write_output(&results, &args.output)
 }
 
 fn process(

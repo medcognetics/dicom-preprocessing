@@ -142,3 +142,6 @@ coverage.xml
 *.dcm
 *.tiff
 .venv/
+
+*.parquet
+*.csv

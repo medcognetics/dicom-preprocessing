@@ -69,10 +69,10 @@ impl Crop {
             let offset_w = (width as f32 * border_frac) as u32;
             let offset_h = (height as f32 * border_frac) as u32;
 
-            let left = (left - offset_w).max(0) as u32;
-            let right = (right + offset_w).min(width - 1) as u32;
-            let top = (top - offset_h).max(0) as u32;
-            let bottom = (bottom + offset_h).min(height - 1) as u32;
+            let left = (left as i64 - offset_w as i64).max(0) as u32;
+            let right = (right + offset_w).min(width - 1);
+            let top = (top as i64 - offset_h as i64).max(0) as u32;
+            let bottom = (bottom + offset_h).min(height - 1);
             (left, right, top, bottom)
         } else {
             (left, right, top, bottom)
@@ -94,8 +94,8 @@ impl Crop {
         border_frac: Option<f32>,
     ) -> Self {
         // First generate a baseline crop
-        let mut image = image.clone();
-        let crop = Crop::new(&mut image, check_max, border_frac);
+        let image = image.clone();
+        let crop = Crop::new(&image, check_max, border_frac);
         let thumbnail = image.crop_imm(crop.left, crop.top, crop.width, crop.height);
 
         // Resize the image to smaller size for fast computation of crop boundaries

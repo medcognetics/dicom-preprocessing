@@ -83,9 +83,9 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for DicomColorType {
 }
 
 // NOTE: There is a trait ColorType in the encoder module, and an enum ColorType at the top level.
-impl Into<ColorType> for DicomColorType {
-    fn into(self) -> ColorType {
-        match self {
+impl From<DicomColorType> for ColorType {
+    fn from(color_type: DicomColorType) -> Self {
+        match color_type {
             DicomColorType::Gray8(Gray8) => ColorType::Gray(8),
             DicomColorType::Gray16(Gray16) => ColorType::Gray(16),
             DicomColorType::RGB8(RGB8) => ColorType::RGB(8),

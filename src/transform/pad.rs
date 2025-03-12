@@ -145,8 +145,8 @@ impl InvertibleTransform<Coord> for Padding {
     fn invert(&self, coord: &Coord) -> Coord {
         let (x, y): (u32, u32) = coord.into();
         let (left, top) = (self.left, self.top);
-        let new_x = if x > left { x - left } else { 0 };
-        let new_y = if y > top { y - top } else { 0 };
+        let new_x = x.saturating_sub(left);
+        let new_y = y.saturating_sub(top);
         Coord::new(new_x, new_y)
     }
 }

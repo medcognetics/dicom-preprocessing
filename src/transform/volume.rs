@@ -172,7 +172,7 @@ impl MaxIntensity {
             for y in 0..height {
                 let mut current_pixel = current.get_pixel(x, y);
                 let new_pixel = new.get_pixel(x, y);
-                current_pixel.apply2(&new_pixel, |p1, p2| max(p1, p2));
+                current_pixel.apply2(&new_pixel, max);
                 current.put_pixel(x, y, current_pixel);
             }
         }
@@ -187,10 +187,10 @@ impl HandleVolume for MaxIntensity {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let start = min(number_of_frames, self.skip_start);
-        let end = max(0, number_of_frames - self.skip_end);
+        let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
 
         // Validate the start/end relative to the number of frames
-        if start >= end || start >= number_of_frames || end <= 0 {
+        if start >= end || start >= number_of_frames {
             return Err(DicomError::FrameIndexError {
                 start: start as usize,
                 end: end as usize,
@@ -219,10 +219,10 @@ impl HandleVolume for MaxIntensity {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let start = min(number_of_frames, self.skip_start);
-        let end = max(0, number_of_frames - self.skip_end);
+        let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
 
         // Validate the start/end relative to the number of frames
-        if start >= end || start >= number_of_frames || end <= 0 {
+        if start >= end || start >= number_of_frames {
             return Err(DicomError::FrameIndexError {
                 start: start as usize,
                 end: end as usize,

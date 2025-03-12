@@ -49,13 +49,13 @@ enum Error {
     InvalidOutputPath { path: PathBuf },
 
     #[snafu(display("Arrow error: {:?}", source))]
-    ArrowError {
+    Arrow {
         #[snafu(source(from(ArrowError, Box::new)))]
         source: Box<ArrowError>,
     },
 
     #[snafu(display("Parquet error: {:?}", source))]
-    ParquetError {
+    Parquet {
         #[snafu(source(from(ParquetError, Box::new)))]
         source: Box<ParquetError>,
     },

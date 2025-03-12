@@ -21,7 +21,7 @@ use std::path::Path;
 #[pymodule]
 #[pyo3(name = "tiff")]
 pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
-    fn load_tiff<'py, T, P>(py: Python<'py>, path: P) -> PyResult<Bound<'py, PyArray4<T>>>
+    fn load_tiff<T, P>(py: Python<'_>, path: P) -> PyResult<Bound<'_, PyArray4<T>>>
     where
         T: Clone + Zero + Element,
         Array4<T>: LoadFromTiff<T>,
@@ -41,7 +41,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             .map_err(|_| PyRuntimeError::new_err("Failed to create decoder"))?;
         let array = Array4::<T>::decode(&mut decoder)
             .map_err(|_| PyRuntimeError::new_err("Failed to decode TIFF"))?;
-        Ok(array.into_pyarray_bound(py))
+        Ok(array.into_pyarray(py))
     }
 
     #[pyfn(m)]
@@ -108,7 +108,10 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             slf
         }
 
-        fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> Option<PyObject> {
+        fn __next__<'py>(
+            mut slf: PyRefMut<'py, Self>,
+            py: Python<'py>,
+        ) -> Option<Bound<'py, PyList>> {
             if slf.current_idx >= slf.paths.len() {
                 return None;
             }
@@ -138,10 +141,16 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
 
             let arrays: Vec<_> = raw_arrays
                 .into_iter()
-                .map(|arr| arr.into_pyarray_bound(py))
+                .map(|arr| arr.into_pyarray(py))
                 .collect();
 
-            let batch = PyList::new_bound(py, arrays).into();
+            let batch = match PyList::new(py, arrays) {
+                Ok(batch) => batch,
+                Err(e) => {
+                    PyRuntimeError::new_err(format!("Failed to create batch: {}", e)).restore(py);
+                    return None;
+                }
+            };
             slf.current_idx = end_idx;
             Some(batch)
         }

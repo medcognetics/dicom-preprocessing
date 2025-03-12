@@ -60,43 +60,43 @@ enum Error {
     InvalidPreviewPath { path: PathBuf },
 
     #[snafu(display("IO error: {:?}", source))]
-    IOError {
+    IO {
         #[snafu(source(from(std::io::Error, Box::new)))]
         source: Box<std::io::Error>,
     },
 
     #[snafu(display("Error reading CSV: {:?}", source))]
-    CSVError {
+    Csv {
         #[snafu(source(from(csv::Error, Box::new)))]
         source: Box<csv::Error>,
     },
 
     #[snafu(display("Error parsing integer: {:?}", source))]
-    ParseIntError {
+    ParseInt {
         #[snafu(source(from(ParseIntError, Box::new)))]
         source: Box<ParseIntError>,
     },
 
     #[snafu(display("Arrow error: {:?}", source))]
-    ArrowError {
+    Arrow {
         #[snafu(source(from(ArrowError, Box::new)))]
         source: Box<ArrowError>,
     },
 
     #[snafu(display("Parquet error: {:?}", source))]
-    ParquetError {
+    Parquet {
         #[snafu(source(from(ParquetError, Box::new)))]
         source: Box<ParquetError>,
     },
 
     #[snafu(display("Error reading TIFF: {:?}", source))]
-    TiffReadError {
+    TiffRead {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
 
     #[snafu(display("Error writing TIFF: {:?}", source))]
-    TiffWriteError {
+    TiffWrite {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
@@ -179,42 +179,42 @@ impl Trace {
     }
 }
 
-impl Into<(Coord, Coord)> for Trace {
-    fn into(self) -> (Coord, Coord) {
+impl From<Trace> for (Coord, Coord) {
+    fn from(trace: Trace) -> Self {
         (
-            Coord::new(self.x_min, self.y_min),
-            Coord::new(self.x_max, self.y_max),
+            Coord::new(trace.x_min, trace.y_min),
+            Coord::new(trace.x_max, trace.y_max),
         )
     }
 }
 
-impl Into<(Coord, Coord)> for &Trace {
-    fn into(self) -> (Coord, Coord) {
+impl From<&Trace> for (Coord, Coord) {
+    fn from(trace: &Trace) -> Self {
         (
-            Coord::new(self.x_min, self.y_min),
-            Coord::new(self.x_max, self.y_max),
+            Coord::new(trace.x_min, trace.y_min),
+            Coord::new(trace.x_max, trace.y_max),
         )
     }
 }
 
-impl<T: From<u32>> Into<(T, T, T, T)> for Trace {
-    fn into(self) -> (T, T, T, T) {
+impl<T: From<u32>> From<Trace> for (T, T, T, T) {
+    fn from(trace: Trace) -> Self {
         (
-            self.x_min.into(),
-            self.y_min.into(),
-            self.x_max.into(),
-            self.y_max.into(),
+            trace.x_min.into(),
+            trace.y_min.into(),
+            trace.x_max.into(),
+            trace.y_max.into(),
         )
     }
 }
 
-impl<T: From<u32>> Into<(T, T, T, T)> for &Trace {
-    fn into(self) -> (T, T, T, T) {
+impl<T: From<u32>> From<&Trace> for (T, T, T, T) {
+    fn from(trace: &Trace) -> Self {
         (
-            self.x_min.into(),
-            self.y_min.into(),
-            self.x_max.into(),
-            self.y_max.into(),
+            trace.x_min.into(),
+            trace.y_min.into(),
+            trace.x_max.into(),
+            trace.y_max.into(),
         )
     }
 }
@@ -325,10 +325,10 @@ fn load_source_files(source_path: &PathBuf) -> Result<Vec<PathBuf>, Error> {
 }
 
 fn load_traces_csv(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error> {
-    let mut reader = CsvReader::from_path(path).context(CSVSnafu)?;
+    let mut reader = CsvReader::from_path(path).context(CsvSnafu)?;
     let mut traces = HashMap::new();
     for result in reader.deserialize() {
-        let record: HashMap<String, String> = result.context(CSVSnafu)?;
+        let record: HashMap<String, String> = result.context(CsvSnafu)?;
         let sop_instance_uid = record["sop_instance_uid"].clone();
         let hash = record["trace_hash"].parse::<i64>().context(ParseIntSnafu)?;
         let x_min = record["x_min"].parse::<u32>().context(ParseIntSnafu)?;
@@ -352,10 +352,10 @@ fn load_traces_csv(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error>
 
 fn load_traces_parquet(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error> {
     let file = File::open(path).context(IOSnafu)?;
-    let mut reader = ParquetRecordBatchReader::try_new(file, BATCH_SIZE).context(ParquetSnafu)?;
+    let reader = ParquetRecordBatchReader::try_new(file, BATCH_SIZE).context(ParquetSnafu)?;
     let mut traces = HashMap::new();
 
-    while let Some(result) = reader.next() {
+    for result in reader {
         let batch = result.context(ArrowSnafu)?;
         let sop_array = batch
             .column_by_name("sop_instance_uid")
@@ -396,7 +396,7 @@ fn load_traces_parquet(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Er
 
         for i in 0..batch.num_rows() {
             let sop_instance_uid = sop_array.value(i).to_string();
-            let hash = hash_array.value(i) as i64;
+            let hash = hash_array.value(i);
             let x_min = x_min_array.value(i) as u32;
             let x_max = x_max_array.value(i) as u32;
             let y_min = y_min_array.value(i) as u32;
@@ -453,11 +453,11 @@ fn process_traces(
 
 fn write_output(
     results: &Vec<(String, Vec<Trace>)>,
-    output_path: &PathBuf,
+    output_path: &Path,
 ) -> Result<(usize, usize), Error> {
     let output_format =
         OutputFormat::from_extension(output_path).map_err(|_| Error::InvalidOutputExtension {
-            path: output_path.clone(),
+            path: output_path.to_path_buf(),
             supported: vec!["csv", "parquet"],
         })?;
 
@@ -493,14 +493,14 @@ fn process(
     output: Option<&PathBuf>,
 ) -> Result<(String, Vec<Trace>), Error> {
     // Open TIFF
-    let file = File::open(&source).context(IOSnafu)?;
+    let file = File::open(source).context(IOSnafu)?;
     let reader = BufReader::new(file);
     let mut decoder = Decoder::new(reader)
-        .map_err(|e| TiffError::from(e))
+        .map_err(TiffError::from)
         .context(TiffReadSnafu)?;
     let (width, height) = decoder
         .dimensions()
-        .map_err(|e| TiffError::from(e))
+        .map_err(TiffError::from)
         .context(TiffReadSnafu)?;
 
     // Read metadata and find corresponding traces
@@ -523,7 +523,7 @@ fn process(
 
     // Adjust traces
     let traces = traces
-        .into_iter()
+        .iter()
         .map(|trace| {
             tracing::debug!("Processing trace: {:?}", trace);
             let (min, max): (Coord, Coord) = trace.into();
@@ -612,7 +612,6 @@ fn process(
             .ok_or(TiffError::DynamicImageError {
                 color_type: image::ColorType::Rgb8,
             })
-            .map_err(|e| TiffError::from(e))
             .context(TiffWriteSnafu)?,
         );
 
@@ -729,7 +728,7 @@ mod tests {
             resize: None,
             padding: None,
             resolution: None,
-            num_frames: FrameCount::from(1 as u16),
+            num_frames: FrameCount::from(1_u16),
         };
         let saver = TiffSaver::new(
             Compressor::Uncompressed(Uncompressed),
@@ -760,7 +759,7 @@ mod tests {
         let path = tmp_dir.join("traces.csv");
         let mut writer = csv::Writer::from_path(&path).unwrap();
         writer
-            .write_record(&[
+            .write_record([
                 "sop_instance_uid",
                 "trace_hash",
                 "x_min",
@@ -770,10 +769,10 @@ mod tests {
             ])
             .unwrap();
         writer
-            .write_record(&["test1", "1", "10", "20", "30", "40"])
+            .write_record(["test1", "1", "10", "20", "30", "40"])
             .unwrap();
         writer
-            .write_record(&["test2", "2", "15", "25", "35", "45"])
+            .write_record(["test2", "2", "15", "25", "35", "45"])
             .unwrap();
         writer.flush().unwrap();
         path

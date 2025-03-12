@@ -78,6 +78,13 @@ where
 }
 
 impl Resolution {
+    pub fn new(pixels_per_mm_x: f32, pixels_per_mm_y: f32) -> Self {
+        Resolution {
+            pixels_per_mm_x,
+            pixels_per_mm_y,
+        }
+    }
+
     pub fn scale(&self, value: f32) -> Self {
         Resolution {
             pixels_per_mm_x: self.pixels_per_mm_x * value,

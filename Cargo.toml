@@ -33,6 +33,7 @@ numpy = { version = "0.22", optional = true }
 arrow = "50.0"
 parquet = "50.0"
 tempfile = { version = "3.10", optional = true }
+csv = "1.3"
 
 [features]
 python = ["pyo3", "numpy", "tempfile"]
@@ -62,6 +63,10 @@ path = "src/bin/manifest.rs"
 [[bin]]
 name = "dicom-voilut"
 path = "src/voilut/main.rs"
+
+[[bin]]
+name = "dicom-traces"
+path = "src/bin/trace.rs"
 
 [[bench]]
 name = "inode_sort"

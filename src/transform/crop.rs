@@ -13,7 +13,7 @@ use tiff::tags::Tag;
 
 use crate::errors::tiff::TiffError;
 use crate::metadata::WriteTags;
-use crate::transform::Transform;
+use crate::transform::{Coord, InvertibleTransform, Transform};
 
 pub const DEFAULT_CROP_ORIGIN: u16 = 50719;
 pub const DEFAULT_CROP_SIZE: u16 = 50720;
@@ -277,6 +277,34 @@ impl From<&[&DynamicImage]> for Crop {
 impl Transform<DynamicImage> for Crop {
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         image.crop_imm(self.left, self.top, self.width, self.height)
+    }
+}
+
+impl Transform<Coord> for Crop {
+    fn apply(&self, coord: &Coord) -> Coord {
+        let (x, y): (u32, u32) = coord.into();
+        let (left, top, _, _) = self.xyxy();
+        let new_x = if x > left {
+            (x - left).min(self.width - 1)
+        } else {
+            0
+        };
+        let new_y = if y > top {
+            (y - top).min(self.height - 1)
+        } else {
+            0
+        };
+        Coord::new(new_x, new_y)
+    }
+}
+
+impl InvertibleTransform<Coord> for Crop {
+    fn invert(&self, coord: &Coord) -> Coord {
+        let (x, y): (u32, u32) = coord.into();
+        let (left, top, _, _) = self.xyxy();
+        let new_x = x + left;
+        let new_y = y + top;
+        Coord::new(new_x, new_y)
     }
 }
 
@@ -575,6 +603,27 @@ mod tests {
 
     #[rstest]
     #[case(
+        Crop { left: 1, top: 1, width: 2, height: 2 },
+        Coord::new(3, 3),
+        Coord::new(1, 1)
+    )]
+    #[case(
+        Crop { left: 1, top: 1, width: 2, height: 2 },
+        Coord::new(0, 0),
+        Coord::new(0, 0)
+    )]
+    #[case(
+        Crop { left: 1, top: 1, width: 2, height: 2 },
+        Coord::new(4, 4),
+        Coord::new(1, 1)
+    )]
+    fn test_apply_coord(#[case] crop: Crop, #[case] coord: Coord, #[case] expected: Coord) {
+        let result = crop.apply(&coord);
+        assert_eq!(result, expected);
+    }
+
+    #[rstest]
+    #[case(
         vec![
             vec![0, 0, 0, 0, 0, 0],
             vec![0, 0, 1, 1, 0, 0],
@@ -625,6 +674,27 @@ mod tests {
             height: expected_crop.3,
         };
         assert_eq!(crop, expected_crop);
+    }
+
+    #[rstest]
+    #[case(
+        Crop { left: 1, top: 1, width: 2, height: 2 },
+        Coord::new(1, 1),
+        Coord::new(2, 2)
+    )]
+    #[case(
+        Crop { left: 1, top: 1, width: 2, height: 2 },
+        Coord::new(0, 0),
+        Coord::new(1, 1)
+    )]
+    #[case(
+        Crop { left: 2, top: 2, width: 3, height: 3 },
+        Coord::new(1, 1),
+        Coord::new(3, 3)
+    )]
+    fn test_invert_coord(#[case] crop: Crop, #[case] coord: Coord, #[case] expected: Coord) {
+        let result = crop.invert(&coord);
+        assert_eq!(result, expected);
     }
 
     #[rstest]

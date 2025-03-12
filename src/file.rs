@@ -398,7 +398,7 @@ mod tests {
     fn test_is_dicom_file_real_dicom() {
         let path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
         let result = path.is_dicom_file().unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[rstest]
@@ -556,15 +556,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Create test files
-        let tiff_files = vec![
-            temp_dir.path().join("test1.tiff"),
+        let tiff_files = [temp_dir.path().join("test1.tiff"),
             temp_dir.path().join("test2.tif"),
-            temp_dir.path().join("test3.TIFF"),
-        ];
-        let other_files = vec![
-            temp_dir.path().join("test4.txt"),
-            temp_dir.path().join("test5.doc"),
-        ];
+            temp_dir.path().join("test3.TIFF")];
+        let other_files = [temp_dir.path().join("test4.txt"),
+            temp_dir.path().join("test5.doc")];
 
         // Create all test files
         for file in tiff_files.iter().chain(other_files.iter()) {

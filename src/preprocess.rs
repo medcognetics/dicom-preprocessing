@@ -158,6 +158,58 @@ impl Preprocessor {
     }
 }
 
+// Add this extension method for testing
+impl Preprocessor {
+    #[cfg(test)]
+    fn prepare_image_for_test(
+        &self,
+        images: &Vec<DynamicImage>,
+    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
+        // Try to determine the resolution (none for test images)
+        let resolution = None;
+
+        // Determine and apply crop
+        let crop_config = self.get_crop(images);
+        let image_data = match &crop_config {
+            Some(config) => config.apply_iter(images.clone().into_iter()).collect(),
+            None => images.clone(),
+        };
+
+        // Determine and apply resize, ensuring we also update the resolution
+        let resize_config = self.get_resize(&image_data);
+        let image_data = match &resize_config {
+            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
+            None => image_data,
+        };
+
+        // Update the resolution if we resized
+        let resolution = match (resolution, &resize_config) {
+            (Some(res), Some(config)) => Some(config.apply(&res)),
+            _ => None,
+        };
+
+        // Determine and apply padding
+        let padding_config = self.get_padding(&image_data);
+        let image_data = match &padding_config {
+            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
+            None => image_data,
+        };
+
+        let num_frames = image_data.len().into();
+
+        Ok((
+            image_data,
+            PreprocessingMetadata {
+                crop: crop_config,
+                resize: resize_config,
+                padding: padding_config,
+                resolution,
+                num_frames,
+            },
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,7 +318,7 @@ mod tests {
         #[case] config: Preprocessor,
         #[case] parallel: bool,
     ) {
-        let dicom_file = open_file(&dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 
         // Run preprocessing
         let (images, _) = config.prepare_image(&dicom_file, parallel).unwrap();
@@ -286,11 +338,11 @@ mod tests {
     #[case(DataElement::new(tags::VOILUT_FUNCTION, VR::LO, PrimitiveValue::Empty))]
     fn test_sanitize_dicom(#[case] elem: DataElement<InMemDicomObject>) {
         let mut dicom_file =
-            open_file(&dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
         dicom_file.put_element(elem);
-        assert_eq!(dicom_file.get(tags::VOILUT_FUNCTION).is_some(), true);
+        assert!(dicom_file.get(tags::VOILUT_FUNCTION).is_some());
         Preprocessor::sanitize_dicom(&mut dicom_file);
-        assert_eq!(dicom_file.get(tags::VOILUT_FUNCTION).is_none(), true);
+        assert!(dicom_file.get(tags::VOILUT_FUNCTION).is_none());
     }
 
     #[rstest]
@@ -341,7 +393,7 @@ mod tests {
             border_frac: None,
         };
 
-        let padding = preprocessor.get_padding(&vec![dynamic_image]);
+        let padding = preprocessor.get_padding(&[dynamic_image]);
         assert_eq!(padding, expected_padding);
     }
 
@@ -412,57 +464,5 @@ mod tests {
         } else {
             panic!("Crop should be Some");
         }
-    }
-}
-
-// Add this extension method for testing
-impl Preprocessor {
-    #[cfg(test)]
-    fn prepare_image_for_test(
-        &self,
-        images: &Vec<DynamicImage>,
-    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
-        // Try to determine the resolution (none for test images)
-        let resolution = None;
-
-        // Determine and apply crop
-        let crop_config = self.get_crop(&images);
-        let image_data = match &crop_config {
-            Some(config) => config.apply_iter(images.clone().into_iter()).collect(),
-            None => images.clone(),
-        };
-
-        // Determine and apply resize, ensuring we also update the resolution
-        let resize_config = self.get_resize(&image_data);
-        let image_data = match &resize_config {
-            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
-            None => image_data,
-        };
-
-        // Update the resolution if we resized
-        let resolution = match (resolution, &resize_config) {
-            (Some(res), Some(config)) => Some(config.apply(&res)),
-            _ => None,
-        };
-
-        // Determine and apply padding
-        let padding_config = self.get_padding(&image_data);
-        let image_data = match &padding_config {
-            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
-            None => image_data,
-        };
-
-        let num_frames = image_data.len().into();
-
-        Ok((
-            image_data,
-            PreprocessingMetadata {
-                crop: crop_config,
-                resize: resize_config,
-                padding: padding_config,
-                resolution,
-                num_frames,
-            },
-        ))
     }
 }

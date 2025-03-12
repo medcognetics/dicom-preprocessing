@@ -28,8 +28,8 @@ num = "0.4"
 ndarray = "0.16"
 itertools = "0.13"
 imageproc = "0.25"
-pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
-numpy = { version = "0.22", optional = true }
+pyo3 = { version = "0.23", features = ["extension-module"], optional = true }
+numpy = { version = "0.23", optional = true }
 arrow = "50.0"
 parquet = "50.0"
 tempfile = { version = "3.10", optional = true }

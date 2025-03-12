@@ -611,9 +611,7 @@ fn process(
             )
             .ok_or(TiffError::DynamicImageError {
                 color_type: image::ColorType::Rgb8,
-            })
-            .map_err(TiffError::from)
-            .context(TiffWriteSnafu)?,
+            }).context(TiffWriteSnafu)?,
         );
 
         let saver = TiffSaver::new(

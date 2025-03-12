@@ -127,3 +127,15 @@ Example usage:
 ```
 dicom-manifest /path/to/preprocessed/dataset /path/to/manifest.csv
 ```
+
+### Python Bindings
+
+Python bindings are provided via the `pyo3` crate. The following features are supported:
+ - Loading preprocessed TIFFs into Numpy arrays
+ - Iterating, sorting, and discovering DICOM or TIFF files from various sources
+ - Direct preprocessing of a DICOM file or buffer into a Numpy array
+
+Direct preprocessing of a DICOM file or buffer into a Numpy array is achieved using a temporary TIFF file.
+This temporary file is spooled, having an in-memory capacity of 64MB with additional space allocated on disk as needed.
+This spool size was chosen to accommodate most preprocessed 2D images without being overly burdensome.
+In the future we will support a direct conversion, avoiding the need for an intermediate TIFF file.

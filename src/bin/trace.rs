@@ -729,7 +729,7 @@ mod tests {
             resize: None,
             padding: None,
             resolution: None,
-            num_frames: FrameCount::from(1 as u16),
+            num_frames: FrameCount::from(1_u16),
         };
         let saver = TiffSaver::new(
             Compressor::Uncompressed(Uncompressed),
@@ -760,7 +760,7 @@ mod tests {
         let path = tmp_dir.join("traces.csv");
         let mut writer = csv::Writer::from_path(&path).unwrap();
         writer
-            .write_record(&[
+            .write_record([
                 "sop_instance_uid",
                 "trace_hash",
                 "x_min",
@@ -770,10 +770,10 @@ mod tests {
             ])
             .unwrap();
         writer
-            .write_record(&["test1", "1", "10", "20", "30", "40"])
+            .write_record(["test1", "1", "10", "20", "30", "40"])
             .unwrap();
         writer
-            .write_record(&["test2", "2", "15", "25", "35", "45"])
+            .write_record(["test2", "2", "15", "25", "35", "45"])
             .unwrap();
         writer.flush().unwrap();
         path

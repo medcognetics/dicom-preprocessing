@@ -58,7 +58,7 @@ impl Deref for PyPath {
 
 impl AsRef<Path> for PyPath {
     fn as_ref(&self) -> &Path {
-        &self.0.as_ref()
+        self.0.as_ref()
     }
 }
 
@@ -92,7 +92,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
 
     #[pyfn(m)]
     #[pyo3(name = "is_dicom_file")]
-    fn is_dicom_file<'py>(path: &Bound<'py, PyAny>) -> PyResult<bool> {
+    fn is_dicom_file(path: &Bound<'_, PyAny>) -> PyResult<bool> {
         let path = path.extract::<PyPath>()?;
         path.is_dicom_file()
             .map_err(|_| PyRuntimeError::new_err("Failed to check if file is DICOM"))
@@ -100,7 +100,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
 
     #[pyfn(m)]
     #[pyo3(name = "is_tiff_file")]
-    fn is_tiff_file<'py>(path: &Bound<'py, PyAny>) -> PyResult<bool> {
+    fn is_tiff_file(path: &Bound<'_, PyAny>) -> PyResult<bool> {
         let path = path.extract::<PyPath>()?;
         path.is_tiff_file()
             .map_err(|_| PyRuntimeError::new_err("Failed to check if file is TIFF"))
@@ -121,11 +121,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             )));
         }
         let result: Vec<PyPath> = match spinner {
-            true => path
-                .find_dicoms_with_spinner()?
-                .map(|p| PyPath::new(p))
-                .collect(),
-            false => path.find_dicoms()?.map(|p| PyPath::new(p)).collect(),
+            true => path.find_dicoms_with_spinner()?.map(PyPath::new).collect(),
+            false => path.find_dicoms()?.map(PyPath::new).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)
@@ -146,11 +143,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             )));
         }
         let result: Vec<PyPath> = match spinner {
-            true => path
-                .find_tiffs_with_spinner()?
-                .map(|p| PyPath::new(p))
-                .collect(),
-            false => path.find_tiffs()?.map(|p| PyPath::new(p)).collect(),
+            true => path.find_tiffs_with_spinner()?.map(PyPath::new).collect(),
+            false => path.find_tiffs()?.map(PyPath::new).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)
@@ -171,11 +165,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             )));
         }
         let result: Vec<PyPath> = match bar {
-            true => path
-                .read_dicom_paths_with_bar()?
-                .map(|p| PyPath::new(p))
-                .collect(),
-            false => path.read_dicom_paths()?.map(|p| PyPath::new(p)).collect(),
+            true => path.read_dicom_paths_with_bar()?.map(PyPath::new).collect(),
+            false => path.read_dicom_paths()?.map(PyPath::new).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)
@@ -196,11 +187,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             )));
         }
         let result: Vec<PyPath> = match bar {
-            true => path
-                .read_tiff_paths_with_bar()?
-                .map(|p| PyPath::new(p))
-                .collect(),
-            false => path.read_tiff_paths()?.map(|p| PyPath::new(p)).collect(),
+            true => path.read_tiff_paths_with_bar()?.map(PyPath::new).collect(),
+            false => path.read_tiff_paths()?.map(PyPath::new).collect(),
         };
         let result = PyList::new_bound(py, result);
         Ok(result)

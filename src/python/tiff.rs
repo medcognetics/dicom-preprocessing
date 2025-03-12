@@ -21,7 +21,7 @@ use std::path::Path;
 #[pymodule]
 #[pyo3(name = "tiff")]
 pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
-    fn load_tiff<'py, T, P>(py: Python<'py>, path: P) -> PyResult<Bound<'py, PyArray4<T>>>
+    fn load_tiff<T, P>(py: Python<'_>, path: P) -> PyResult<Bound<'_, PyArray4<T>>>
     where
         T: Clone + Zero + Element,
         Array4<T>: LoadFromTiff<T>,

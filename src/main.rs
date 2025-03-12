@@ -464,7 +464,7 @@ mod tests {
 
         // Run the main function
         let args = Args {
-            source: source,
+            source,
             output: output_dir.path().to_path_buf(),
             crop: true,
             size: Some((64, 64)),

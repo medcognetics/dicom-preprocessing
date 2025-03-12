@@ -20,8 +20,8 @@ struct PyManifestEntry(ManifestEntry);
 #[pymethods]
 impl PyManifestEntry {
     #[new]
-    fn try_new<'py>(
-        path: Bound<'py, PyAny>,
+    fn try_new(
+        path: Bound<'_, PyAny>,
         sop_instance_uid: String,
         study_instance_uid: String,
     ) -> PyResult<Self> {
@@ -130,7 +130,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
 
         let result = result
             .into_iter()
-            .map(|e| PyManifestEntry::from(e))
+            .map(PyManifestEntry::from)
             .collect::<Vec<_>>();
 
         let result: Vec<PyObject> = result.into_iter().map(|e| e.into_py(py)).collect();

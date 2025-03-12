@@ -13,7 +13,10 @@ jobs:
                 name: Check formatting
                 command: cargo fmt -- --check
             - run:
-                name: Clippy
+                name: General check
+                command: cargo check --all-features
+            - run:
+                name: Clippy check
                 command: cargo clippy --all-features
 
     build:

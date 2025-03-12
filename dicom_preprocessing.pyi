@@ -1,10 +1,41 @@
 from pathlib import Path
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
 
-def load_tiff_u8(path: str) -> npt.NDArray[np.uint8]:
+class Preprocessor:
+    """Configuration for DICOM preprocessing.
+
+    Args:
+        crop: Whether to crop zero-valued borders
+        size: Target size as (width, height) tuple
+        filter: Interpolation filter for resizing. One of: nearest, triangle, catmull, gaussian, lanczos3
+        padding_direction: Direction to pad when aspect ratio doesn't match target. One of: zero, center, edge
+        crop_max: Whether to crop to maximum possible size
+        volume_handler: How to handle multi-frame volumes. One of: keep, central
+        use_components: Whether to use color components for cropping
+        use_padding: Whether to pad to target size
+        border_frac: Optional fraction of border to keep when cropping
+
+    Raises:
+        ValueError: If invalid filter type, padding direction or volume handler specified
+    """
+
+    def __init__(
+        self,
+        crop: bool = True,
+        size: Optional[Tuple[int, int]] = None,
+        filter: str = "triangle",
+        padding_direction: str = "zero",
+        crop_max: bool = True,
+        volume_handler: str = "keep",
+        use_components: bool = True,
+        use_padding: bool = True,
+        border_frac: Optional[float] = None,
+    ) -> None: ...
+
+def load_tiff_u8(path: Union[str, Path]) -> npt.NDArray[np.uint8]:
     """Load a TIFF file as an unsigned 8-bit numpy array.
     If the TIFF is of a different bit depth, it will be scaled to 8-bit.
 
@@ -21,7 +52,7 @@ def load_tiff_u8(path: str) -> npt.NDArray[np.uint8]:
     """
     ...
 
-def load_tiff_u16(path: str) -> npt.NDArray[np.uint16]:
+def load_tiff_u16(path: Union[str, Path]) -> npt.NDArray[np.uint16]:
     """Load a TIFF file as an unsigned 16-bit numpy array.
     If the TIFF is of a different bit depth, it will be scaled to 16-bit.
     Args:
@@ -37,7 +68,7 @@ def load_tiff_u16(path: str) -> npt.NDArray[np.uint16]:
     """
     ...
 
-def load_tiff_f32(path: str) -> npt.NDArray[np.float32]:
+def load_tiff_f32(path: Union[str, Path]) -> npt.NDArray[np.float32]:
     """Load a TIFF file as a 32-bit floating-point numpy array.
     Inputs are scaled to the range :math:`[0, 1]` according to the source bit depth.
 
@@ -51,6 +82,104 @@ def load_tiff_f32(path: str) -> npt.NDArray[np.float32]:
         FileNotFoundError: If file cannot be found
         IOError: If file cannot be opened
         RuntimeError: If TIFF decoding fails
+    """
+    ...
+
+def preprocess_u8(path: Union[str, Path], preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint8]:
+    """Preprocess a DICOM file and return as 8-bit unsigned integer array.
+
+    Args:
+        path: Path to DICOM file
+        preprocessor: Optional preprocessing configuration
+
+    Returns:
+        4D array with shape :math:`(N, H, W, C)`
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        RuntimeError: If preprocessing fails
+    """
+    ...
+
+def preprocess_u16(path: Union[str, Path], preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint16]:
+    """Preprocess a DICOM file and return as 16-bit unsigned integer array.
+
+    Args:
+        path: Path to DICOM file
+        preprocessor: Optional preprocessing configuration
+
+    Returns:
+        4D array with shape :math:`(N, H, W, C)`
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        RuntimeError: If preprocessing fails
+    """
+    ...
+
+def preprocess_f32(path: Union[str, Path], preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.float32]:
+    """Preprocess a DICOM file and return as 32-bit floating point array.
+    Values are scaled to the range :math:`[0, 1]`.
+
+    Args:
+        path: Path to DICOM file
+        preprocessor: Optional preprocessing configuration
+
+    Returns:
+        4D array with shape :math:`(N, H, W, C)`
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        RuntimeError: If preprocessing fails
+    """
+    ...
+
+def preprocess_stream_u8(buffer: bytes, preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint8]:
+    """Preprocess a DICOM file from a bytes buffer and return as 8-bit unsigned integer array.
+
+    Args:
+        buffer: DICOM file contents as bytes
+        preprocessor: Optional preprocessing configuration
+
+    Returns:
+        4D array with shape :math:`(N, H, W, C)`
+
+    Raises:
+        RuntimeError: If preprocessing fails
+        ValueError: If buffer is not contiguous
+    """
+    ...
+
+def preprocess_stream_u16(buffer: bytes, preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint16]:
+    """Preprocess a DICOM file from a bytes buffer and return as 16-bit unsigned integer array.
+
+    Args:
+        buffer: DICOM file contents as bytes
+        preprocessor: Optional preprocessing configuration
+
+    Returns:
+        4D array with shape :math:`(N, H, W, C)`
+
+    Raises:
+        RuntimeError: If preprocessing fails
+        ValueError: If buffer is not contiguous
+    """
+    ...
+
+def preprocess_stream_f32(buffer: bytes, preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.float32]:
+    """Preprocess a DICOM file from a bytes buffer and return as 32-bit floating point array.
+    Values are scaled to the range :math:`[0, 1]`.
+
+    Args:
+        buffer: DICOM file contents as bytes
+        preprocessor: Optional preprocessing configuration
+
+    Returns:
+        4D array with shape :math:`(N, H, W, C)`
+
+    Raises:
+        RuntimeError: If preprocessing fails
+        ValueError: If buffer is not contiguous
     """
     ...
 

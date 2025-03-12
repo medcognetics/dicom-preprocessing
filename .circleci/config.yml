@@ -8,7 +8,7 @@ jobs:
             - checkout
             - run:
                 name: Install dependencies
-                command: rustup component add rustfmt
+                command: rustup component add rustfmt clippy
             - run:
                 name: Check formatting
                 command: cargo fmt -- --check

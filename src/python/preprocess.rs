@@ -171,7 +171,7 @@ where
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {}", e)))?;
     let array = Array4::<T>::decode(&mut decoder)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {}", e)))?;
-    Ok(array.into_pyarray_bound(py))
+    Ok(array.into_pyarray(py))
 }
 
 #[pymodule]

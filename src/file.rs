@@ -556,11 +556,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Create test files
-        let tiff_files = [temp_dir.path().join("test1.tiff"),
+        let tiff_files = [
+            temp_dir.path().join("test1.tiff"),
             temp_dir.path().join("test2.tif"),
-            temp_dir.path().join("test3.TIFF")];
-        let other_files = [temp_dir.path().join("test4.txt"),
-            temp_dir.path().join("test5.doc")];
+            temp_dir.path().join("test3.TIFF"),
+        ];
+        let other_files = [
+            temp_dir.path().join("test4.txt"),
+            temp_dir.path().join("test5.doc"),
+        ];
 
         // Create all test files
         for file in tiff_files.iter().chain(other_files.iter()) {

@@ -205,9 +205,7 @@ mod tests {
             assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
                 let expected_value = pixel.channels()[0];
-                let actual_value = actual_frame
-                    .get((y as usize, x as usize, 0_usize))
-                    .unwrap();
+                let actual_value = actual_frame.get((y as usize, x as usize, 0_usize)).unwrap();
                 assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
             }
         }
@@ -224,9 +222,7 @@ mod tests {
             assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
                 let expected_value = pixel.channels()[0];
-                let actual_value = actual_frame
-                    .get((y as usize, x as usize, 0_usize))
-                    .unwrap();
+                let actual_value = actual_frame.get((y as usize, x as usize, 0_usize)).unwrap();
                 assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
             }
         }
@@ -244,9 +240,7 @@ mod tests {
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
                 for i in 0..NUM_CHANNELS_RGB {
                     let expected_value = pixel.channels()[i];
-                    let actual_value = actual_frame
-                        .get((y as usize, x as usize, i))
-                        .unwrap();
+                    let actual_value = actual_frame.get((y as usize, x as usize, i)).unwrap();
                     assert_eq!(*actual_value, expected_value, "at ({}, {}, {})", x, y, i);
                 }
             }
@@ -272,9 +266,7 @@ mod tests {
             assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
             for (x, y, pixel) in expected_frame.enumerate_pixels() {
                 let expected_value = pixel.channels()[0];
-                let actual_value = actual_frame
-                    .get((y as usize, x as usize, 0_usize))
-                    .unwrap();
+                let actual_value = actual_frame.get((y as usize, x as usize, 0_usize)).unwrap();
                 assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
             }
         }
@@ -331,9 +323,7 @@ mod tests {
         assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
         for (x, y, pixel) in expected_frame.enumerate_pixels() {
             let expected_value = pixel.channels()[0];
-            let actual_value = actual_frame
-                .get((y as usize, x as usize, 0_usize))
-                .unwrap();
+            let actual_value = actual_frame.get((y as usize, x as usize, 0_usize)).unwrap();
             assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
         }
     }

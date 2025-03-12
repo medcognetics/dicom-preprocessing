@@ -95,7 +95,7 @@ impl TiffSaver {
         output: P,
     ) -> Result<TiffEncoder<BufWriter<File>>, TiffError> {
         let output = output.as_ref();
-        let file = File::create(&output).context(IOSnafu { path: output })?;
+        let file = File::create(output).context(IOSnafu { path: output })?;
         let file = BufWriter::new(file);
         TiffEncoder::new(file).context(WriteSnafu { path: output })
     }

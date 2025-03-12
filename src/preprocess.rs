@@ -42,7 +42,7 @@ impl Default for Preprocessor {
 }
 
 impl Preprocessor {
-    fn get_crop(&self, images: &Vec<DynamicImage>) -> Option<Crop> {
+    fn get_crop(&self, images: &[DynamicImage]) -> Option<Crop> {
         match self.crop {
             true => Some(Crop::new_from_images(
                 &images.iter().collect::<Vec<_>>(),
@@ -54,23 +54,23 @@ impl Preprocessor {
         }
     }
 
-    fn get_resize(&self, images: &Vec<DynamicImage>) -> Option<Resize> {
+    fn get_resize(&self, images: &[DynamicImage]) -> Option<Resize> {
         match self.size {
             Some((target_width, target_height)) => {
                 let first_image = images.first().unwrap();
-                let config = Resize::new(&first_image, target_width, target_height, self.filter);
+                let config = Resize::new(first_image, target_width, target_height, self.filter);
                 Some(config)
             }
             None => None,
         }
     }
 
-    fn get_padding(&self, images: &Vec<DynamicImage>) -> Option<Padding> {
+    fn get_padding(&self, images: &[DynamicImage]) -> Option<Padding> {
         match (self.use_padding, self.size) {
             (true, Some((target_width, target_height))) => {
                 let first_image = images.first().unwrap();
                 let config = Padding::new(
-                    &first_image,
+                    first_image,
                     target_width,
                     target_height,
                     self.padding_direction,

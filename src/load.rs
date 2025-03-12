@@ -23,7 +23,7 @@ pub trait LoadFromTiff<T: Clone + num::Zero> {
         let decoded_dimensions = dimensions.with_num_frames(frames.len());
 
         // Validate that the requested frames are within the range of the TIFF file
-        let max_frame = frames.iter().max().unwrap().clone();
+        let max_frame = *frames.iter().max().unwrap();
         if max_frame >= dimensions.num_frames {
             return Err(TiffError::InvalidFrameIndex {
                 frame: max_frame,

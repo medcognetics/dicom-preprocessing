@@ -141,8 +141,8 @@ pub fn get_manifest_with_progress<P: AsRef<Path>>(root: P) -> IOResult<Vec<Manif
         .into_iter()
         .sorted_by(|a, b| {
             a.study_instance_uid()
-                .cmp(&b.study_instance_uid())
-                .then(a.sop_instance_uid().cmp(&b.sop_instance_uid()))
+                .cmp(b.study_instance_uid())
+                .then(a.sop_instance_uid().cmp(b.sop_instance_uid()))
         })
         .collect::<Vec<_>>();
 

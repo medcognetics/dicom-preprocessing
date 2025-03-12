@@ -27,6 +27,7 @@ use tempfile::spooled_tempfile;
 use tiff::encoder::compression::{Compressor, Uncompressed};
 use tiff::encoder::TiffEncoder;
 
+// We guess 64MB as enough for most preprocessed images without being burdensome.
 const SPOOL_SIZE: usize = 1024 * 1024 * 64;
 
 #[pyclass(name = "Preprocessor")]

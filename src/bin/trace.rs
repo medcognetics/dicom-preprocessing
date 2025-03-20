@@ -635,15 +635,20 @@ fn write_traces_csv(
 ) -> Result<(), Error> {
     let mut csv_file = BufWriter::new(File::create(dest).context(IOSnafu)?);
     csv_file
-        .write_all(b"sop_instance_uid,x_min,x_max,y_min,y_max\n")
+        .write_all(b"sop_instance_uid,trace_hash,x_min,x_max,y_min,y_max\n")
         .context(IOSnafu)?;
     for (sop_instance_uid, traces) in entries {
         for trace in traces {
             let (x_min, y_min, x_max, y_max): (u32, u32, u32, u32) = trace.into();
             writeln!(
                 csv_file,
-                "{},{},{},{},{}",
-                sop_instance_uid, x_min, x_max, y_min, y_max,
+                "{},{},{},{},{},{}",
+                sop_instance_uid,
+                trace.hash(),
+                x_min,
+                x_max,
+                y_min,
+                y_max,
             )
             .context(IOSnafu)?;
         }
@@ -660,6 +665,7 @@ fn write_traces_parquet(
     // Create the schema
     let schema = arrow::datatypes::Schema::new(vec![
         arrow::datatypes::Field::new("sop_instance_uid", arrow::datatypes::DataType::Utf8, false),
+        arrow::datatypes::Field::new("trace_hash", arrow::datatypes::DataType::Int64, false),
         arrow::datatypes::Field::new("x_min", arrow::datatypes::DataType::Int64, false),
         arrow::datatypes::Field::new("x_max", arrow::datatypes::DataType::Int64, false),
         arrow::datatypes::Field::new("y_min", arrow::datatypes::DataType::Int64, false),
@@ -677,6 +683,7 @@ fn write_traces_parquet(
     for (sop_instance_uid, traces) in entries {
         let sop_instance_uid_array =
             StringArray::from(vec![sop_instance_uid.clone(); traces.len()]);
+        let hash_array = Int64Array::from(traces.iter().map(|t| t.hash()).collect::<Vec<_>>());
         let x_min_array =
             Int64Array::from(traces.iter().map(|t| t.x_min() as i64).collect::<Vec<_>>());
         let x_max_array =
@@ -690,6 +697,7 @@ fn write_traces_parquet(
             schema_arc.clone(),
             vec![
                 std::sync::Arc::new(sop_instance_uid_array),
+                std::sync::Arc::new(hash_array),
                 std::sync::Arc::new(x_min_array),
                 std::sync::Arc::new(x_max_array),
                 std::sync::Arc::new(y_min_array),
@@ -872,13 +880,79 @@ mod tests {
                 let mut reader = csv::Reader::from_path(output_path).unwrap();
                 let records: Vec<_> = reader.records().collect();
                 assert_eq!(records.len(), 2);
+
+                // Verify the contents of each record
+                let record1 = records[0].as_ref().unwrap();
+                assert_eq!(record1.get(0).unwrap(), "test1"); // sop_instance_uid
+                assert_eq!(record1.get(1).unwrap(), "1"); // trace_hash
+                assert_eq!(record1.get(2).unwrap(), "10"); // x_min
+                assert_eq!(record1.get(3).unwrap(), "20"); // x_max
+                assert_eq!(record1.get(4).unwrap(), "30"); // y_min
+                assert_eq!(record1.get(5).unwrap(), "40"); // y_max
+
+                let record2 = records[1].as_ref().unwrap();
+                assert_eq!(record2.get(0).unwrap(), "test2");
+                assert_eq!(record2.get(1).unwrap(), "2");
+                assert_eq!(record2.get(2).unwrap(), "15");
+                assert_eq!(record2.get(3).unwrap(), "25");
+                assert_eq!(record2.get(4).unwrap(), "35");
+                assert_eq!(record2.get(5).unwrap(), "45");
             }
             "parquet" => {
                 let file = File::open(output_path).unwrap();
                 let reader = ParquetRecordBatchReader::try_new(file, 1024).unwrap();
                 let batches: Vec<_> = reader.collect();
                 assert_eq!(batches.len(), 1);
-                assert_eq!(batches[0].as_ref().unwrap().num_rows(), 2);
+                let batch = batches[0].as_ref().unwrap();
+                assert_eq!(batch.num_rows(), 2);
+
+                // Verify the contents of the batch
+                let sop_array = batch
+                    .column(0)
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap();
+                let hash_array = batch
+                    .column(1)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let x_min_array = batch
+                    .column(2)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let x_max_array = batch
+                    .column(3)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let y_min_array = batch
+                    .column(4)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let y_max_array = batch
+                    .column(5)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+
+                // Check first row
+                assert_eq!(sop_array.value(0), "test1");
+                assert_eq!(hash_array.value(0), 1);
+                assert_eq!(x_min_array.value(0), 10);
+                assert_eq!(x_max_array.value(0), 20);
+                assert_eq!(y_min_array.value(0), 30);
+                assert_eq!(y_max_array.value(0), 40);
+
+                // Check second row
+                assert_eq!(sop_array.value(1), "test2");
+                assert_eq!(hash_array.value(1), 2);
+                assert_eq!(x_min_array.value(1), 15);
+                assert_eq!(x_max_array.value(1), 25);
+                assert_eq!(y_min_array.value(1), 35);
+                assert_eq!(y_max_array.value(1), 45);
             }
             _ => panic!("Unsupported format"),
         }

@@ -115,14 +115,11 @@ where
     /// Read a file containing a list of paths and return an iterator of results.
     fn read_paths(&self) -> IOResult<impl Iterator<Item = IOResult<PathBuf>>> {
         let reader = BufReader::new(File::open(self.as_ref())?);
-        let result = reader
-            .lines()
-            .map(|s| match s {
-                Ok(s) => PathBuf::from_str(s.as_str())
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
-                Err(e) => return Err(e),
-            })
-            .into_iter();
+        let result = reader.lines().map(|s| match s {
+            Ok(s) => PathBuf::from_str(s.as_str())
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
+            Err(e) => Err(e),
+        });
         Ok(result)
     }
 }
@@ -151,7 +148,7 @@ where
         if let Some(ext) = path.extension() {
             return ext == "dcm" || ext == "dicom" || ext == "DCM" || ext == "DICOM";
         }
-        return false;
+        false
     }
 
     /// Check if a path is a DICOM file as efficiently as possible.
@@ -260,7 +257,7 @@ where
         if let Some(ext) = path.extension() {
             return ext == "tiff" || ext == "tif" || ext == "TIFF" || ext == "TIF";
         }
-        return false;
+        false
     }
 
     /// Check if a path is a TIFF file.
@@ -347,7 +344,7 @@ where
 
     /// Read the TIFF file.
     fn tiffread(&self) -> Result<Decoder<BufReader<File>>, TiffError> {
-        let file = File::open(self.as_ref()).map_err(|e| TiffError::IoError(e))?;
+        let file = File::open(self.as_ref()).map_err(TiffError::IoError)?;
         let decoder = Decoder::new(BufReader::new(file))?;
         Ok(decoder)
     }
@@ -401,7 +398,7 @@ mod tests {
     fn test_is_dicom_file_real_dicom() {
         let path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
         let result = path.is_dicom_file().unwrap();
-        assert_eq!(result, true);
+        assert!(result);
     }
 
     #[rstest]
@@ -559,12 +556,12 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         // Create test files
-        let tiff_files = vec![
+        let tiff_files = [
             temp_dir.path().join("test1.tiff"),
             temp_dir.path().join("test2.tif"),
             temp_dir.path().join("test3.TIFF"),
         ];
-        let other_files = vec![
+        let other_files = [
             temp_dir.path().join("test4.txt"),
             temp_dir.path().join("test5.doc"),
         ];

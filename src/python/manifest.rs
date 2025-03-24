@@ -20,8 +20,8 @@ struct PyManifestEntry(ManifestEntry);
 #[pymethods]
 impl PyManifestEntry {
     #[new]
-    fn try_new<'py>(
-        path: Bound<'py, PyAny>,
+    fn try_new(
+        path: Bound<'_, PyAny>,
         sop_instance_uid: String,
         study_instance_uid: String,
     ) -> PyResult<Self> {
@@ -55,7 +55,7 @@ impl PyManifestEntry {
     #[getter]
     fn dimensions<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyDict>>> {
         if let Some(dims) = self.0.dimensions() {
-            let dict = PyDict::new_bound(py);
+            let dict = PyDict::new(py);
             dict.set_item("width", dims.width)?;
             dict.set_item("height", dims.height)?;
             dict.set_item("channels", dims.channels)?;
@@ -93,8 +93,8 @@ impl PyManifestEntry {
         let root = root.extract::<PyPath>()?;
         let py_root = root.as_path();
         let relpath = self.0.relative_path(py_root);
-        let py_path = PyPath::new(relpath).into_py(py);
-        Ok(py_path.into_bound(py))
+        let py_path = PyPath::new(relpath).into_pyobject(py)?;
+        Ok(py_path)
     }
 }
 
@@ -130,11 +130,14 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
 
         let result = result
             .into_iter()
-            .map(|e| PyManifestEntry::from(e))
+            .map(PyManifestEntry::from)
             .collect::<Vec<_>>();
 
-        let result: Vec<PyObject> = result.into_iter().map(|e| e.into_py(py)).collect();
-        let result = PyList::new_bound(py, result);
+        let result = result
+            .into_iter()
+            .map(|e| e.into_pyobject(py))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = PyList::new(py, result)?;
         Ok(result)
     }
 

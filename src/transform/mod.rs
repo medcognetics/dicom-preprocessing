@@ -47,9 +47,9 @@ impl From<(u32, u32)> for Coord {
     }
 }
 
-impl Into<(u32, u32)> for Coord {
-    fn into(self) -> (u32, u32) {
-        (self.0, self.1)
+impl From<Coord> for (u32, u32) {
+    fn from(coord: Coord) -> Self {
+        (coord.0, coord.1)
     }
 }
 

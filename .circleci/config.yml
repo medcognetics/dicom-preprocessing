@@ -8,13 +8,16 @@ jobs:
             - checkout
             - run:
                 name: Install dependencies
-                command: rustup component add rustfmt
+                command: rustup component add rustfmt clippy
             - run:
                 name: Check formatting
                 command: cargo fmt -- --check
             - run:
                 name: General check
                 command: cargo check --all-features
+            - run:
+                name: Clippy check
+                command: cargo clippy --all-features -- -D warnings
 
     build:
         docker:

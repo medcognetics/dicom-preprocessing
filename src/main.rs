@@ -272,7 +272,7 @@ fn process<P: AsRef<Path>>(
     let source = source.as_ref();
     let dest = dest.as_ref();
 
-    let mut file = open_file(&source)
+    let mut file = open_file(source)
         .context(ReadSnafu)
         .context(DicomSnafu { path: source })?;
 
@@ -362,7 +362,7 @@ fn run(args: Args) -> Result<(), Error> {
     let preprocessor = Preprocessor {
         crop: args.crop,
         size: args.size,
-        filter: args.filter.into(),
+        filter: args.filter,
         padding_direction: args.padding_direction,
         crop_max: args.crop_max,
         volume_handler: args.volume_handler.into(),
@@ -464,7 +464,7 @@ mod tests {
 
         // Run the main function
         let args = Args {
-            source: source,
+            source,
             output: output_dir.path().to_path_buf(),
             crop: true,
             size: Some((64, 64)),

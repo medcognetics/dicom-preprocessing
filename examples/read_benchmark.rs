@@ -86,14 +86,13 @@ fn open_tiff(path: &PathBuf, seed: u64) -> Result<Vec<usize>, TiffError> {
 
     // Choose a random frame
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    let frame = metadata
+    let frame = *metadata
         .num_frames
         .into_iter()
         .map(|f| f as usize)
         .collect::<Vec<_>>()
         .choose(&mut rng)
-        .unwrap()
-        .clone();
+        .unwrap();
     let frames = vec![frame];
 
     let array = Array4::<u16>::decode_frames(&mut decoder, frames.into_iter()).unwrap();

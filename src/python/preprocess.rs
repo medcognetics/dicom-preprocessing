@@ -50,6 +50,7 @@ impl PyPreprocessor {
         use_padding=true,
         border_frac=None
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         crop: bool,
         size: Option<(u32, u32)>,
@@ -146,14 +147,14 @@ where
 {
     // Run preprocessing
     let (images, metadata) = preprocessor
-        .prepare_image(&dcm, false)
+        .prepare_image(dcm, false)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare image: {}", e)))?;
 
     // Save the images to an in-memory temporary TIFF file
     let color_type = DicomColorType::try_from(dcm)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to get color type: {}", e)))?;
     let compressor = Compressor::Uncompressed(Uncompressed);
-    let saver = TiffSaver::new(compressor.into(), color_type);
+    let saver = TiffSaver::new(compressor, color_type);
     let mut buffer = spooled_tempfile(SPOOL_SIZE);
     let mut encoder = TiffEncoder::new(&mut buffer)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create TIFF encoder: {}", e)))?;
@@ -170,7 +171,7 @@ where
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {}", e)))?;
     let array = Array4::<T>::decode(&mut decoder)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {}", e)))?;
-    Ok(array.into_pyarray_bound(py))
+    Ok(array.into_pyarray(py))
 }
 
 #[pymodule]

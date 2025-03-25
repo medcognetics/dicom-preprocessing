@@ -23,6 +23,7 @@ pub struct Preprocessor {
     pub use_components: bool,
     pub use_padding: bool,
     pub border_frac: Option<f32>,
+    pub target_frames: u32,
 }
 
 impl Default for Preprocessor {
@@ -37,6 +38,7 @@ impl Default for Preprocessor {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         }
     }
 }
@@ -235,6 +237,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         },
         false
     )]
@@ -250,6 +253,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         },
         true
     )]
@@ -265,6 +269,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         },
         false
     )]
@@ -280,6 +285,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         },
         false
     )]
@@ -295,6 +301,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         },
         false
     )]
@@ -310,6 +317,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 32,
         },
         false
     )]
@@ -391,6 +399,7 @@ mod tests {
             use_components: true,
             use_padding,
             border_frac: None,
+            target_frames: 32,
         };
 
         let padding = preprocessor.get_padding(&[dynamic_image]);
@@ -448,6 +457,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac,
+            target_frames: 32,
         };
 
         let (processed_images, metadata) = preprocessor

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -35,12 +35,29 @@ class Preprocessor:
         border_frac: Optional[float] = None,
     ) -> None: ...
 
-def load_tiff_u8(path: Union[str, Path]) -> npt.NDArray[np.uint8]:
+def get_frame_count(path: Union[str, Path]) -> int:
+    """Get the number of frames in a TIFF file.
+
+    Args:
+        path: Path to the TIFF file
+
+    Returns:
+        Number of frames in the TIFF file
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        IOError: If file cannot be opened
+        RuntimeError: If frame count cannot be determined
+    """
+    ...
+
+def load_tiff_u8(path: Union[str, Path], frames: Optional[Sequence[int]] = None) -> npt.NDArray[np.uint8]:
     """Load a TIFF file as an unsigned 8-bit numpy array.
     If the TIFF is of a different bit depth, it will be scaled to 8-bit.
 
     Args:
         path: Path to the TIFF file
+        frames: Optional sequence of frame indices to load. If None, loads all frames.
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -52,11 +69,13 @@ def load_tiff_u8(path: Union[str, Path]) -> npt.NDArray[np.uint8]:
     """
     ...
 
-def load_tiff_u16(path: Union[str, Path]) -> npt.NDArray[np.uint16]:
+def load_tiff_u16(path: Union[str, Path], frames: Optional[Sequence[int]] = None) -> npt.NDArray[np.uint16]:
     """Load a TIFF file as an unsigned 16-bit numpy array.
     If the TIFF is of a different bit depth, it will be scaled to 16-bit.
+
     Args:
         path: Path to the TIFF file
+        frames: Optional sequence of frame indices to load. If None, loads all frames.
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -68,12 +87,13 @@ def load_tiff_u16(path: Union[str, Path]) -> npt.NDArray[np.uint16]:
     """
     ...
 
-def load_tiff_f32(path: Union[str, Path]) -> npt.NDArray[np.float32]:
+def load_tiff_f32(path: Union[str, Path], frames: Optional[Sequence[int]] = None) -> npt.NDArray[np.float32]:
     """Load a TIFF file as a 32-bit floating-point numpy array.
     Inputs are scaled to the range :math:`[0, 1]` according to the source bit depth.
 
     Args:
         path: Path to the TIFF file
+        frames: Optional sequence of frame indices to load. If None, loads all frames.
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -270,7 +290,7 @@ def get_manifest(path: Path, bar: bool = False) -> List[ManifestEntry]:
     """
     ...
 
-def load_tiff_f32_batched(paths: List[Path], batch_size: int) -> Iterator[List[npt.NDArray[np.float32]]]:
+def load_tiff_f32_batched(paths: List[Path], batch_size: int, frames: Optional[Sequence[int]] = None) -> Iterator[List[npt.NDArray[np.float32]]]:
     """Iterate over a list of TIFF file paths, loading and returning them in batches.
 
     Batches are loaded using parallel threads.
@@ -278,6 +298,7 @@ def load_tiff_f32_batched(paths: List[Path], batch_size: int) -> Iterator[List[n
     Args:
         paths: List of paths to TIFF files
         batch_size: Number of files to load in each batch
+        frames: Optional sequence of frame indices to load from each file. If None, loads all frames.
 
     Yields:
         A batch of TIFF files as 32-bit floating-point numpy arrays

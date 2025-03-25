@@ -881,22 +881,35 @@ mod tests {
                 let records: Vec<_> = reader.records().collect();
                 assert_eq!(records.len(), 2);
 
-                // Verify the contents of each record
-                let record1 = records[0].as_ref().unwrap();
-                assert_eq!(record1.get(0).unwrap(), "test1"); // sop_instance_uid
-                assert_eq!(record1.get(1).unwrap(), "1"); // trace_hash
-                assert_eq!(record1.get(2).unwrap(), "10"); // x_min
-                assert_eq!(record1.get(3).unwrap(), "20"); // x_max
-                assert_eq!(record1.get(4).unwrap(), "30"); // y_min
-                assert_eq!(record1.get(5).unwrap(), "40"); // y_max
-
-                let record2 = records[1].as_ref().unwrap();
-                assert_eq!(record2.get(0).unwrap(), "test2");
-                assert_eq!(record2.get(1).unwrap(), "2");
-                assert_eq!(record2.get(2).unwrap(), "15");
-                assert_eq!(record2.get(3).unwrap(), "25");
-                assert_eq!(record2.get(4).unwrap(), "35");
-                assert_eq!(record2.get(5).unwrap(), "45");
+                // Verify the contents of each record (order is not guaranteed)
+                let mut found_test1 = false;
+                let mut found_test2 = false;
+                for record in records.iter() {
+                    let record = record.as_ref().unwrap();
+                    match record.get(0).unwrap() {
+                        "test1" => {
+                            assert_eq!(record.get(1).unwrap(), "1"); // trace_hash
+                            assert_eq!(record.get(2).unwrap(), "10"); // x_min
+                            assert_eq!(record.get(3).unwrap(), "20"); // x_max
+                            assert_eq!(record.get(4).unwrap(), "30"); // y_min
+                            assert_eq!(record.get(5).unwrap(), "40"); // y_max
+                            found_test1 = true;
+                        }
+                        "test2" => {
+                            assert_eq!(record.get(1).unwrap(), "2");
+                            assert_eq!(record.get(2).unwrap(), "15");
+                            assert_eq!(record.get(3).unwrap(), "25");
+                            assert_eq!(record.get(4).unwrap(), "35");
+                            assert_eq!(record.get(5).unwrap(), "45");
+                            found_test2 = true;
+                        }
+                        _ => panic!("Unexpected record"),
+                    }
+                }
+                assert!(
+                    found_test1 && found_test2,
+                    "Not all expected records were found"
+                );
             }
             "parquet" => {
                 let file = File::open(output_path).unwrap();
@@ -938,21 +951,34 @@ mod tests {
                     .downcast_ref::<Int64Array>()
                     .unwrap();
 
-                // Check first row
-                assert_eq!(sop_array.value(0), "test1");
-                assert_eq!(hash_array.value(0), 1);
-                assert_eq!(x_min_array.value(0), 10);
-                assert_eq!(x_max_array.value(0), 20);
-                assert_eq!(y_min_array.value(0), 30);
-                assert_eq!(y_max_array.value(0), 40);
-
-                // Check second row
-                assert_eq!(sop_array.value(1), "test2");
-                assert_eq!(hash_array.value(1), 2);
-                assert_eq!(x_min_array.value(1), 15);
-                assert_eq!(x_max_array.value(1), 25);
-                assert_eq!(y_min_array.value(1), 35);
-                assert_eq!(y_max_array.value(1), 45);
+                // Check both rows are present (order is not guaranteed)
+                let mut found_test1 = false;
+                let mut found_test2 = false;
+                for i in 0..2 {
+                    match sop_array.value(i) {
+                        "test1" => {
+                            assert_eq!(hash_array.value(i), 1);
+                            assert_eq!(x_min_array.value(i), 10);
+                            assert_eq!(x_max_array.value(i), 20);
+                            assert_eq!(y_min_array.value(i), 30);
+                            assert_eq!(y_max_array.value(i), 40);
+                            found_test1 = true;
+                        }
+                        "test2" => {
+                            assert_eq!(hash_array.value(i), 2);
+                            assert_eq!(x_min_array.value(i), 15);
+                            assert_eq!(x_max_array.value(i), 25);
+                            assert_eq!(y_min_array.value(i), 35);
+                            assert_eq!(y_max_array.value(i), 45);
+                            found_test2 = true;
+                        }
+                        _ => panic!("Unexpected SOP value"),
+                    }
+                }
+                assert!(
+                    found_test1 && found_test2,
+                    "Both test rows should be present"
+                );
             }
             _ => panic!("Unsupported format"),
         }

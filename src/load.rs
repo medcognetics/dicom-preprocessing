@@ -162,6 +162,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 1,
         };
 
         let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
@@ -284,6 +285,7 @@ mod tests {
             use_components: true,
             use_padding: true,
             border_frac: None,
+            target_frames: 1,
         };
 
         let dicom_file_path = "pydicom/emri_small.dcm";

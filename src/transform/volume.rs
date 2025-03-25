@@ -10,11 +10,14 @@ use snafu::ResultExt;
 use std::cmp::{max, min};
 use std::fmt;
 
+pub const DEFAULT_INTERPOLATE_TARGET_FRAMES: u32 = 32;
+
 #[derive(Debug, Clone, Copy)]
 pub enum VolumeHandler {
     Keep(KeepVolume),
     CentralSlice(CentralSlice),
     MaxIntensity(MaxIntensity),
+    Interpolate(InterpolateVolume),
 }
 
 impl Default for VolumeHandler {
@@ -29,6 +32,7 @@ pub enum DisplayVolumeHandler {
     Keep,
     CentralSlice,
     MaxIntensity,
+    Interpolate,
 }
 
 impl From<DisplayVolumeHandler> for VolumeHandler {
@@ -36,10 +40,12 @@ impl From<DisplayVolumeHandler> for VolumeHandler {
         match handler {
             DisplayVolumeHandler::Keep => VolumeHandler::Keep(KeepVolume),
             DisplayVolumeHandler::CentralSlice => VolumeHandler::CentralSlice(CentralSlice),
-            DisplayVolumeHandler::MaxIntensity => VolumeHandler::MaxIntensity(MaxIntensity {
-                skip_start: 0,
-                skip_end: 0,
-            }),
+            DisplayVolumeHandler::MaxIntensity => {
+                VolumeHandler::MaxIntensity(MaxIntensity::default())
+            }
+            DisplayVolumeHandler::Interpolate => {
+                VolumeHandler::Interpolate(InterpolateVolume::default())
+            }
         }
     }
 }
@@ -50,6 +56,7 @@ impl fmt::Display for DisplayVolumeHandler {
             DisplayVolumeHandler::Keep => "keep",
             DisplayVolumeHandler::CentralSlice => "central-slice",
             DisplayVolumeHandler::MaxIntensity => "max-intensity",
+            DisplayVolumeHandler::Interpolate => "interpolate",
         };
         write!(f, "{}", filter_str)
     }
@@ -78,6 +85,7 @@ impl HandleVolume for VolumeHandler {
             VolumeHandler::Keep(handler) => handler.decode_volume(file),
             VolumeHandler::CentralSlice(handler) => handler.decode_volume(file),
             VolumeHandler::MaxIntensity(handler) => handler.decode_volume(file),
+            VolumeHandler::Interpolate(handler) => handler.decode_volume(file),
         }
     }
 
@@ -89,6 +97,7 @@ impl HandleVolume for VolumeHandler {
             VolumeHandler::Keep(handler) => handler.par_decode_volume(file),
             VolumeHandler::CentralSlice(handler) => handler.par_decode_volume(file),
             VolumeHandler::MaxIntensity(handler) => handler.par_decode_volume(file),
+            VolumeHandler::Interpolate(handler) => handler.par_decode_volume(file),
         }
     }
 }
@@ -158,10 +167,19 @@ impl HandleVolume for CentralSlice {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct MaxIntensity {
     skip_start: u32,
     skip_end: u32,
+}
+
+impl MaxIntensity {
+    pub fn new(skip_start: u32, skip_end: u32) -> Self {
+        Self {
+            skip_start,
+            skip_end,
+        }
+    }
 }
 
 impl MaxIntensity {
@@ -254,17 +272,117 @@ impl HandleVolume for MaxIntensity {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct InterpolateVolume {
+    target_frames: u32,
+}
+
+impl Default for InterpolateVolume {
+    fn default() -> Self {
+        Self {
+            target_frames: DEFAULT_INTERPOLATE_TARGET_FRAMES,
+        }
+    }
+}
+
+impl InterpolateVolume {
+    pub fn new(target_frames: u32) -> Self {
+        Self { target_frames }
+    }
+
+    fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
+        if frames.len() <= 1 {
+            return frames.to_vec();
+        }
+
+        let mut result = Vec::with_capacity(target_frames as usize);
+        let (width, height) = frames[0].dimensions();
+
+        for i in 0..target_frames {
+            let t = i as f32 / (target_frames - 1) as f32;
+            let frame_idx = t * (frames.len() - 1) as f32;
+            let frame_idx_floor = frame_idx.floor() as usize;
+            let frame_idx_ceil = frame_idx.ceil() as usize;
+            let alpha = frame_idx - frame_idx_floor as f32;
+
+            // Create a new image with the same color type as the input
+            let mut interpolated = frames[0].clone();
+
+            for x in 0..width {
+                for y in 0..height {
+                    let pixel1 = frames[frame_idx_floor].get_pixel(x, y);
+                    let pixel2 = frames[frame_idx_ceil].get_pixel(x, y);
+
+                    // Interpolate each channel independently
+                    let interpolated_pixel = pixel1.map2(&pixel2, |p1, p2| {
+                        let p1 = p1 as f32;
+                        let p2 = p2 as f32;
+                        (p1 * (1.0 - alpha) + p2 * alpha) as u8
+                    });
+
+                    interpolated.put_pixel(x, y, interpolated_pixel);
+                }
+            }
+
+            result.push(interpolated);
+        }
+
+        result
+    }
+}
+
+impl HandleVolume for InterpolateVolume {
+    fn decode_volume(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+    ) -> Result<Vec<DynamicImage>, DicomError> {
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+        let mut frames = Vec::with_capacity(number_of_frames as usize);
+
+        for frame_number in 0..number_of_frames {
+            let decoded = file
+                .decode_pixel_data_frame(frame_number)
+                .context(PixelDataSnafu)?;
+            frames.push(decoded.to_dynamic_image(0).context(PixelDataSnafu)?);
+        }
+
+        Ok(Self::interpolate_frames(&frames, self.target_frames))
+    }
+
+    fn par_decode_volume(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+    ) -> Result<Vec<DynamicImage>, DicomError> {
+        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+        let frames = (0..number_of_frames)
+            .into_par_iter()
+            .map(|frame| {
+                let result = file
+                    .decode_pixel_data_frame(frame)
+                    .context(PixelDataSnafu)?
+                    .to_dynamic_image(0)
+                    .context(PixelDataSnafu)?;
+                Ok::<DynamicImage, DicomError>(result)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self::interpolate_frames(&frames, self.target_frames))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use dicom::object::open_file;
+    use image::{ImageBuffer, Rgb};
     use rstest::rstest;
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
     #[case("pydicom/CT_small.dcm", VolumeHandler::CentralSlice(CentralSlice), 1)]
     #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1)]
     fn test_decode_volume(
         #[case] dicom_file_path: &str,
         #[case] volume_handler: VolumeHandler,
@@ -280,6 +398,7 @@ mod tests {
     #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
     #[case("pydicom/CT_small.dcm", VolumeHandler::CentralSlice(CentralSlice), 1)]
     #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1)]
     fn test_par_decode_volume(
         #[case] dicom_file_path: &str,
         #[case] volume_handler: VolumeHandler,
@@ -289,5 +408,89 @@ mod tests {
         let dicom = open_file(&dicom).unwrap();
         let images = volume_handler.par_decode_volume(&dicom).unwrap();
         assert_eq!(images.len() as u32, expected_number_of_frames);
+    }
+
+    #[test]
+    fn test_interpolate_frames() {
+        // Create two test images with different pixel values
+        let width = 2;
+        let height = 2;
+
+        // First image: all pixels are 100
+        let mut img1 = ImageBuffer::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                img1.put_pixel(x, y, Rgb([100, 100, 100]));
+            }
+        }
+
+        // Second image: all pixels are 200
+        let mut img2 = ImageBuffer::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                img2.put_pixel(x, y, Rgb([200, 200, 200]));
+            }
+        }
+
+        let frames = vec![DynamicImage::ImageRgb8(img1), DynamicImage::ImageRgb8(img2)];
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, 3);
+
+        // Should have 3 frames
+        assert_eq!(interpolated.len(), 3);
+
+        // First frame should be close to 100
+        let first_frame = interpolated[0].as_rgb8().unwrap();
+        for x in 0..width {
+            for y in 0..height {
+                let pixel = first_frame.get_pixel(x, y);
+                assert!(pixel[0] >= 95 && pixel[0] <= 105);
+            }
+        }
+
+        // Middle frame should be close to 150
+        let middle_frame = interpolated[1].as_rgb8().unwrap();
+        for x in 0..width {
+            for y in 0..height {
+                let pixel = middle_frame.get_pixel(x, y);
+                assert!(pixel[0] >= 145 && pixel[0] <= 155);
+            }
+        }
+
+        // Last frame should be close to 200
+        let last_frame = interpolated[2].as_rgb8().unwrap();
+        for x in 0..width {
+            for y in 0..height {
+                let pixel = last_frame.get_pixel(x, y);
+                assert!(pixel[0] >= 195 && pixel[0] <= 205);
+            }
+        }
+    }
+
+    #[test]
+    fn test_interpolate_single_frame() {
+        // Test interpolation with a single input frame
+        let width = 2;
+        let height = 2;
+        let mut img = ImageBuffer::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                img.put_pixel(x, y, Rgb([100, 100, 100]));
+            }
+        }
+
+        let frames = vec![DynamicImage::ImageRgb8(img)];
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, 3);
+
+        // Should have 1 frame (same as input)
+        assert_eq!(interpolated.len(), 1);
+
+        // Frame should be identical to the input
+        let frame = interpolated[0].as_rgb8().unwrap();
+        for x in 0..width {
+            for y in 0..height {
+                let pixel = frame.get_pixel(x, y);
+                assert_eq!(pixel[0], 100);
+            }
+        }
     }
 }

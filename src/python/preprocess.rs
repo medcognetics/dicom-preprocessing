@@ -4,7 +4,7 @@ use crate::preprocess::Preprocessor;
 use crate::python::path::PyPath;
 use crate::save::TiffSaver;
 use crate::transform::resize::FilterType;
-use crate::transform::volume::{CentralSlice, KeepVolume, VolumeHandler};
+use crate::transform::volume::{CentralSlice, InterpolateVolume, KeepVolume, VolumeHandler};
 use crate::transform::PaddingDirection;
 use ::tiff::decoder::Decoder;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
@@ -48,7 +48,8 @@ impl PyPreprocessor {
         volume_handler="keep",
         use_components=true,
         use_padding=true,
-        border_frac=None
+        border_frac=None,
+        target_frames=32
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -61,6 +62,7 @@ impl PyPreprocessor {
         use_components: bool,
         use_padding: bool,
         border_frac: Option<f32>,
+        target_frames: u32,
     ) -> PyResult<Self> {
         let filter = match filter.to_lowercase().as_str() {
             "nearest" => FilterType::Nearest,
@@ -93,6 +95,7 @@ impl PyPreprocessor {
         let volume_handler = match volume_handler.to_lowercase().as_str() {
             "keep" => VolumeHandler::Keep(KeepVolume),
             "central" => VolumeHandler::CentralSlice(CentralSlice),
+            "interpolate" => VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
                     "Invalid volume handler: {}",
@@ -112,13 +115,14 @@ impl PyPreprocessor {
                 use_components,
                 use_padding,
                 border_frac,
+                target_frames,
             },
         })
     }
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Preprocessor(crop={}, size={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?})",
+            "Preprocessor(crop={}, size={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={})",
             self.inner.crop,
             self.inner.size,
             self.inner.filter,
@@ -127,7 +131,8 @@ impl PyPreprocessor {
             self.inner.volume_handler,
             self.inner.use_components,
             self.inner.use_padding,
-            self.inner.border_frac
+            self.inner.border_frac,
+            self.inner.target_frames
         ))
     }
 }

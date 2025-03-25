@@ -80,7 +80,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
 
     #[pyfn(m)]
     #[pyo3(name = "get_frame_count")]
-    fn get_frame_count<'py>(path: &Bound<'py, PyAny>) -> PyResult<usize> {
+    fn get_frame_count(path: &Bound<'_, PyAny>) -> PyResult<usize> {
         let path = path.extract::<PyPath>()?;
         let mut decoder = get_decoder(path)?;
         let frame_count = FrameCount::try_from(&mut decoder)

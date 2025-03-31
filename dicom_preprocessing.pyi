@@ -13,11 +13,14 @@ class Preprocessor:
         filter: Interpolation filter for resizing. One of: nearest, triangle, catmull, gaussian, lanczos3
         padding_direction: Direction to pad when aspect ratio doesn't match target. One of: zero, center, edge
         crop_max: Whether to crop to maximum possible size
-        volume_handler: How to handle multi-frame volumes. One of: keep, central, interpolate
+        volume_handler: How to handle multi-frame volumes. One of: keep, central, interpolate.
+            - keep: Keep all frames
+            - central: Keep the central frame
+            - interpolate: Interpolate to `target_frames` using linear interpolation
         use_components: Whether to use color components for cropping
         use_padding: Whether to pad to target size
         border_frac: Optional fraction of border to keep when cropping
-        target_frames: Target number of frames when using interpolation (default: 32)
+        target_frames: Target number of frames when using interpolation
 
     Raises:
         ValueError: If invalid filter type, padding direction or volume handler specified

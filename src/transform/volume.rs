@@ -103,6 +103,7 @@ impl HandleVolume for VolumeHandler {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Keep all frames
 pub struct KeepVolume;
 
 impl HandleVolume for KeepVolume {
@@ -142,6 +143,7 @@ impl HandleVolume for KeepVolume {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Keep only the central frame
 pub struct CentralSlice;
 
 impl HandleVolume for CentralSlice {
@@ -168,12 +170,21 @@ impl HandleVolume for CentralSlice {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+/// Reduce the volume by taking the maximum intensity of each pixel across all frames
 pub struct MaxIntensity {
     skip_start: u32,
     skip_end: u32,
 }
 
 impl MaxIntensity {
+    /// Create a new `MaxIntensity` handler
+    ///
+    /// # Arguments
+    ///
+    /// * `skip_start` - The number of frames to skip at the start
+    /// * `skip_end` - The number of frames to skip at the end
+    ///
+    /// # Returns
     pub fn new(skip_start: u32, skip_end: u32) -> Self {
         Self {
             skip_start,
@@ -273,6 +284,7 @@ impl HandleVolume for MaxIntensity {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Interpolate between frames using linear interpolation
 pub struct InterpolateVolume {
     target_frames: u32,
 }
@@ -286,10 +298,17 @@ impl Default for InterpolateVolume {
 }
 
 impl InterpolateVolume {
+    /// Create a new `InterpolateVolume` handler
+    ///
+    /// # Arguments
+    ///
+    /// * `target_frames` - The number of frames to interpolate to
+    ///
     pub fn new(target_frames: u32) -> Self {
         Self { target_frames }
     }
 
+    /// Interpolate between frames using linear interpolation
     fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
         if frames.len() <= 1 {
             return frames.to_vec();

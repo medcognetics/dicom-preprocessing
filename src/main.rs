@@ -27,7 +27,10 @@ use dicom_preprocessing::errors::{
 use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::resize::FilterType;
-use dicom_preprocessing::transform::volume::DisplayVolumeHandler;
+use dicom_preprocessing::transform::volume::{
+    CentralSlice, DisplayVolumeHandler, InterpolateVolume, KeepVolume, MaxIntensity, VolumeHandler,
+    DEFAULT_INTERPOLATE_TARGET_FRAMES,
+};
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -204,6 +207,15 @@ struct Args {
     volume_handler: DisplayVolumeHandler,
 
     #[arg(
+        help = "Target number of frames when using interpolation",
+        long = "target-frames",
+        short = 't',
+        default_value_t = DEFAULT_INTERPOLATE_TARGET_FRAMES,
+        requires = "volume_handler",
+    )]
+    target_frames: u32,
+
+    #[arg(
         help = "Fail on input paths that are not DICOM files, or if any file processing fails",
         long = "strict",
         default_value_t = false
@@ -365,10 +377,20 @@ fn run(args: Args) -> Result<(), Error> {
         filter: args.filter,
         padding_direction: args.padding_direction,
         crop_max: args.crop_max,
-        volume_handler: args.volume_handler.into(),
+        volume_handler: match args.volume_handler {
+            DisplayVolumeHandler::Interpolate => {
+                VolumeHandler::Interpolate(InterpolateVolume::new(args.target_frames))
+            }
+            DisplayVolumeHandler::Keep => VolumeHandler::Keep(KeepVolume),
+            DisplayVolumeHandler::CentralSlice => VolumeHandler::CentralSlice(CentralSlice),
+            DisplayVolumeHandler::MaxIntensity => {
+                VolumeHandler::MaxIntensity(MaxIntensity::default())
+            }
+        },
         use_components: !args.no_components,
         use_padding: !args.no_padding,
         border_frac: args.border_frac,
+        target_frames: args.target_frames,
     };
     let compressor = args.compressor;
 
@@ -477,6 +499,7 @@ mod tests {
             volume_handler: DisplayVolumeHandler::default(),
             no_padding: false,
             border_frac: None,
+            target_frames: 32,
         };
         run(args).unwrap();
 

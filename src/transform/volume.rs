@@ -434,6 +434,7 @@ mod tests {
         // Create two test images with different pixel values
         let width = 2;
         let height = 2;
+        let interpolated_frames = 3;
 
         // First image: all pixels are 100
         let mut img1 = ImageBuffer::new(width, height);
@@ -452,17 +453,18 @@ mod tests {
         }
 
         let frames = vec![DynamicImage::ImageRgb8(img1), DynamicImage::ImageRgb8(img2)];
-        let interpolated = InterpolateVolume::interpolate_frames(&frames, 3);
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, interpolated_frames);
 
         // Should have 3 frames
-        assert_eq!(interpolated.len(), 3);
+        assert_eq!(interpolated.len(), interpolated_frames as usize);
 
         // First frame should be close to 100
         let first_frame = interpolated[0].as_rgb8().unwrap();
+        const TOLERANCE: u8 = 5;
         for x in 0..width {
             for y in 0..height {
                 let pixel = first_frame.get_pixel(x, y);
-                assert!(pixel[0] >= 95 && pixel[0] <= 105);
+                assert!(pixel[0] >= 100 - TOLERANCE && pixel[0] <= 100 + TOLERANCE);
             }
         }
 
@@ -471,7 +473,7 @@ mod tests {
         for x in 0..width {
             for y in 0..height {
                 let pixel = middle_frame.get_pixel(x, y);
-                assert!(pixel[0] >= 145 && pixel[0] <= 155);
+                assert!(pixel[0] >= 150 - TOLERANCE && pixel[0] <= 150 + TOLERANCE);
             }
         }
 
@@ -480,7 +482,7 @@ mod tests {
         for x in 0..width {
             for y in 0..height {
                 let pixel = last_frame.get_pixel(x, y);
-                assert!(pixel[0] >= 195 && pixel[0] <= 205);
+                assert!(pixel[0] >= 200 - TOLERANCE && pixel[0] <= 200 + TOLERANCE);
             }
         }
     }

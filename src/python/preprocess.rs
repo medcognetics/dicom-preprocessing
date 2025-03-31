@@ -6,6 +6,7 @@ use crate::save::TiffSaver;
 use crate::transform::resize::FilterType;
 use crate::transform::volume::{CentralSlice, InterpolateVolume, KeepVolume, VolumeHandler};
 use crate::transform::PaddingDirection;
+use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
 use ::tiff::decoder::Decoder;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
 use ndarray::Array4;
@@ -49,7 +50,7 @@ impl PyPreprocessor {
         use_components=true,
         use_padding=true,
         border_frac=None,
-        target_frames=32
+        target_frames=DEFAULT_INTERPOLATE_TARGET_FRAMES
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(

@@ -203,8 +203,9 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         let len = buffer.len_bytes();
         let ptr = buffer.buf_ptr();
         let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
-        let mut dcm = from_reader(bytes)
-            .map_err(|_| PyRuntimeError::new_err("Failed to create DICOM object"))?;
+        let mut dcm = from_reader(bytes).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to create DICOM object: {}", e))
+        })?;
         Preprocessor::sanitize_dicom(&mut dcm);
         preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm)
     }
@@ -260,8 +261,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             )));
         }
 
-        let mut dcm =
-            open_file(path).map_err(|_| PyRuntimeError::new_err("Failed to open DICOM file"))?;
+        let mut dcm = open_file(path)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {}", e)))?;
         Preprocessor::sanitize_dicom(&mut dcm);
         preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm)
     }

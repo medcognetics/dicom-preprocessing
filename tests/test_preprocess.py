@@ -36,7 +36,7 @@ def dicom_stream(tmp_path):
 
 def test_preprocess_u8(dicom_path):
     preprocessor = dp.Preprocessor(size=(32, 32))
-    result = dp.preprocess_u8(dicom_path, preprocessor)
+    result = dp.preprocess_u8(dicom_path, preprocessor, parallel=False)
     assert result.shape == (1, 32, 32, 1)
     assert result.dtype == np.uint8
     assert result.min() >= 0
@@ -45,7 +45,7 @@ def test_preprocess_u8(dicom_path):
 
 def test_preprocess_u16(dicom_path):
     preprocessor = dp.Preprocessor(size=(32, 32))
-    result = dp.preprocess_u16(dicom_path, preprocessor)
+    result = dp.preprocess_u16(dicom_path, preprocessor, parallel=False)
     assert result.shape == (1, 32, 32, 1)
     assert result.dtype == np.uint16
     assert result.min() >= 0
@@ -54,7 +54,7 @@ def test_preprocess_u16(dicom_path):
 
 def test_preprocess_f32(dicom_path):
     preprocessor = dp.Preprocessor(size=(32, 32))
-    result = dp.preprocess_f32(dicom_path, preprocessor)
+    result = dp.preprocess_f32(dicom_path, preprocessor, parallel=False)
     assert result.shape == (1, 32, 32, 1)
     assert result.dtype == np.float32
     assert result.min() >= 0
@@ -63,7 +63,7 @@ def test_preprocess_f32(dicom_path):
 
 def test_preprocess_u8_stream(dicom_stream):
     preprocessor = dp.Preprocessor(size=(32, 32))
-    result = dp.preprocess_stream_u8(dicom_stream, preprocessor)
+    result = dp.preprocess_stream_u8(dicom_stream, preprocessor, parallel=False)
     assert result.shape == (1, 32, 32, 1)
     assert result.dtype == np.uint8
     assert result.min() >= 0
@@ -72,7 +72,7 @@ def test_preprocess_u8_stream(dicom_stream):
 
 def test_preprocess_u16_stream(dicom_stream):
     preprocessor = dp.Preprocessor(size=(32, 32))
-    result = dp.preprocess_stream_u16(dicom_stream, preprocessor)
+    result = dp.preprocess_stream_u16(dicom_stream, preprocessor, parallel=False)
     assert result.shape == (1, 32, 32, 1)
     assert result.dtype == np.uint16
     assert result.min() >= 0
@@ -81,7 +81,7 @@ def test_preprocess_u16_stream(dicom_stream):
 
 def test_preprocess_f32_stream(dicom_stream):
     preprocessor = dp.Preprocessor(size=(32, 32))
-    result = dp.preprocess_stream_f32(dicom_stream, preprocessor)
+    result = dp.preprocess_stream_f32(dicom_stream, preprocessor, parallel=False)
     assert result.shape == (1, 32, 32, 1)
     assert result.dtype == np.float32
     assert result.min() >= 0

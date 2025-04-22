@@ -110,12 +110,15 @@ def load_tiff_f32(path: Union[str, Path], frames: Optional[Sequence[int]] = None
     """
     ...
 
-def preprocess_u8(path: Union[str, Path], preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint8]:
+def preprocess_u8(
+    path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> npt.NDArray[np.uint8]:
     """Preprocess a DICOM file and return as 8-bit unsigned integer array.
 
     Args:
         path: Path to DICOM file
         preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -126,12 +129,15 @@ def preprocess_u8(path: Union[str, Path], preprocessor: Optional[Preprocessor] =
     """
     ...
 
-def preprocess_u16(path: Union[str, Path], preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint16]:
+def preprocess_u16(
+    path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> npt.NDArray[np.uint16]:
     """Preprocess a DICOM file and return as 16-bit unsigned integer array.
 
     Args:
         path: Path to DICOM file
         preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -142,13 +148,16 @@ def preprocess_u16(path: Union[str, Path], preprocessor: Optional[Preprocessor] 
     """
     ...
 
-def preprocess_f32(path: Union[str, Path], preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.float32]:
+def preprocess_f32(
+    path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> npt.NDArray[np.float32]:
     """Preprocess a DICOM file and return as 32-bit floating point array.
     Values are scaled to the range :math:`[0, 1]`.
 
     Args:
         path: Path to DICOM file
         preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -159,12 +168,15 @@ def preprocess_f32(path: Union[str, Path], preprocessor: Optional[Preprocessor] 
     """
     ...
 
-def preprocess_stream_u8(buffer: bytes, preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint8]:
+def preprocess_stream_u8(
+    buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> npt.NDArray[np.uint8]:
     """Preprocess a DICOM file from a bytes buffer and return as 8-bit unsigned integer array.
 
     Args:
         buffer: DICOM file contents as bytes
         preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -175,12 +187,15 @@ def preprocess_stream_u8(buffer: bytes, preprocessor: Optional[Preprocessor] = N
     """
     ...
 
-def preprocess_stream_u16(buffer: bytes, preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.uint16]:
+def preprocess_stream_u16(
+    buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> npt.NDArray[np.uint16]:
     """Preprocess a DICOM file from a bytes buffer and return as 16-bit unsigned integer array.
 
     Args:
         buffer: DICOM file contents as bytes
         preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -191,13 +206,16 @@ def preprocess_stream_u16(buffer: bytes, preprocessor: Optional[Preprocessor] = 
     """
     ...
 
-def preprocess_stream_f32(buffer: bytes, preprocessor: Optional[Preprocessor] = None) -> npt.NDArray[np.float32]:
+def preprocess_stream_f32(
+    buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> npt.NDArray[np.float32]:
     """Preprocess a DICOM file from a bytes buffer and return as 32-bit floating point array.
     Values are scaled to the range :math:`[0, 1]`.
 
     Args:
         buffer: DICOM file contents as bytes
         preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
         4D array with shape :math:`(N, H, W, C)`
@@ -295,7 +313,9 @@ def get_manifest(path: Path, bar: bool = False) -> List[ManifestEntry]:
     """
     ...
 
-def load_tiff_f32_batched(paths: List[Path], batch_size: int, frames: Optional[Sequence[int]] = None) -> Iterator[List[npt.NDArray[np.float32]]]:
+def load_tiff_f32_batched(
+    paths: List[Path], batch_size: int, frames: Optional[Sequence[int]] = None
+) -> Iterator[List[npt.NDArray[np.float32]]]:
     """Iterate over a list of TIFF file paths, loading and returning them in batches.
 
     Batches are loaded using parallel threads.

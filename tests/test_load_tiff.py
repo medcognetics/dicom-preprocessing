@@ -2,13 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from dicom_preprocessing import (
-    get_frame_count,
-    load_tiff_f32,
-    load_tiff_f32_batched,
-    load_tiff_u8,
-    load_tiff_u16,
-)
+from dicom_preprocessing import get_frame_count, load_tiff_f32, load_tiff_f32_batched, load_tiff_u8, load_tiff_u16
 from PIL import Image
 
 

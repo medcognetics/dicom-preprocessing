@@ -146,6 +146,7 @@ fn preprocess_with_temp_tiff<'py, T>(
     py: Python<'py>,
     preprocessor: &Preprocessor,
     dcm: &FileDicomObject<InMemDicomObject>,
+    parallel: bool,
 ) -> PyResult<Bound<'py, PyArray4<T>>>
 where
     T: Clone + Zero + Element,
@@ -153,7 +154,7 @@ where
 {
     // Run preprocessing
     let (images, metadata) = preprocessor
-        .prepare_image(dcm, false)
+        .prepare_image(dcm, parallel)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare image: {}", e)))?;
 
     // Save the images to an in-memory temporary TIFF file
@@ -187,6 +188,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         py: Python<'py>,
         buffer: &PyBuffer<u8>,
         preprocessor: &Preprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<T>>>
     where
         T: Clone + Zero + Element,
@@ -206,46 +208,50 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         let mut dcm = from_reader(bytes)
             .map_err(|_| PyRuntimeError::new_err("Failed to create DICOM object"))?;
         Preprocessor::sanitize_dicom(&mut dcm);
-        preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm)
+        preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm, parallel)
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "preprocess_stream_u8")]
+    #[pyo3(name = "preprocess_stream_u8", signature = (buffer, preprocessor, parallel=false))]
     fn preprocess_stream_u8<'py>(
         py: Python<'py>,
         buffer: &Bound<'py, PyAny>,
         preprocessor: &PyPreprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<u8>>> {
         let buffer = buffer.extract::<PyBuffer<u8>>()?;
-        preprocess_stream::<u8>(py, &buffer, &preprocessor.inner)
+        preprocess_stream::<u8>(py, &buffer, &preprocessor.inner, parallel)
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "preprocess_stream_u16")]
+    #[pyo3(name = "preprocess_stream_u16", signature = (buffer, preprocessor, parallel=false))]
     fn preprocess_stream_u16<'py>(
         py: Python<'py>,
         buffer: &Bound<'py, PyAny>,
         preprocessor: &PyPreprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<u16>>> {
         let buffer = buffer.extract::<PyBuffer<u8>>()?;
-        preprocess_stream::<u16>(py, &buffer, &preprocessor.inner)
+        preprocess_stream::<u16>(py, &buffer, &preprocessor.inner, parallel)
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "preprocess_stream_f32")]
+    #[pyo3(name = "preprocess_stream_f32", signature = (buffer, preprocessor, parallel=false))]
     fn preprocess_stream_f32<'py>(
         py: Python<'py>,
         buffer: &Bound<'py, PyAny>,
         preprocessor: &PyPreprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<f32>>> {
         let buffer = buffer.extract::<PyBuffer<u8>>()?;
-        preprocess_stream::<f32>(py, &buffer, &preprocessor.inner)
+        preprocess_stream::<f32>(py, &buffer, &preprocessor.inner, parallel)
     }
 
     fn preprocess_file<'py, T, P>(
         py: Python<'py>,
         path: P,
         preprocessor: &Preprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<T>>>
     where
         T: Clone + Zero + Element,
@@ -263,40 +269,43 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         let mut dcm =
             open_file(path).map_err(|_| PyRuntimeError::new_err("Failed to open DICOM file"))?;
         Preprocessor::sanitize_dicom(&mut dcm);
-        preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm)
+        preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm, parallel)
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "preprocess_u8")]
+    #[pyo3(name = "preprocess_u8", signature = (path, preprocessor, parallel=false))]
     fn preprocess_u8<'py>(
         py: Python<'py>,
         path: &Bound<'py, PyAny>,
         preprocessor: &PyPreprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<u8>>> {
         let path = path.extract::<PyPath>()?;
-        preprocess_file::<u8, _>(py, path, &preprocessor.inner)
+        preprocess_file::<u8, _>(py, path, &preprocessor.inner, parallel)
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "preprocess_u16")]
+    #[pyo3(name = "preprocess_u16", signature = (path, preprocessor, parallel=false))]
     fn preprocess_u16<'py>(
         py: Python<'py>,
         path: &Bound<'py, PyAny>,
         preprocessor: &PyPreprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<u16>>> {
         let path = path.extract::<PyPath>()?;
-        preprocess_file::<u16, _>(py, path, &preprocessor.inner)
+        preprocess_file::<u16, _>(py, path, &preprocessor.inner, parallel)
     }
 
     #[pyfn(m)]
-    #[pyo3(name = "preprocess_f32")]
+    #[pyo3(name = "preprocess_f32", signature = (path, preprocessor, parallel=false))]
     fn preprocess_f32<'py>(
         py: Python<'py>,
         path: &Bound<'py, PyAny>,
         preprocessor: &PyPreprocessor,
+        parallel: bool,
     ) -> PyResult<Bound<'py, PyArray4<f32>>> {
         let path = path.extract::<PyPath>()?;
-        preprocess_file::<f32, _>(py, path, &preprocessor.inner)
+        preprocess_file::<f32, _>(py, path, &preprocessor.inner, parallel)
     }
 
     m.add_class::<PyPreprocessor>()?;

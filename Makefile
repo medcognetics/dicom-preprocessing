@@ -3,7 +3,7 @@ PYTHON_DIRS=tests examples dicom_preprocessing.pyi
 
 init:
 	which pdm || pip install --user pdm
-	pdm venv create -n dicom-preprocessing
+	pdm venv create --with-pip
 	pdm install -d
 
 develop:

@@ -4,6 +4,8 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import numpy.typing as npt
 
+__version__: str
+
 class Preprocessor:
     """Configuration for DICOM preprocessing.
 

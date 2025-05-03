@@ -7,6 +7,7 @@ use pyo3::prelude::*;
 
 #[pymodule]
 pub fn dicom_preprocessing<'py>(py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     tiff::register_submodule(py, m)?;
     path::register_submodule(py, m)?;
     manifest::register_submodule(py, m)?;

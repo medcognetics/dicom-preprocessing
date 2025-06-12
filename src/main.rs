@@ -5,7 +5,7 @@ use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::ConvertOptions;
+use dicom::pixeldata::{ConvertOptions, VoiLutOption};
 use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;
@@ -222,6 +222,13 @@ struct Args {
         default_value_t = false
     )]
     strict: bool,
+
+    #[arg(
+        help = "Override the VOILUT, instead normalizing based on the minimum and maximum pixel values",
+        long = "normalize",
+        default_value_t = false
+    )]
+    normalize: bool,
 }
 
 fn main() {
@@ -372,6 +379,11 @@ fn run(args: Args) -> Result<(), Error> {
     }?;
 
     // Build the preprocessor and compressor
+    let convert_options = if args.normalize {
+        ConvertOptions::default().with_voi_lut(VoiLutOption::Normalize)
+    } else {
+        ConvertOptions::default()
+    };
     let preprocessor = Preprocessor {
         crop: args.crop,
         size: args.size,
@@ -392,7 +404,7 @@ fn run(args: Args) -> Result<(), Error> {
         use_padding: !args.no_padding,
         border_frac: args.border_frac,
         target_frames: args.target_frames,
-        convert_options: ConvertOptions::default(),
+        convert_options,
     };
     let compressor = args.compressor;
 
@@ -502,6 +514,7 @@ mod tests {
             no_padding: false,
             border_frac: None,
             target_frames: 32,
+            normalize: false,
         };
         run(args).unwrap();
 

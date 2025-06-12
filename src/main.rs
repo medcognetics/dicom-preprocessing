@@ -5,6 +5,7 @@ use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::{FileDicomObject, InMemDicomObject};
+use dicom::pixeldata::ConvertOptions;
 use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;
@@ -391,6 +392,7 @@ fn run(args: Args) -> Result<(), Error> {
         use_padding: !args.no_padding,
         border_frac: args.border_frac,
         target_frames: args.target_frames,
+        convert_options: ConvertOptions::default(),
     };
     let compressor = args.compressor;
 

@@ -117,6 +117,7 @@ impl LoadFromTiff<f32> for Array4<f32> {
 mod tests {
     use super::*;
     use dicom::object::open_file;
+    use dicom::pixeldata::ConvertOptions;
     use std::fs::File;
     use std::io::BufReader;
     use tempfile;
@@ -163,6 +164,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 1,
+            convert_options: ConvertOptions::default(),
         };
 
         let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
@@ -286,6 +288,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 1,
+            convert_options: ConvertOptions::default(),
         };
 
         let dicom_file_path = "pydicom/emri_small.dcm";

@@ -3,6 +3,7 @@ use image::DynamicImage;
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
+use dicom::pixeldata::ConvertOptions;
 
 use crate::errors::DicomError;
 use crate::metadata::{PreprocessingMetadata, Resolution};
@@ -12,7 +13,7 @@ use crate::transform::{
 };
 
 // Responsible for preprocessing image data before saving
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Preprocessor {
     pub crop: bool,
     pub size: Option<(u32, u32)>,
@@ -24,6 +25,7 @@ pub struct Preprocessor {
     pub use_padding: bool,
     pub border_frac: Option<f32>,
     pub target_frames: u32,
+    pub convert_options: ConvertOptions,
 }
 
 impl Default for Preprocessor {
@@ -39,6 +41,7 @@ impl Default for Preprocessor {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         }
     }
 }
@@ -238,6 +241,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -254,6 +258,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         true
     )]
@@ -270,6 +275,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -286,6 +292,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -302,6 +309,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -318,6 +326,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -400,6 +409,7 @@ mod tests {
             use_padding,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         };
 
         let padding = preprocessor.get_padding(&[dynamic_image]);
@@ -458,6 +468,7 @@ mod tests {
             use_padding: true,
             border_frac,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         };
 
         let (processed_images, metadata) = preprocessor

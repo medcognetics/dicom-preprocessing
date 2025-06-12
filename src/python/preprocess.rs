@@ -9,6 +9,7 @@ use crate::transform::PaddingDirection;
 use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
 use ::tiff::decoder::Decoder;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
+use dicom::pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
 use ndarray::Array4;
 use num::Zero;
 use numpy::Element;
@@ -50,7 +51,8 @@ impl PyPreprocessor {
         use_components=true,
         use_padding=true,
         border_frac=None,
-        target_frames=DEFAULT_INTERPOLATE_TARGET_FRAMES
+        target_frames=DEFAULT_INTERPOLATE_TARGET_FRAMES,
+        convert_options="default",
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -64,6 +66,7 @@ impl PyPreprocessor {
         use_padding: bool,
         border_frac: Option<f32>,
         target_frames: u32,
+        convert_options: &str,
     ) -> PyResult<Self> {
         let filter = match filter.to_lowercase().as_str() {
             "nearest" => FilterType::Nearest,
@@ -105,6 +108,31 @@ impl PyPreprocessor {
             }
         };
 
+        let convert_options = match convert_options.to_lowercase().as_str() {
+            "default" => ConvertOptions::default(),
+            "normalize" => ConvertOptions::default().with_voi_lut(VoiLutOption::Normalize),
+            s if s.contains(',') => {
+                let mut parts = s.split(',');
+                let (first, second) = (parts.next().unwrap(), parts.next().unwrap());
+                let window = WindowLevel {
+                    center: first
+                        .parse()
+                        .expect(&format!("Invalid window center: {}", first)),
+                    width: second
+                        .parse()
+                        .expect(&format!("Invalid window width: {}", second)),
+                };
+                let voi_lut = VoiLutOption::Custom(window);
+                ConvertOptions::default().with_voi_lut(voi_lut)
+            }
+            _ => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "Invalid convert options: {}",
+                    convert_options
+                )))
+            }
+        };
+
         Ok(Self {
             inner: Preprocessor {
                 crop,
@@ -117,6 +145,7 @@ impl PyPreprocessor {
                 use_padding,
                 border_frac,
                 target_frames,
+                convert_options,
             },
         })
     }

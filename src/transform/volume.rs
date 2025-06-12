@@ -1,7 +1,7 @@
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::preprocessing::FrameCount;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{PixelDecoder, ConvertOptions, VoiLutOption};
+use dicom::pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
 use image::Pixel;
 use image::{GenericImage, GenericImageView};
@@ -102,9 +102,15 @@ impl HandleVolume for VolumeHandler {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         match self {
             VolumeHandler::Keep(handler) => handler.decode_volume_with_options(file, options),
-            VolumeHandler::CentralSlice(handler) => handler.decode_volume_with_options(file, options),
-            VolumeHandler::MaxIntensity(handler) => handler.decode_volume_with_options(file, options),
-            VolumeHandler::Interpolate(handler) => handler.decode_volume_with_options(file, options),
+            VolumeHandler::CentralSlice(handler) => {
+                handler.decode_volume_with_options(file, options)
+            }
+            VolumeHandler::MaxIntensity(handler) => {
+                handler.decode_volume_with_options(file, options)
+            }
+            VolumeHandler::Interpolate(handler) => {
+                handler.decode_volume_with_options(file, options)
+            }
         }
     }
 
@@ -115,9 +121,15 @@ impl HandleVolume for VolumeHandler {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         match self {
             VolumeHandler::Keep(handler) => handler.par_decode_volume_with_options(file, options),
-            VolumeHandler::CentralSlice(handler) => handler.par_decode_volume_with_options(file, options),
-            VolumeHandler::MaxIntensity(handler) => handler.par_decode_volume_with_options(file, options),
-            VolumeHandler::Interpolate(handler) => handler.par_decode_volume_with_options(file, options),
+            VolumeHandler::CentralSlice(handler) => {
+                handler.par_decode_volume_with_options(file, options)
+            }
+            VolumeHandler::MaxIntensity(handler) => {
+                handler.par_decode_volume_with_options(file, options)
+            }
+            VolumeHandler::Interpolate(handler) => {
+                handler.par_decode_volume_with_options(file, options)
+            }
         }
     }
 }
@@ -138,7 +150,11 @@ impl HandleVolume for KeepVolume {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
                 .context(PixelDataSnafu)?;
-            image_data.push(decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?);
+            image_data.push(
+                decoded
+                    .to_dynamic_image_with_options(0, options)
+                    .context(PixelDataSnafu)?,
+            );
         }
         Ok(image_data)
     }
@@ -179,7 +195,9 @@ impl HandleVolume for CentralSlice {
         let decoded = file
             .decode_pixel_data_frame(central_frame)
             .context(PixelDataSnafu)?;
-        let image = decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?;
+        let image = decoded
+            .to_dynamic_image_with_options(0, options)
+            .context(PixelDataSnafu)?;
         Ok(vec![image])
     }
 
@@ -256,12 +274,16 @@ impl HandleVolume for MaxIntensity {
             .decode_pixel_data_frame(start)
             .context(PixelDataSnafu)?;
 
-        let mut image = decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?;
+        let mut image = decoded
+            .to_dynamic_image_with_options(0, options)
+            .context(PixelDataSnafu)?;
         for frame_number in (start + 1)..end {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
                 .context(PixelDataSnafu)?;
-            let frame = decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?;
+            let frame = decoded
+                .to_dynamic_image_with_options(0, options)
+                .context(PixelDataSnafu)?;
             image = Self::reduce(image, frame);
         }
         Ok(vec![image])
@@ -389,7 +411,11 @@ impl HandleVolume for InterpolateVolume {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
                 .context(PixelDataSnafu)?;
-            frames.push(decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?);
+            frames.push(
+                decoded
+                    .to_dynamic_image_with_options(0, options)
+                    .context(PixelDataSnafu)?,
+            );
         }
 
         Ok(Self::interpolate_frames(&frames, self.target_frames))
@@ -472,7 +498,9 @@ mod tests {
         let dicom = open_file(&dicom).unwrap();
         let mut options = ConvertOptions::default();
         options.voi_lut = VoiLutOption::Normalize;
-        let images = volume_handler.decode_volume_with_options(&dicom, &options).unwrap();
+        let images = volume_handler
+            .decode_volume_with_options(&dicom, &options)
+            .unwrap();
         assert_eq!(images.len() as u32, expected_number_of_frames);
     }
 
@@ -490,7 +518,9 @@ mod tests {
         let dicom = open_file(&dicom).unwrap();
         let mut options = ConvertOptions::default();
         options.voi_lut = VoiLutOption::Normalize;
-        let images = volume_handler.par_decode_volume_with_options(&dicom, &options).unwrap();
+        let images = volume_handler
+            .par_decode_volume_with_options(&dicom, &options)
+            .unwrap();
         assert_eq!(images.len() as u32, expected_number_of_frames);
     }
 

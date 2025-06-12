@@ -86,3 +86,11 @@ def test_preprocess_f32_stream(dicom_stream):
     assert result.dtype == np.float32
     assert result.min() >= 0
     assert result.max() <= 1
+
+
+def test_preprocess_f32_window(dicom_stream):
+    preprocessor1 = dp.Preprocessor(size=(32, 32))
+    preprocessor2 = dp.Preprocessor(size=(32, 32), convert_options="10,100")
+    result1 = dp.preprocess_stream_f32(dicom_stream, preprocessor1, parallel=False)
+    result2 = dp.preprocess_stream_f32(dicom_stream, preprocessor2, parallel=False)
+    assert not np.allclose(result1, result2)

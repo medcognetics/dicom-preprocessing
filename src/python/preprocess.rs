@@ -152,7 +152,7 @@ impl PyPreprocessor {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Preprocessor(crop={}, size={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={})",
+            "Preprocessor(crop={}, size={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={}, convert_options={:?})",
             self.inner.crop,
             self.inner.size,
             self.inner.filter,
@@ -162,7 +162,8 @@ impl PyPreprocessor {
             self.inner.use_components,
             self.inner.use_padding,
             self.inner.border_frac,
-            self.inner.target_frames
+            self.inner.target_frames,
+            self.inner.convert_options,
         ))
     }
 }

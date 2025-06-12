@@ -5,7 +5,7 @@ use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{ConvertOptions, VoiLutOption};
+use dicom::pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
 use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;
@@ -224,11 +224,23 @@ struct Args {
     strict: bool,
 
     #[arg(
-        help = "Override the VOILUT, instead normalizing based on the minimum and maximum pixel values",
-        long = "normalize",
-        default_value_t = false
+        help = "Window center and width",
+        long = "window",
+        short = 'w',
+        allow_negative_numbers = true,
+        allow_hyphen_values = true,
+        value_parser = clap::builder::ValueParser::new(|s: &str| {
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() == 2 {
+                let center = parts[0].parse::<f64>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid center"))?;
+                let width = parts[1].parse::<f64>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid width"))?;
+                Ok((center, width))
+            } else {
+                Err(clap::Error::raw(ErrorKind::InvalidValue, "Size must be in the format width,height"))
+            }
+        })
     )]
-    normalize: bool,
+    window: Option<(f64, f64)>,
 }
 
 fn main() {
@@ -379,10 +391,10 @@ fn run(args: Args) -> Result<(), Error> {
     }?;
 
     // Build the preprocessor and compressor
-    let convert_options = if args.normalize {
-        ConvertOptions::default().with_voi_lut(VoiLutOption::Normalize)
-    } else {
-        ConvertOptions::default()
+    let convert_options = match args.window {
+        Some((center, width)) => ConvertOptions::default()
+            .with_voi_lut(VoiLutOption::Custom(WindowLevel { width, center })),
+        None => ConvertOptions::default(),
     };
     let preprocessor = Preprocessor {
         crop: args.crop,
@@ -514,7 +526,7 @@ mod tests {
             no_padding: false,
             border_frac: None,
             target_frames: 32,
-            normalize: false,
+            window: None,
         };
         run(args).unwrap();
 

@@ -23,6 +23,8 @@ class Preprocessor:
         use_padding: Whether to pad to target size
         border_frac: Optional fraction of border to keep when cropping
         target_frames: Target number of frames when using interpolation
+        convert_options: How to handle pixel data. One of: default, normalize.
+            Can also be a comma-separated string of window center and width, e.g. "100,100"
 
     Raises:
         ValueError: If invalid filter type, padding direction or volume handler specified
@@ -40,6 +42,7 @@ class Preprocessor:
         use_padding: bool = True,
         border_frac: Optional[float] = None,
         target_frames: int = 32,
+        convert_options: str = "default",
     ) -> None: ...
 
 def get_frame_count(path: Union[str, Path]) -> int:

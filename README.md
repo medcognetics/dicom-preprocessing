@@ -31,15 +31,36 @@ Arguments:
   <OUTPUT>  Output path. Can be a directory (for multiple files) or a file (for a single file)
 
 Options:
-  -c, --crop                         Crop the image. Pixels with value equal to zero are cropped away.
-  -m, --crop-max                     Also include pixels with value equal to the data type's maximum value in the crop calculation
-  -s, --size <SIZE>                  Target size (width,height)
-  -f, --filter <FILTER>              Filter type [default: triangle] [possible values: triangle, nearest, catmull-rom, gaussian, lanczos3]
-  -p, --padding <PADDING_DIRECTION>  Padding direction [default: zero] [possible values: zero, top-left, bottom-right, center]
-  -z, --compressor <COMPRESSOR>      Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
-      --strict                       Fail on input paths that are not DICOM files
-  -h, --help                         Print help
-  -V, --version                      Print version
+  -c, --crop
+          Crop the image. Pixels with value equal to zero are cropped away.
+  -m, --crop-max
+          Also include pixels with value equal to the data type's maximum value in the crop calculation
+  -n, --no-components
+          Do not use connected components for the crop calculation
+  -b, --border-frac <BORDER_FRAC>
+          Border fraction to exclude from crop calculation and grow final crop by
+  -s, --size <SIZE>
+          Target size (width,height)
+  -f, --filter <FILTER>
+          Filter type [default: triangle] [possible values: triangle, nearest, catmull-rom, gaussian, lanczos3, max-pool]
+  -p, --padding <PADDING_DIRECTION>
+          Padding direction [default: zero] [possible values: zero, top-left, bottom-right, center]
+      --no-padding
+          Disable padding
+  -z, --compressor <COMPRESSOR>
+          Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
+  -v, --volume-handler <VOLUME_HANDLER>
+          How to handle volumes [default: keep] [possible values: keep, central-slice, max-intensity, interpolate]
+  -t, --target-frames <TARGET_FRAMES>
+          Target number of frames when using interpolation [default: 32]
+      --strict
+          Fail on input paths that are not DICOM files, or if any file processing fails
+  -w, --window <WINDOW>
+          Window center and width
+  -h, --help
+          Print help
+  -V, --version
+          Print version
 ```
 
 

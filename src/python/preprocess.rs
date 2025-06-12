@@ -117,10 +117,10 @@ impl PyPreprocessor {
                 let window = WindowLevel {
                     center: first
                         .parse()
-                        .expect(&format!("Invalid window center: {}", first)),
+                        .unwrap_or_else(|_| panic!("Invalid window center: {}", first)),
                     width: second
                         .parse()
-                        .expect(&format!("Invalid window width: {}", second)),
+                        .unwrap_or_else(|_| panic!("Invalid window width: {}", second)),
                 };
                 let voi_lut = VoiLutOption::Custom(window);
                 ConvertOptions::default().with_voi_lut(voi_lut)

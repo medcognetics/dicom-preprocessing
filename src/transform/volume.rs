@@ -1,7 +1,7 @@
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::preprocessing::FrameCount;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::PixelDecoder;
+use dicom::pixeldata::{PixelDecoder, ConvertOptions, VoiLutOption};
 use image::DynamicImage;
 use image::Pixel;
 use image::{GenericImage, GenericImageView};
@@ -63,41 +63,61 @@ impl fmt::Display for DisplayVolumeHandler {
 }
 
 pub trait HandleVolume {
-    /// Decode and handle the volume frame by frame
+    /// Decode and handle the volume frame by frame with custom conversion options
+    fn decode_volume_with_options(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
+    ) -> Result<Vec<DynamicImage>, DicomError>;
+
+    /// Decode each frame in parallel and handle the volume with custom conversion options
+    fn par_decode_volume_with_options(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
+    ) -> Result<Vec<DynamicImage>, DicomError>;
+
+    /// Decode and handle the volume frame by frame with default options
     fn decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, DicomError>;
+    ) -> Result<Vec<DynamicImage>, DicomError> {
+        self.decode_volume_with_options(file, &ConvertOptions::default())
+    }
 
-    /// Decode each frame in parallel and handle the volume
+    /// Decode each frame in parallel and handle the volume with default options
     fn par_decode_volume(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
-    ) -> Result<Vec<DynamicImage>, DicomError>;
+    ) -> Result<Vec<DynamicImage>, DicomError> {
+        self.par_decode_volume_with_options(file, &ConvertOptions::default())
+    }
 }
 
 impl HandleVolume for VolumeHandler {
-    fn decode_volume(
+    fn decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         match self {
-            VolumeHandler::Keep(handler) => handler.decode_volume(file),
-            VolumeHandler::CentralSlice(handler) => handler.decode_volume(file),
-            VolumeHandler::MaxIntensity(handler) => handler.decode_volume(file),
-            VolumeHandler::Interpolate(handler) => handler.decode_volume(file),
+            VolumeHandler::Keep(handler) => handler.decode_volume_with_options(file, options),
+            VolumeHandler::CentralSlice(handler) => handler.decode_volume_with_options(file, options),
+            VolumeHandler::MaxIntensity(handler) => handler.decode_volume_with_options(file, options),
+            VolumeHandler::Interpolate(handler) => handler.decode_volume_with_options(file, options),
         }
     }
 
-    fn par_decode_volume(
+    fn par_decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         match self {
-            VolumeHandler::Keep(handler) => handler.par_decode_volume(file),
-            VolumeHandler::CentralSlice(handler) => handler.par_decode_volume(file),
-            VolumeHandler::MaxIntensity(handler) => handler.par_decode_volume(file),
-            VolumeHandler::Interpolate(handler) => handler.par_decode_volume(file),
+            VolumeHandler::Keep(handler) => handler.par_decode_volume_with_options(file, options),
+            VolumeHandler::CentralSlice(handler) => handler.par_decode_volume_with_options(file, options),
+            VolumeHandler::MaxIntensity(handler) => handler.par_decode_volume_with_options(file, options),
+            VolumeHandler::Interpolate(handler) => handler.par_decode_volume_with_options(file, options),
         }
     }
 }
@@ -107,9 +127,10 @@ impl HandleVolume for VolumeHandler {
 pub struct KeepVolume;
 
 impl HandleVolume for KeepVolume {
-    fn decode_volume(
+    fn decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let mut image_data = Vec::with_capacity(number_of_frames as usize);
@@ -117,14 +138,15 @@ impl HandleVolume for KeepVolume {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
                 .context(PixelDataSnafu)?;
-            image_data.push(decoded.to_dynamic_image(0).context(PixelDataSnafu)?);
+            image_data.push(decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?);
         }
         Ok(image_data)
     }
 
-    fn par_decode_volume(
+    fn par_decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let result = (0..number_of_frames)
@@ -133,7 +155,7 @@ impl HandleVolume for KeepVolume {
                 let result = file
                     .decode_pixel_data_frame(frame)
                     .context(PixelDataSnafu)?
-                    .to_dynamic_image(0)
+                    .to_dynamic_image_with_options(0, options)
                     .context(PixelDataSnafu)?;
                 Ok::<DynamicImage, DicomError>(result)
             })
@@ -147,25 +169,27 @@ impl HandleVolume for KeepVolume {
 pub struct CentralSlice;
 
 impl HandleVolume for CentralSlice {
-    fn decode_volume(
+    fn decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let central_frame = number_of_frames / 2;
         let decoded = file
             .decode_pixel_data_frame(central_frame)
             .context(PixelDataSnafu)?;
-        let image = decoded.to_dynamic_image(0).context(PixelDataSnafu)?;
+        let image = decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?;
         Ok(vec![image])
     }
 
-    fn par_decode_volume(
+    fn par_decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         // Since there is only one frame, we can just decode it serially
-        self.decode_volume(file)
+        self.decode_volume_with_options(file, options)
     }
 }
 
@@ -210,9 +234,10 @@ impl MaxIntensity {
 }
 
 impl HandleVolume for MaxIntensity {
-    fn decode_volume(
+    fn decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let start = min(number_of_frames, self.skip_start);
@@ -231,20 +256,21 @@ impl HandleVolume for MaxIntensity {
             .decode_pixel_data_frame(start)
             .context(PixelDataSnafu)?;
 
-        let mut image = decoded.to_dynamic_image(0).context(PixelDataSnafu)?;
+        let mut image = decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?;
         for frame_number in (start + 1)..end {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
                 .context(PixelDataSnafu)?;
-            let frame = decoded.to_dynamic_image(0).context(PixelDataSnafu)?;
+            let frame = decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?;
             image = Self::reduce(image, frame);
         }
         Ok(vec![image])
     }
 
-    fn par_decode_volume(
+    fn par_decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let start = min(number_of_frames, self.skip_start);
@@ -265,7 +291,7 @@ impl HandleVolume for MaxIntensity {
                 let frame = file
                     .decode_pixel_data_frame(frame_number)
                     .context(PixelDataSnafu)?
-                    .to_dynamic_image(0)
+                    .to_dynamic_image_with_options(0, options)
                     .context(PixelDataSnafu)?;
                 Ok::<DynamicImage, DicomError>(frame)
             })
@@ -351,9 +377,10 @@ impl InterpolateVolume {
 }
 
 impl HandleVolume for InterpolateVolume {
-    fn decode_volume(
+    fn decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let mut frames = Vec::with_capacity(number_of_frames as usize);
@@ -362,15 +389,16 @@ impl HandleVolume for InterpolateVolume {
             let decoded = file
                 .decode_pixel_data_frame(frame_number)
                 .context(PixelDataSnafu)?;
-            frames.push(decoded.to_dynamic_image(0).context(PixelDataSnafu)?);
+            frames.push(decoded.to_dynamic_image_with_options(0, options).context(PixelDataSnafu)?);
         }
 
         Ok(Self::interpolate_frames(&frames, self.target_frames))
     }
 
-    fn par_decode_volume(
+    fn par_decode_volume_with_options(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let frames = (0..number_of_frames)
@@ -379,7 +407,7 @@ impl HandleVolume for InterpolateVolume {
                 let result = file
                     .decode_pixel_data_frame(frame)
                     .context(PixelDataSnafu)?
-                    .to_dynamic_image(0)
+                    .to_dynamic_image_with_options(0, options)
                     .context(PixelDataSnafu)?;
                 Ok::<DynamicImage, DicomError>(result)
             })
@@ -394,6 +422,7 @@ mod tests {
     use super::*;
 
     use dicom::object::open_file;
+    use dicom::pixeldata::VoiLutOption;
     use image::{ImageBuffer, Rgb};
     use rstest::rstest;
 
@@ -426,6 +455,42 @@ mod tests {
         let dicom = dicom_test_files::path(dicom_file_path).unwrap();
         let dicom = open_file(&dicom).unwrap();
         let images = volume_handler.par_decode_volume(&dicom).unwrap();
+        assert_eq!(images.len() as u32, expected_number_of_frames);
+    }
+
+    #[rstest]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::CentralSlice(CentralSlice), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1)]
+    fn test_decode_volume_with_options(
+        #[case] dicom_file_path: &str,
+        #[case] volume_handler: VolumeHandler,
+        #[case] expected_number_of_frames: u32,
+    ) {
+        let dicom = dicom_test_files::path(dicom_file_path).unwrap();
+        let dicom = open_file(&dicom).unwrap();
+        let mut options = ConvertOptions::default();
+        options.voi_lut = VoiLutOption::Normalize;
+        let images = volume_handler.decode_volume_with_options(&dicom, &options).unwrap();
+        assert_eq!(images.len() as u32, expected_number_of_frames);
+    }
+
+    #[rstest]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::CentralSlice(CentralSlice), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1)]
+    fn test_par_decode_volume_with_options(
+        #[case] dicom_file_path: &str,
+        #[case] volume_handler: VolumeHandler,
+        #[case] expected_number_of_frames: u32,
+    ) {
+        let dicom = dicom_test_files::path(dicom_file_path).unwrap();
+        let dicom = open_file(&dicom).unwrap();
+        let mut options = ConvertOptions::default();
+        options.voi_lut = VoiLutOption::Normalize;
+        let images = volume_handler.par_decode_volume_with_options(&dicom, &options).unwrap();
         assert_eq!(images.len() as u32, expected_number_of_frames);
     }
 

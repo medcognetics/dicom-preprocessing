@@ -3,6 +3,7 @@ use image::DynamicImage;
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
+use dicom::pixeldata::ConvertOptions;
 
 use crate::errors::DicomError;
 use crate::metadata::{PreprocessingMetadata, Resolution};
@@ -12,7 +13,7 @@ use crate::transform::{
 };
 
 // Responsible for preprocessing image data before saving
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Preprocessor {
     pub crop: bool,
     pub size: Option<(u32, u32)>,
@@ -24,6 +25,7 @@ pub struct Preprocessor {
     pub use_padding: bool,
     pub border_frac: Option<f32>,
     pub target_frames: u32,
+    pub convert_options: ConvertOptions,
 }
 
 impl Default for Preprocessor {
@@ -39,6 +41,7 @@ impl Default for Preprocessor {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         }
     }
 }
@@ -111,8 +114,12 @@ impl Preprocessor {
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
         let image_data = match parallel {
-            false => self.volume_handler.decode_volume(file),
-            true => self.volume_handler.par_decode_volume(file),
+            false => self
+                .volume_handler
+                .decode_volume_with_options(file, &self.convert_options),
+            true => self
+                .volume_handler
+                .par_decode_volume_with_options(file, &self.convert_options),
         }?;
 
         // Try to determine the resolution from pixel spacing attributes
@@ -217,6 +224,7 @@ mod tests {
     use super::*;
     use dicom::core::{DataElement, PrimitiveValue, VR};
     use dicom::dictionary_std::tags;
+    use dicom::pixeldata::WindowLevel;
 
     use dicom::object::open_file;
 
@@ -238,6 +246,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -254,6 +263,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         true
     )]
@@ -270,6 +280,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -286,6 +297,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -302,6 +314,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -318,6 +331,7 @@ mod tests {
             use_padding: true,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         },
         false
     )]
@@ -400,6 +414,7 @@ mod tests {
             use_padding,
             border_frac: None,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         };
 
         let padding = preprocessor.get_padding(&[dynamic_image]);
@@ -458,6 +473,7 @@ mod tests {
             use_padding: true,
             border_frac,
             target_frames: 32,
+            convert_options: ConvertOptions::default(),
         };
 
         let (processed_images, metadata) = preprocessor
@@ -474,5 +490,84 @@ mod tests {
         } else {
             panic!("Crop should be Some");
         }
+    }
+
+    #[rstest]
+    #[case(
+        "pydicom/CT_small.dcm",
+        ConvertOptions::default(),
+        ConvertOptions::default().with_voi_lut(dicom::pixeldata::VoiLutOption::Custom(WindowLevel { center: 0.0, width: 1.0 }))
+    )]
+    fn test_different_convert_options_produce_different_outputs(
+        #[case] dicom_file_path: &str,
+        #[case] convert_options_1: ConvertOptions,
+        #[case] convert_options_2: ConvertOptions,
+    ) {
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Create two preprocessors with different convert options
+        let preprocessor_1 = Preprocessor {
+            crop: false,
+            size: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
+            use_padding: true,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: convert_options_1,
+        };
+
+        let preprocessor_2 = Preprocessor {
+            crop: false,
+            size: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
+            use_padding: true,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: convert_options_2,
+        };
+
+        // Process the same DICOM file with both preprocessors
+        let (images_1, _) = preprocessor_1.prepare_image(&dicom_file, false).unwrap();
+        let (images_2, _) = preprocessor_2.prepare_image(&dicom_file, false).unwrap();
+
+        // Both should produce the same number of images
+        assert_eq!(images_1.len(), images_2.len());
+        assert_eq!(images_1.len(), 1);
+
+        // Compare pixel data to ensure they're different
+        let img_1 = &images_1[0];
+        let img_2 = &images_2[0];
+
+        // Images should have the same dimensions
+        assert_eq!(img_1.dimensions(), img_2.dimensions());
+
+        // Find at least one pixel that differs between the two images
+        let (width, height) = img_1.dimensions();
+        let mut found_difference = false;
+
+        for y in 0..height {
+            for x in 0..width {
+                if img_1.get_pixel(x, y) != img_2.get_pixel(x, y) {
+                    found_difference = true;
+                    break;
+                }
+            }
+            if found_difference {
+                break;
+            }
+        }
+
+        assert!(
+            found_difference,
+            "Images should be different when using different convert_options"
+        );
     }
 }

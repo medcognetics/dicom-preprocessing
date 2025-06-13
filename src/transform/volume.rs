@@ -453,34 +453,37 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::CentralSlice(CentralSlice), 1)]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1)]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1, true)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1, false)]
+    #[case(
+        "pydicom/CT_small.dcm",
+        VolumeHandler::CentralSlice(CentralSlice),
+        1,
+        true
+    )]
+    #[case(
+        "pydicom/CT_small.dcm",
+        VolumeHandler::CentralSlice(CentralSlice),
+        1,
+        false
+    )]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1, true)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1, false)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1, true)]
+    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1, false)]
     fn test_decode_volume(
         #[case] dicom_file_path: &str,
         #[case] volume_handler: VolumeHandler,
         #[case] expected_number_of_frames: u32,
+        #[case] use_parallel: bool,
     ) {
         let dicom = dicom_test_files::path(dicom_file_path).unwrap();
         let dicom = open_file(&dicom).unwrap();
-        let images = volume_handler.decode_volume(&dicom).unwrap();
-        assert_eq!(images.len() as u32, expected_number_of_frames);
-    }
-
-    #[rstest]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::CentralSlice(CentralSlice), 1)]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::MaxIntensity(MaxIntensity { skip_start: 0, skip_end: 0 }), 1)]
-    #[case("pydicom/CT_small.dcm", VolumeHandler::Interpolate(InterpolateVolume { target_frames: 32 }), 1)]
-    fn test_par_decode_volume(
-        #[case] dicom_file_path: &str,
-        #[case] volume_handler: VolumeHandler,
-        #[case] expected_number_of_frames: u32,
-    ) {
-        let dicom = dicom_test_files::path(dicom_file_path).unwrap();
-        let dicom = open_file(&dicom).unwrap();
-        let images = volume_handler.par_decode_volume(&dicom).unwrap();
+        let images = if use_parallel {
+            volume_handler.par_decode_volume(&dicom).unwrap()
+        } else {
+            volume_handler.decode_volume(&dicom).unwrap()
+        };
         assert_eq!(images.len() as u32, expected_number_of_frames);
     }
 

@@ -24,7 +24,7 @@ def tiff_files(tmp_path):
     files = []
     for study_uid in study_uids:
         for sop_uid in sop_uids:
-            path = tmp_path / study_uid / f"{sop_uid}.tiff"
+            path = tmp_path / study_uid / "series" / f"{sop_uid}.tiff"
             path.parent.mkdir(parents=True, exist_ok=True)
             # Create a valid TIFF file with basic image data
             img_data = np.zeros((64, 64), dtype=np.uint8)

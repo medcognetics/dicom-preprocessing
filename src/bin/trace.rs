@@ -556,11 +556,20 @@ fn process(
         let study_instance_uid = source
             .parent()
             .unwrap()
+            .parent()
+            .unwrap()
             .file_name()
             .unwrap()
             .to_str()
             .unwrap_or_default();
-        let path = output.join(study_instance_uid);
+        let series_instance_uid = source
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap_or_default();
+        let path = output.join(study_instance_uid).join(series_instance_uid);
         let filename = format!("{}.tiff", sop_instance_uid);
         let path = path.join(filename);
 
@@ -744,6 +753,7 @@ mod tests {
         );
         let path = tmp_dir
             .join(study_instance_uid)
+            .join("series")
             .join(format!("{}.tiff", sop_instance_uid));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -871,8 +881,16 @@ mod tests {
         assert!(output_path.exists());
 
         // Verify preview files were created
-        assert!(preview_dir.join("study1").join("test1.tiff").exists());
-        assert!(preview_dir.join("study1").join("test2.tiff").exists());
+        assert!(preview_dir
+            .join("study1")
+            .join("series")
+            .join("test1.tiff")
+            .exists());
+        assert!(preview_dir
+            .join("study1")
+            .join("series")
+            .join("test2.tiff")
+            .exists());
 
         // Verify output contents
         match format {

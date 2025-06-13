@@ -15,6 +15,7 @@ pub struct ManifestEntry {
     path: PathBuf,
     sop_instance_uid: String,
     study_instance_uid: String,
+    series_instance_uid: String,
     dimensions: Option<Dimensions>,
 }
 
@@ -29,11 +30,13 @@ impl ManifestEntry {
         path: P,
         sop_instance_uid: String,
         study_instance_uid: String,
+        series_instance_uid: String,
     ) -> Self {
         Self {
             path: PathBuf::from(path.as_ref()),
             sop_instance_uid,
             study_instance_uid,
+            series_instance_uid,
             dimensions: None,
         }
     }
@@ -48,6 +51,10 @@ impl ManifestEntry {
 
     pub fn study_instance_uid(&self) -> &str {
         &self.study_instance_uid
+    }
+
+    pub fn series_instance_uid(&self) -> &str {
+        &self.series_instance_uid
     }
 
     pub fn dimensions(&self) -> Option<&Dimensions> {
@@ -75,6 +82,20 @@ impl ManifestEntry {
             .to_string();
 
         // Parent directory should be the Series Instance UID, grandparent should be the Study Instance UID
+        let series_instance_uid = path
+            .parent()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "File should be in a directory",
+            ))?
+            .file_name()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Series directory should have a name",
+            ))?
+            .to_string_lossy()
+            .to_string();
+
         let study_instance_uid = path
             .parent()
             .ok_or(std::io::Error::new(
@@ -109,6 +130,7 @@ impl ManifestEntry {
             path,
             sop_instance_uid,
             study_instance_uid,
+            series_instance_uid,
             dimensions,
         })
     }
@@ -186,15 +208,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case("study1", "image1", "image1.tiff")]
-    #[case("study2", "image", "image.tiff")]
+    #[case("study1", "series1", "image1", "image1.tiff")]
+    #[case("study2", "series2", "image", "image.tiff")]
     fn test_manifest_entry_from_file(
         #[case] study_uid: &str,
+        #[case] series_uid: &str,
         #[case] sop_uid: &str,
         #[case] filename: &str,
     ) -> IOResult<()> {
         let temp_dir = TempDir::new()?;
-        let series_dir = temp_dir.path().join(study_uid).join("series");
+        let series_dir = temp_dir.path().join(study_uid).join(series_uid);
         fs::create_dir_all(&series_dir)?;
         let file_path = create_test_tiff(&series_dir, filename)?;
 
@@ -203,6 +226,7 @@ mod tests {
         assert_eq!(entry.path, file_path);
         assert_eq!(entry.study_instance_uid, study_uid);
         assert_eq!(entry.sop_instance_uid, sop_uid);
+        assert_eq!(entry.series_instance_uid, series_uid);
         Ok(())
     }
 

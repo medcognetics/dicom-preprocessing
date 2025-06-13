@@ -24,10 +24,16 @@ impl PyManifestEntry {
         path: Bound<'_, PyAny>,
         sop_instance_uid: String,
         study_instance_uid: String,
+        series_instance_uid: String,
     ) -> PyResult<Self> {
         let py_path = path.extract::<PyPath>()?;
         let path = py_path.as_path();
-        let entry = ManifestEntry::new(path, sop_instance_uid, study_instance_uid);
+        let entry = ManifestEntry::new(
+            path,
+            sop_instance_uid,
+            study_instance_uid,
+            series_instance_uid,
+        );
         Ok(Self(entry))
     }
 
@@ -39,6 +45,11 @@ impl PyManifestEntry {
     #[getter]
     fn study_instance_uid(&self) -> String {
         self.0.study_instance_uid().to_string()
+    }
+
+    #[getter]
+    fn series_instance_uid(&self) -> String {
+        self.0.series_instance_uid().to_string()
     }
 
     #[getter]
@@ -77,10 +88,11 @@ impl PyManifestEntry {
         };
 
         format!(
-            "ManifestEntry(path='{}', sop_instance_uid='{}', study_instance_uid='{}'{})",
+            "ManifestEntry(path='{}', sop_instance_uid='{}', study_instance_uid='{}', series_instance_uid='{}'{})",
             self.0.path().display(),
             self.0.sop_instance_uid(),
             self.0.study_instance_uid(),
+            self.0.series_instance_uid(),
             dims_str
         )
     }

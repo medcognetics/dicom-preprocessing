@@ -124,7 +124,7 @@ fn write_manifest_csv(
     let mut csv_file = BufWriter::new(File::create(dest).context(CreateManifestSnafu)?);
     csv_file
         .write_all(
-            b"study_instance_uid,sop_instance_uid,path,inode,width,height,channels,num_frames\n",
+            b"study_instance_uid,series_instance_uid,sop_instance_uid,path,inode,width,height,channels,num_frames\n",
         )
         .context(WriteManifestSnafu)?;
     for entry in entries {
@@ -132,8 +132,9 @@ fn write_manifest_csv(
         let dims = entry.dimensions();
         writeln!(
             csv_file,
-            "{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
             entry.study_instance_uid(),
+            entry.series_instance_uid(),
             entry.sop_instance_uid(),
             path.display(),
             entry.inode().context(ReadInodeSnafu)?,
@@ -155,6 +156,7 @@ fn write_manifest_parquet(
     pb: &ProgressBar,
 ) -> Result<(), Error> {
     let study_uids: Vec<_> = entries.iter().map(|e| e.study_instance_uid()).collect();
+    let series_uids: Vec<_> = entries.iter().map(|e| e.series_instance_uid()).collect();
     let sop_uids: Vec<_> = entries.iter().map(|e| e.sop_instance_uid()).collect();
     let paths: Vec<_> = entries
         .iter()
@@ -167,6 +169,7 @@ fn write_manifest_parquet(
     let dims: Vec<_> = entries.iter().map(|e| e.dimensions()).collect();
 
     let study_uid_array = StringArray::from(study_uids);
+    let series_uid_array = StringArray::from(series_uids);
     let sop_uid_array = StringArray::from(sop_uids);
     let path_array = StringArray::from(paths);
     let inode_array = Int64Array::from(inodes);
@@ -197,6 +200,11 @@ fn write_manifest_parquet(
             arrow::datatypes::DataType::Utf8,
             false,
         ),
+        arrow::datatypes::Field::new(
+            "series_instance_uid",
+            arrow::datatypes::DataType::Utf8,
+            false,
+        ),
         arrow::datatypes::Field::new("sop_instance_uid", arrow::datatypes::DataType::Utf8, false),
         arrow::datatypes::Field::new("path", arrow::datatypes::DataType::Utf8, false),
         arrow::datatypes::Field::new("inode", arrow::datatypes::DataType::Int64, false),
@@ -210,6 +218,7 @@ fn write_manifest_parquet(
         std::sync::Arc::new(schema),
         vec![
             std::sync::Arc::new(study_uid_array),
+            std::sync::Arc::new(series_uid_array),
             std::sync::Arc::new(sop_uid_array),
             std::sync::Arc::new(path_array),
             std::sync::Arc::new(inode_array),
@@ -294,16 +303,17 @@ mod tests {
     fn setup_test_dir() -> IOResult<(TempDir, Vec<PathBuf>)> {
         let temp_dir = TempDir::new()?;
 
-        // Create study directories
-        let study1_dir = temp_dir.path().join("study1");
-        let study2_dir = temp_dir.path().join("study2");
-        fs::create_dir(&study1_dir)?;
-        fs::create_dir(&study2_dir)?;
+        // Create study and series directories
+        let study1_series1_dir = temp_dir.path().join("study1").join("series1");
+        fs::create_dir_all(&study1_series1_dir)?;
 
         // Create test files
         let mut paths = Vec::new();
         for i in 0..NUM_FILES {
-            paths.push(create_test_tiff(&study1_dir, &format!("image{}.tiff", i))?);
+            paths.push(create_test_tiff(
+                &study1_series1_dir,
+                &format!("image{}.tiff", i),
+            )?);
         }
 
         Ok((temp_dir, paths))
@@ -338,7 +348,7 @@ mod tests {
 
         // Check header
         assert!(contents.starts_with(
-            "study_instance_uid,sop_instance_uid,path,inode,width,height,channels,num_frames\n"
+            "study_instance_uid,series_instance_uid,sop_instance_uid,path,inode,width,height,channels,num_frames\n"
         ));
 
         // Check we have 3 data rows (one per file)
@@ -373,6 +383,7 @@ mod tests {
         let schema = batch.schema();
         let expected_fields = vec![
             "study_instance_uid",
+            "series_instance_uid",
             "sop_instance_uid",
             "path",
             "inode",

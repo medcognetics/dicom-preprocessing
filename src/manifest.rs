@@ -15,6 +15,7 @@ pub struct ManifestEntry {
     path: PathBuf,
     sop_instance_uid: String,
     study_instance_uid: String,
+    series_instance_uid: String,
     dimensions: Option<Dimensions>,
 }
 
@@ -29,11 +30,13 @@ impl ManifestEntry {
         path: P,
         sop_instance_uid: String,
         study_instance_uid: String,
+        series_instance_uid: String,
     ) -> Self {
         Self {
             path: PathBuf::from(path.as_ref()),
             sop_instance_uid,
             study_instance_uid,
+            series_instance_uid,
             dimensions: None,
         }
     }
@@ -50,6 +53,10 @@ impl ManifestEntry {
         &self.study_instance_uid
     }
 
+    pub fn series_instance_uid(&self) -> &str {
+        &self.series_instance_uid
+    }
+
     pub fn dimensions(&self) -> Option<&Dimensions> {
         self.dimensions.as_ref()
     }
@@ -61,7 +68,7 @@ impl ManifestEntry {
     }
 
     /// Create a manifest entry from a preprocessed file. It is assumed that the file
-    /// has a path structure of `{root}/{study_instance_uid}/{sop_instance_uid}.{tiff}`
+    /// has a path structure of `{root}/{study_instance_uid}/{series_instance_uid}/{sop_instance_uid}.{tiff}`
     pub fn try_from_preprocessed_file<P: AsRef<Path>>(path: P) -> IOResult<Self> {
         // Get the file stem (without extension) which should be the SOP Instance UID
         let path = PathBuf::from(path.as_ref());
@@ -74,8 +81,8 @@ impl ManifestEntry {
             .to_string_lossy()
             .to_string();
 
-        // Parent directory should be the Study Instance UID
-        let study_instance_uid = path
+        // Parent directory should be the Series Instance UID, grandparent should be the Study Instance UID
+        let series_instance_uid = path
             .parent()
             .ok_or(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -84,7 +91,26 @@ impl ManifestEntry {
             .file_name()
             .ok_or(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Parent directory should have a name",
+                "Series directory should have a name",
+            ))?
+            .to_string_lossy()
+            .to_string();
+
+        let study_instance_uid = path
+            .parent()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "File should be in a directory",
+            ))?
+            .parent()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "File should be in a series directory within a study directory",
+            ))?
+            .file_name()
+            .ok_or(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Study directory should have a name",
             ))?
             .to_string_lossy()
             .to_string();
@@ -104,13 +130,14 @@ impl ManifestEntry {
             path,
             sop_instance_uid,
             study_instance_uid,
+            series_instance_uid,
             dimensions,
         })
     }
 }
 
 /// Builds a manifest from a root path. The root path is expected to contain
-/// directories with the structure `{root}/{study_instance_uid}/{sop_instance_uid}.{tiff}`
+/// directories with the structure `{root}/{study_instance_uid}/{series_instance_uid}/{sop_instance_uid}.{tiff}`
 pub fn get_manifest<P: AsRef<Path>>(root: P) -> IOResult<Vec<ManifestEntry>> {
     let manifest = root
         .find_tiffs()?
@@ -123,7 +150,7 @@ pub fn get_manifest<P: AsRef<Path>>(root: P) -> IOResult<Vec<ManifestEntry>> {
 }
 
 /// Builds a manifest from a root path with progress indicators. The root path is expected to contain
-/// directories with the structure `{root}/{study_instance_uid}/{sop_instance_uid}.{tiff}`
+/// directories with the structure `{root}/{study_instance_uid}/{series_instance_uid}/{sop_instance_uid}.{tiff}`
 pub fn get_manifest_with_progress<P: AsRef<Path>>(root: P) -> IOResult<Vec<ManifestEntry>> {
     let tiff_files = root.find_tiffs_with_spinner()?.collect::<Vec<_>>();
 
@@ -165,39 +192,41 @@ mod tests {
     fn setup_test_dir() -> IOResult<(TempDir, Vec<PathBuf>)> {
         let temp_dir = TempDir::new()?;
 
-        // Create study directories
-        let study1_dir = temp_dir.path().join("study1");
-        let study2_dir = temp_dir.path().join("study2");
-        fs::create_dir(&study1_dir)?;
-        fs::create_dir(&study2_dir)?;
+        // Create study and series directories
+        let study1_series1_dir = temp_dir.path().join("study1").join("series1");
+        let study2_series2_dir = temp_dir.path().join("study2").join("series2");
+        fs::create_dir_all(&study1_series1_dir)?;
+        fs::create_dir_all(&study2_series2_dir)?;
 
         // Create test files
         let mut paths = Vec::new();
-        paths.push(create_test_tiff(&study1_dir, "image1.tiff")?);
-        paths.push(create_test_tiff(&study1_dir, "image2.tiff")?);
-        paths.push(create_test_tiff(&study2_dir, "image3.tiff")?);
+        paths.push(create_test_tiff(&study1_series1_dir, "image1.tiff")?);
+        paths.push(create_test_tiff(&study1_series1_dir, "image2.tiff")?);
+        paths.push(create_test_tiff(&study2_series2_dir, "image3.tiff")?);
 
         Ok((temp_dir, paths))
     }
 
     #[rstest]
-    #[case("study1", "image1", "image1.tiff")]
-    #[case("study2", "image", "image.tiff")]
+    #[case("study1", "series1", "image1", "image1.tiff")]
+    #[case("study2", "series2", "image", "image.tiff")]
     fn test_manifest_entry_from_file(
         #[case] study_uid: &str,
+        #[case] series_uid: &str,
         #[case] sop_uid: &str,
         #[case] filename: &str,
     ) -> IOResult<()> {
         let temp_dir = TempDir::new()?;
-        let study_dir = temp_dir.path().join(study_uid);
-        fs::create_dir(&study_dir)?;
-        let file_path = create_test_tiff(&study_dir, filename)?;
+        let series_dir = temp_dir.path().join(study_uid).join(series_uid);
+        fs::create_dir_all(&series_dir)?;
+        let file_path = create_test_tiff(&series_dir, filename)?;
 
         let entry = ManifestEntry::try_from_preprocessed_file(&file_path)?;
 
         assert_eq!(entry.path, file_path);
         assert_eq!(entry.study_instance_uid, study_uid);
         assert_eq!(entry.sop_instance_uid, sop_uid);
+        assert_eq!(entry.series_instance_uid, series_uid);
         Ok(())
     }
 

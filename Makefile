@@ -10,10 +10,15 @@ develop:
 	maturin develop -F python --release
 
 quality:
+	cargo fmt -- --check
+	cargo check --all-features
+	cargo clippy --all-features -- -D warnings
 	$(PYTHON) -m black --check $(PYTHON_DIRS)
 	$(PYTHON) -m autopep8 -a $(PYTHON_DIRS)
 
 style:
+	cargo fix --allow-dirty --all-features
+	cargo clippy --all-features --fix --allow-dirty
 	cargo fmt
 	$(PYTHON) -m autoflake -r -i $(PYTHON_DIRS)
 	$(PYTHON) -m isort $(PYTHON_DIRS)

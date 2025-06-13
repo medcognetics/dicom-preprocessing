@@ -266,7 +266,7 @@ fn get_output_path<P: AsRef<Path>>(
     file: &FileDicomObject<InMemDicomObject>,
     dest: P,
 ) -> Result<PathBuf, DicomError> {
-    // Build filepath of form dest/study_instance_uid/sop_instance_uid.tiff
+    // Build filepath of form dest/study_instance_uid/series_instance_uid/sop_instance_uid.tiff
     let study_instance_uid = file
         .get(tags::STUDY_INSTANCE_UID)
         .context(MissingPropertySnafu {
@@ -278,6 +278,11 @@ fn get_output_path<P: AsRef<Path>>(
             name: "Study Instance UID",
         })?
         .into_owned();
+    let series_instance_uid = file
+        .get(tags::SERIES_INSTANCE_UID)
+        .map(|element| element.value().to_str().ok().map(|s| s.into_owned()))
+        .unwrap_or(None)
+        .unwrap_or_else(|| "series".to_string());
     let sop_instance_uid = file
         .get(tags::SOP_INSTANCE_UID)
         .context(MissingPropertySnafu {
@@ -291,7 +296,10 @@ fn get_output_path<P: AsRef<Path>>(
         .into_owned();
     let filename = format!("{}.tiff", sop_instance_uid);
     let dest = dest.as_ref();
-    Ok(dest.join(study_instance_uid).join(filename))
+    Ok(dest
+        .join(study_instance_uid)
+        .join(series_instance_uid)
+        .join(filename))
 }
 
 fn process<P: AsRef<Path>>(
@@ -530,7 +538,7 @@ mod tests {
         };
         run(args).unwrap();
 
-        // Get the StudyInstanceUID and SOPInstanceUID from the DICOM
+        // Get the StudyInstanceUID, SeriesInstanceUID, and SOPInstanceUID from the DICOM
         let dicom_file = open_file(&dicom_file_path).unwrap();
         let study_instance_uid = dicom_file
             .get(tags::STUDY_INSTANCE_UID)
@@ -539,6 +547,11 @@ mod tests {
             .to_str()
             .unwrap()
             .into_owned();
+        let series_instance_uid = dicom_file
+            .get(tags::SERIES_INSTANCE_UID)
+            .map(|element| element.value().to_str().ok().map(|s| s.into_owned()))
+            .unwrap_or(None)
+            .unwrap_or_else(|| "series".to_string());
         let sop_instance_uid = dicom_file
             .get(tags::SOP_INSTANCE_UID)
             .unwrap()
@@ -549,7 +562,11 @@ mod tests {
 
         // Build the expected output file path
         let filename = format!("{}.tiff", sop_instance_uid);
-        let output_file_path = output_dir.path().join(study_instance_uid).join(filename);
+        let output_file_path = output_dir
+            .path()
+            .join(study_instance_uid)
+            .join(series_instance_uid)
+            .join(filename);
 
         // Open the output file as a TIFF and check the dimensions
         let mut tiff_decoder =

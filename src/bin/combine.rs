@@ -1,4 +1,5 @@
-use arrow::array::{Int64Array, StringArray};
+use arrow::array::{Array, Int32Array, Int64Array, StringArray};
+use arrow::datatypes::DataType;
 use arrow::error::ArrowError;
 
 use clap::Parser;
@@ -266,17 +267,35 @@ fn load_metadata_parquet(path: &PathBuf) -> Result<HashMap<String, Vec<FrameMeta
             .as_any()
             .downcast_ref::<StringArray>()
             .expect("Failed to downcast sop_instance_uid to StringArray");
-        let instance_array = batch
+        let instance_column = batch
             .column_by_name("instance_number")
-            .expect("Failed to get instance_number column")
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .expect("Failed to downcast instance_number to Int64Array");
+            .expect("Failed to get instance_number column");
 
         for i in 0..batch.num_rows() {
             let series_instance_uid = series_array.value(i).to_string();
             let sop_instance_uid = sop_array.value(i).to_string();
-            let instance_number = instance_array.value(i) as i32;
+
+            // Handle different integer types for instance_number
+            let instance_number = match instance_column.data_type() {
+                DataType::Int32 => {
+                    let array = instance_column
+                        .as_any()
+                        .downcast_ref::<Int32Array>()
+                        .expect("Failed to downcast instance_number to Int32Array");
+                    array.value(i)
+                }
+                DataType::Int64 => {
+                    let array = instance_column
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .expect("Failed to downcast instance_number to Int64Array");
+                    array.value(i) as i32
+                }
+                _ => panic!(
+                    "Unsupported data type for instance_number: {:?}",
+                    instance_column.data_type()
+                ),
+            };
 
             let frame_metadata = FrameMetadata::new(
                 series_instance_uid.clone(),
@@ -542,6 +561,7 @@ fn try_from_tiff_colortype(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::record_batch::RecordBatch;
     use dicom_preprocessing::FrameCount;
     use ndarray::Array4;
     use rstest::rstest;

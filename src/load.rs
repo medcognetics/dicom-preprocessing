@@ -7,6 +7,9 @@ use crate::errors::{tiff::SeekToFrameSnafu, TiffError};
 use crate::metadata::{Dimensions, FrameCount};
 use ndarray::{s, Array, Array4};
 
+use crate::color::DicomColorType;
+use image::DynamicImage;
+
 pub trait LoadFromTiff<T: Clone + num::Zero> {
     fn to_vec(decoded: DecodingResult) -> Result<Vec<T>, TiffError>;
 
@@ -109,6 +112,133 @@ impl LoadFromTiff<f32> for Array4<f32> {
                 .map(|x| x as f32 / u16::MAX as f32)
                 .collect()),
             _ => Err(TiffError::UnsupportedDataType { data_type: decoded }),
+        }
+    }
+}
+
+/// Load frames from a TIFF decoder as DynamicImages.
+///
+/// This function handles different color types (Gray8, Gray16, RGB8) and converts
+/// the specified frames of the TIFF to the appropriate DynamicImage variants.
+pub fn load_frames_as_dynamic_images<R: Read + Seek>(
+    decoder: &mut Decoder<R>,
+    color_type: &DicomColorType,
+    frames: impl Iterator<Item = usize>,
+) -> Result<Vec<DynamicImage>, TiffError> {
+    let frames_vec: Vec<usize> = frames.collect();
+
+    match color_type {
+        DicomColorType::Gray8(_) => {
+            // Load as 8-bit array
+            let array = Array4::<u8>::decode_frames(decoder, frames_vec.iter().cloned())?;
+            let mut images = Vec::with_capacity(array.shape()[0]);
+
+            for i in 0..array.shape()[0] {
+                let frame = array.slice(s![i, .., .., ..]);
+
+                if frame.shape()[2] == 1 {
+                    // Grayscale image
+                    images.push(DynamicImage::ImageLuma8(
+                        image::ImageBuffer::from_raw(
+                            frame.shape()[1] as u32,
+                            frame.shape()[0] as u32,
+                            frame.iter().cloned().collect::<Vec<_>>(),
+                        )
+                        .ok_or(TiffError::DynamicImageError {
+                            color_type: image::ColorType::L8,
+                        })?,
+                    ));
+                } else if frame.shape()[2] == 3 {
+                    // RGB image stored as u8
+                    let mut rgb_data = Vec::with_capacity(frame.shape()[0] * frame.shape()[1] * 3);
+                    for y in 0..frame.shape()[0] {
+                        for x in 0..frame.shape()[1] {
+                            rgb_data.push(frame[[y, x, 0]]);
+                            rgb_data.push(frame[[y, x, 1]]);
+                            rgb_data.push(frame[[y, x, 2]]);
+                        }
+                    }
+                    images.push(DynamicImage::ImageRgb8(
+                        image::ImageBuffer::from_raw(
+                            frame.shape()[1] as u32,
+                            frame.shape()[0] as u32,
+                            rgb_data,
+                        )
+                        .ok_or(TiffError::DynamicImageError {
+                            color_type: image::ColorType::Rgb8,
+                        })?,
+                    ));
+                } else {
+                    return Err(TiffError::UnsupportedDataType {
+                        data_type: DecodingResult::U8(vec![]),
+                    });
+                }
+            }
+            Ok(images)
+        }
+        DicomColorType::Gray16(_) => {
+            // Load as 16-bit array
+            let array = Array4::<u16>::decode_frames(decoder, frames_vec.iter().cloned())?;
+            let mut images = Vec::with_capacity(array.shape()[0]);
+
+            for i in 0..array.shape()[0] {
+                let frame = array.slice(s![i, .., .., ..]);
+
+                if frame.shape()[2] == 1 {
+                    // Grayscale 16-bit image
+                    images.push(DynamicImage::ImageLuma16(
+                        image::ImageBuffer::from_raw(
+                            frame.shape()[1] as u32,
+                            frame.shape()[0] as u32,
+                            frame.iter().cloned().collect::<Vec<_>>(),
+                        )
+                        .ok_or(TiffError::DynamicImageError {
+                            color_type: image::ColorType::L16,
+                        })?,
+                    ));
+                } else {
+                    return Err(TiffError::UnsupportedDataType {
+                        data_type: DecodingResult::U16(vec![]),
+                    });
+                }
+            }
+            Ok(images)
+        }
+        DicomColorType::RGB8(_) => {
+            // Load as 8-bit array for RGB
+            let array = Array4::<u8>::decode_frames(decoder, frames_vec.iter().cloned())?;
+            let mut images = Vec::with_capacity(array.shape()[0]);
+
+            for i in 0..array.shape()[0] {
+                let frame = array.slice(s![i, .., .., ..]);
+
+                if frame.shape()[2] == 3 {
+                    // RGB image
+                    let mut rgb_data = Vec::with_capacity(frame.shape()[0] * frame.shape()[1] * 3);
+                    for y in 0..frame.shape()[0] {
+                        for x in 0..frame.shape()[1] {
+                            rgb_data.push(frame[[y, x, 0]]);
+                            rgb_data.push(frame[[y, x, 1]]);
+                            rgb_data.push(frame[[y, x, 2]]);
+                        }
+                    }
+                    images.push(DynamicImage::ImageRgb8(
+                        image::ImageBuffer::from_raw(
+                            frame.shape()[1] as u32,
+                            frame.shape()[0] as u32,
+                            rgb_data,
+                        )
+                        .ok_or(TiffError::DynamicImageError {
+                            color_type: image::ColorType::Rgb8,
+                        })?,
+                    ));
+                } else {
+                    return Err(TiffError::UnsupportedDataType {
+                        data_type: DecodingResult::U8(vec![]),
+                    });
+                }
+            }
+            Ok(images)
         }
     }
 }
@@ -330,6 +460,208 @@ mod tests {
             let expected_value = pixel.channels()[0];
             let actual_value = actual_frame.get((y as usize, x as usize, 0_usize)).unwrap();
             assert_eq!(*actual_value, expected_value, "at ({}, {})", x, y);
+        }
+    }
+
+    #[rstest]
+    #[case("pydicom/CT_small.dcm", false)]
+    #[case("pydicom/MR_small.dcm", false)]
+    #[case("pydicom/JPGLosslessP14SV1_1s_1f_8b.dcm", false)] // Gray8
+    #[case("pydicom/SC_rgb.dcm", true)] // RGB8
+    #[case("pydicom/emri_small.dcm", false)] // multi-frame
+    fn test_load_frames_as_dynamic_images(#[case] dicom_file_path: &str, #[case] is_rgb: bool) {
+        let config = Preprocessor {
+            crop: false,
+            size: None,
+            filter: FilterType::Triangle,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 1,
+            convert_options: ConvertOptions::default(),
+        };
+
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+        let color_type = DicomColorType::try_from(&dicom_file).unwrap();
+
+        // Run preprocessing to get expected images
+        let (images, metadata) = config.prepare_image(&dicom_file, false).unwrap();
+
+        // Save to TIFF
+        let saver = TiffSaver::new(Compressor::Uncompressed(Uncompressed), color_type.clone());
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("test.tiff");
+        let mut encoder = saver.open_tiff(path.clone()).unwrap();
+        images
+            .iter()
+            .try_for_each(|image| saver.save(&mut encoder, image, &metadata))
+            .unwrap();
+        drop(encoder);
+
+        // Load using our new function
+        let file = BufReader::new(File::open(&path).unwrap());
+        let mut decoder = Decoder::new(file).unwrap();
+        let dynamic_images =
+            super::load_frames_as_dynamic_images(&mut decoder, &color_type, std::iter::once(0))
+                .unwrap();
+        let dynamic_image = &dynamic_images[0];
+
+        // Compare with the first expected image
+        let expected_image = &images[0];
+        assert_eq!(dynamic_image.width(), expected_image.width());
+        assert_eq!(dynamic_image.height(), expected_image.height());
+
+        if is_rgb {
+            let actual_rgb = dynamic_image.clone().into_rgb8();
+            let expected_rgb = expected_image.clone().into_rgb8();
+            assert_eq!(actual_rgb.dimensions(), expected_rgb.dimensions());
+
+            for (actual_pixel, expected_pixel) in actual_rgb.pixels().zip(expected_rgb.pixels()) {
+                assert_eq!(actual_pixel, expected_pixel);
+            }
+        } else {
+            match &color_type {
+                DicomColorType::Gray8(_) => {
+                    let actual_luma = dynamic_image.clone().into_luma8();
+                    let expected_luma = expected_image.clone().into_luma8();
+                    assert_eq!(actual_luma.dimensions(), expected_luma.dimensions());
+
+                    for (actual_pixel, expected_pixel) in
+                        actual_luma.pixels().zip(expected_luma.pixels())
+                    {
+                        assert_eq!(actual_pixel, expected_pixel);
+                    }
+                }
+                DicomColorType::Gray16(_) => {
+                    let actual_luma = dynamic_image.clone().into_luma16();
+                    let expected_luma = expected_image.clone().into_luma16();
+                    assert_eq!(actual_luma.dimensions(), expected_luma.dimensions());
+
+                    for (actual_pixel, expected_pixel) in
+                        actual_luma.pixels().zip(expected_luma.pixels())
+                    {
+                        assert_eq!(actual_pixel, expected_pixel);
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+    }
+
+    #[test]
+    fn test_load_first_frame_with_single_frame_tiff() {
+        // Create a simple single-frame TIFF for testing
+        use crate::metadata::PreprocessingMetadata;
+        use crate::FrameCount;
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("single_frame.tiff");
+
+        // Create test data
+        let metadata = PreprocessingMetadata {
+            crop: None,
+            resize: None,
+            padding: None,
+            resolution: None,
+            num_frames: FrameCount::from(1_u16),
+        };
+        let color_type = DicomColorType::Gray8(tiff::encoder::colortype::Gray8);
+
+        // Save test TIFF
+        let saver = TiffSaver::new(Compressor::Uncompressed(Uncompressed), color_type.clone());
+        let mut encoder = saver.open_tiff(&path).unwrap();
+        let test_image = DynamicImage::ImageLuma8(
+            image::ImageBuffer::from_raw(32, 32, vec![128; 32 * 32]).unwrap(),
+        );
+        saver.save(&mut encoder, &test_image, &metadata).unwrap();
+        drop(encoder);
+
+        // Load using our function
+        let file = BufReader::new(File::open(&path).unwrap());
+        let mut decoder = Decoder::new(file).unwrap();
+        let loaded_images =
+            super::load_frames_as_dynamic_images(&mut decoder, &color_type, std::iter::once(0))
+                .unwrap();
+        let loaded_image = &loaded_images[0];
+
+        // Verify
+        assert_eq!(loaded_image.width(), 32);
+        assert_eq!(loaded_image.height(), 32);
+        match loaded_image {
+            DynamicImage::ImageLuma8(img) => {
+                assert_eq!(img.get_pixel(0, 0).0[0], 128);
+            }
+            _ => panic!("Expected Luma8 image"),
+        }
+    }
+
+    #[test]
+    fn test_load_multiple_frames() {
+        // Create a multi-frame TIFF and test loading specific frames
+        use crate::metadata::PreprocessingMetadata;
+        use crate::FrameCount;
+
+        let tmpdir = tempfile::tempdir().unwrap();
+        let path = tmpdir.path().join("multi_frame.tiff");
+
+        let metadata = PreprocessingMetadata {
+            crop: None,
+            resize: None,
+            padding: None,
+            resolution: None,
+            num_frames: FrameCount::from(3_u16),
+        };
+        let color_type = DicomColorType::Gray8(tiff::encoder::colortype::Gray8);
+
+        // Create test images with different pixel values
+        let test_images = vec![
+            DynamicImage::ImageLuma8(
+                image::ImageBuffer::from_raw(16, 16, vec![100; 16 * 16]).unwrap(),
+            ),
+            DynamicImage::ImageLuma8(
+                image::ImageBuffer::from_raw(16, 16, vec![150; 16 * 16]).unwrap(),
+            ),
+            DynamicImage::ImageLuma8(
+                image::ImageBuffer::from_raw(16, 16, vec![200; 16 * 16]).unwrap(),
+            ),
+        ];
+
+        // Save multi-frame TIFF
+        let saver = TiffSaver::new(Compressor::Uncompressed(Uncompressed), color_type.clone());
+        let mut encoder = saver.open_tiff(&path).unwrap();
+        for image in &test_images {
+            saver.save(&mut encoder, image, &metadata).unwrap();
+        }
+        drop(encoder);
+
+        // Test loading specific frames
+        let file = BufReader::new(File::open(&path).unwrap());
+        let mut decoder = Decoder::new(file).unwrap();
+
+        // Load frames 0 and 2
+        let loaded_images =
+            super::load_frames_as_dynamic_images(&mut decoder, &color_type, vec![0, 2].into_iter())
+                .unwrap();
+
+        assert_eq!(loaded_images.len(), 2);
+
+        // Check first loaded frame (frame 0)
+        match &loaded_images[0] {
+            DynamicImage::ImageLuma8(img) => {
+                assert_eq!(img.get_pixel(0, 0).0[0], 100);
+            }
+            _ => panic!("Expected Luma8 image"),
+        }
+
+        // Check second loaded frame (frame 2)
+        match &loaded_images[1] {
+            DynamicImage::ImageLuma8(img) => {
+                assert_eq!(img.get_pixel(0, 0).0[0], 200);
+            }
+            _ => panic!("Expected Luma8 image"),
         }
     }
 }

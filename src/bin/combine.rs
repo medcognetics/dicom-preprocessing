@@ -8,13 +8,12 @@ use dicom_preprocessing::color::DicomColorType;
 use dicom_preprocessing::errors::TiffError;
 use dicom_preprocessing::file::default_bar;
 use dicom_preprocessing::file::{InodeSort, TiffFileOperations};
-use dicom_preprocessing::load::LoadFromTiff;
+use dicom_preprocessing::load::load_frames_as_dynamic_images;
 use dicom_preprocessing::metadata::PreprocessingMetadata;
 use dicom_preprocessing::save::TiffSaver;
 use image::DynamicImage;
 use indicatif::ParallelProgressIterator;
 
-use ndarray::Array4;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use rayon::prelude::*;
 use snafu::{Report, ResultExt, Snafu, Whatever};
@@ -437,64 +436,18 @@ fn combine_single_series(
                 Some(PreprocessingMetadata::try_from(&mut decoder).context(TiffReadSnafu)?);
 
             // Determine color type from first frame
-            let (width, height) = decoder
-                .dimensions()
-                .map_err(TiffError::from)
-                .context(TiffReadSnafu)?;
-            let colortype = decoder
-                .colortype()
-                .map_err(TiffError::from)
-                .context(TiffReadSnafu)?;
-            color_type = Some(try_from_tiff_colortype(colortype, width, height));
+            let dicom_color_type = DicomColorType::try_from(&mut decoder).context(TiffReadSnafu)?;
+            color_type = Some(dicom_color_type);
         }
 
-        // Load the image as an array and convert to DynamicImage
-        let array = Array4::<u8>::decode(&mut decoder).context(TiffReadSnafu)?;
-
-        // Take the first frame if multi-frame
-        let frame = array.slice(ndarray::s![0, .., .., ..]);
-
-        let dynamic_image = if frame.shape()[2] == 1 {
-            // Grayscale image
-            DynamicImage::ImageLuma8(
-                image::ImageBuffer::from_raw(
-                    frame.shape()[1] as u32,
-                    frame.shape()[0] as u32,
-                    frame.iter().cloned().collect::<Vec<_>>(),
-                )
-                .ok_or(TiffError::DynamicImageError {
-                    color_type: image::ColorType::L8,
-                })
-                .context(TiffReadSnafu)?,
-            )
-        } else if frame.shape()[2] == 3 {
-            // RGB image
-            let mut rgb_data = Vec::with_capacity(frame.len());
-            for y in 0..frame.shape()[0] {
-                for x in 0..frame.shape()[1] {
-                    rgb_data.push(frame[[y, x, 0]]);
-                    rgb_data.push(frame[[y, x, 1]]);
-                    rgb_data.push(frame[[y, x, 2]]);
-                }
-            }
-            DynamicImage::ImageRgb8(
-                image::ImageBuffer::from_raw(
-                    frame.shape()[1] as u32,
-                    frame.shape()[0] as u32,
-                    rgb_data,
-                )
-                .ok_or(TiffError::DynamicImageError {
-                    color_type: image::ColorType::Rgb8,
-                })
-                .context(TiffReadSnafu)?,
-            )
-        } else {
-            return Err(Error::TiffRead {
-                source: Box::new(TiffError::UnsupportedDataType {
-                    data_type: tiff::decoder::DecodingResult::U8(vec![]),
-                }),
-            });
-        };
+        // Load the first frame as a DynamicImage using the reusable function
+        let mut dynamic_images = load_frames_as_dynamic_images(
+            &mut decoder,
+            color_type.as_ref().unwrap(),
+            std::iter::once(0),
+        )
+        .context(TiffReadSnafu)?;
+        let dynamic_image = dynamic_images.into_iter().next().unwrap();
 
         images.push(dynamic_image);
     }
@@ -543,19 +496,6 @@ fn run(args: Args) -> Result<(usize, usize), Error> {
     let source_files = load_source_files(&args.source)?;
     let metadata_map = load_metadata(&args.metadata)?;
     combine_series(source_files, &metadata_map, &args.output)
-}
-
-fn try_from_tiff_colortype(
-    colortype: tiff::ColorType,
-    _width: u32,
-    _height: u32,
-) -> DicomColorType {
-    match colortype {
-        tiff::ColorType::Gray(8) => DicomColorType::Gray8(tiff::encoder::colortype::Gray8),
-        tiff::ColorType::Gray(16) => DicomColorType::Gray16(tiff::encoder::colortype::Gray16),
-        tiff::ColorType::RGB(8) => DicomColorType::RGB8(tiff::encoder::colortype::RGB8),
-        _ => DicomColorType::Gray8(tiff::encoder::colortype::Gray8), // Default fallback
-    }
 }
 
 #[cfg(test)]

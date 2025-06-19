@@ -11,7 +11,6 @@ use dicom_preprocessing::file::{InodeSort, TiffFileOperations};
 use dicom_preprocessing::load::load_frames_as_dynamic_images;
 use dicom_preprocessing::metadata::PreprocessingMetadata;
 use dicom_preprocessing::save::TiffSaver;
-use image::DynamicImage;
 use indicatif::ParallelProgressIterator;
 
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
@@ -340,7 +339,7 @@ fn combine_series(
         if let Some((_, series_instance_uid, _)) = extract_path_components(&file_path) {
             series_files
                 .entry(series_instance_uid)
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(file_path);
         }
     }
@@ -441,7 +440,7 @@ fn combine_single_series(
         }
 
         // Load the first frame as a DynamicImage using the reusable function
-        let mut dynamic_images = load_frames_as_dynamic_images(
+        let dynamic_images = load_frames_as_dynamic_images(
             &mut decoder,
             color_type.as_ref().unwrap(),
             std::iter::once(0),
@@ -503,6 +502,7 @@ mod tests {
     use super::*;
     use arrow::record_batch::RecordBatch;
     use dicom_preprocessing::FrameCount;
+    use image::DynamicImage;
     use ndarray::Array4;
     use rstest::rstest;
     use std::fs;

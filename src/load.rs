@@ -116,6 +116,35 @@ impl LoadFromTiff<f32> for Array4<f32> {
     }
 }
 
+/// Convert frame data to RGB format for image creation
+fn frame_to_rgb_data<T: Copy>(frame: ndarray::ArrayView3<T>) -> Vec<T> {
+    let (height, width, channels) = (frame.shape()[0], frame.shape()[1], frame.shape()[2]);
+    assert_eq!(channels, 3, "Expected 3 channels for RGB conversion");
+
+    (0..height)
+        .flat_map(|y| {
+            (0..width).flat_map(move |x| [frame[[y, x, 0]], frame[[y, x, 1]], frame[[y, x, 2]]])
+        })
+        .collect()
+}
+
+/// Convert array frames to DynamicImages using a conversion function
+fn convert_frames_to_images<T, F>(
+    array: &ndarray::Array4<T>,
+    convert_frame: F,
+) -> Result<Vec<DynamicImage>, TiffError>
+where
+    T: Copy,
+    F: Fn(ndarray::ArrayView3<T>) -> Result<DynamicImage, TiffError>,
+{
+    (0..array.shape()[0])
+        .map(|i| {
+            let frame = array.slice(ndarray::s![i, .., .., ..]);
+            convert_frame(frame)
+        })
+        .collect()
+}
+
 /// Load frames from a TIFF decoder as DynamicImages.
 ///
 /// This function handles different color types (Gray8, Gray16, RGB8) and converts
@@ -129,116 +158,85 @@ pub fn load_frames_as_dynamic_images<R: Read + Seek>(
 
     match color_type {
         DicomColorType::Gray8(_) => {
-            // Load as 8-bit array
             let array = Array4::<u8>::decode_frames(decoder, frames_vec.iter().cloned())?;
-            let mut images = Vec::with_capacity(array.shape()[0]);
+            convert_frames_to_images(&array, |frame| {
+                let (height, width, channels) =
+                    (frame.shape()[0], frame.shape()[1], frame.shape()[2]);
 
-            for i in 0..array.shape()[0] {
-                let frame = array.slice(s![i, .., .., ..]);
-
-                if frame.shape()[2] == 1 {
-                    // Grayscale image
-                    images.push(DynamicImage::ImageLuma8(
-                        image::ImageBuffer::from_raw(
-                            frame.shape()[1] as u32,
-                            frame.shape()[0] as u32,
-                            frame.iter().cloned().collect::<Vec<_>>(),
-                        )
-                        .ok_or(TiffError::DynamicImageError {
-                            color_type: image::ColorType::L8,
-                        })?,
-                    ));
-                } else if frame.shape()[2] == 3 {
-                    // RGB image stored as u8
-                    let mut rgb_data = Vec::with_capacity(frame.shape()[0] * frame.shape()[1] * 3);
-                    for y in 0..frame.shape()[0] {
-                        for x in 0..frame.shape()[1] {
-                            rgb_data.push(frame[[y, x, 0]]);
-                            rgb_data.push(frame[[y, x, 1]]);
-                            rgb_data.push(frame[[y, x, 2]]);
-                        }
+                match channels {
+                    1 => {
+                        // Grayscale image
+                        let data: Vec<u8> = frame.iter().cloned().collect();
+                        let image_buffer =
+                            image::ImageBuffer::from_raw(width as u32, height as u32, data).ok_or(
+                                TiffError::DynamicImageError {
+                                    color_type: image::ColorType::L8,
+                                },
+                            )?;
+                        Ok(DynamicImage::ImageLuma8(image_buffer))
                     }
-                    images.push(DynamicImage::ImageRgb8(
-                        image::ImageBuffer::from_raw(
-                            frame.shape()[1] as u32,
-                            frame.shape()[0] as u32,
-                            rgb_data,
-                        )
-                        .ok_or(TiffError::DynamicImageError {
-                            color_type: image::ColorType::Rgb8,
-                        })?,
-                    ));
-                } else {
-                    return Err(TiffError::UnsupportedDataType {
+                    3 => {
+                        // RGB image
+                        let rgb_data = frame_to_rgb_data(frame);
+                        let image_buffer =
+                            image::ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                                .ok_or(TiffError::DynamicImageError {
+                                    color_type: image::ColorType::Rgb8,
+                                })?;
+                        Ok(DynamicImage::ImageRgb8(image_buffer))
+                    }
+                    _ => Err(TiffError::UnsupportedDataType {
                         data_type: DecodingResult::U8(vec![]),
-                    });
+                    }),
                 }
-            }
-            Ok(images)
+            })
         }
         DicomColorType::Gray16(_) => {
-            // Load as 16-bit array
             let array = Array4::<u16>::decode_frames(decoder, frames_vec.iter().cloned())?;
-            let mut images = Vec::with_capacity(array.shape()[0]);
+            convert_frames_to_images(&array, |frame| {
+                let (height, width, channels) =
+                    (frame.shape()[0], frame.shape()[1], frame.shape()[2]);
 
-            for i in 0..array.shape()[0] {
-                let frame = array.slice(s![i, .., .., ..]);
-
-                if frame.shape()[2] == 1 {
-                    // Grayscale 16-bit image
-                    images.push(DynamicImage::ImageLuma16(
-                        image::ImageBuffer::from_raw(
-                            frame.shape()[1] as u32,
-                            frame.shape()[0] as u32,
-                            frame.iter().cloned().collect::<Vec<_>>(),
-                        )
-                        .ok_or(TiffError::DynamicImageError {
-                            color_type: image::ColorType::L16,
-                        })?,
-                    ));
-                } else {
-                    return Err(TiffError::UnsupportedDataType {
+                match channels {
+                    1 => {
+                        // Grayscale 16-bit image
+                        let data: Vec<u16> = frame.iter().cloned().collect();
+                        let image_buffer =
+                            image::ImageBuffer::from_raw(width as u32, height as u32, data).ok_or(
+                                TiffError::DynamicImageError {
+                                    color_type: image::ColorType::L16,
+                                },
+                            )?;
+                        Ok(DynamicImage::ImageLuma16(image_buffer))
+                    }
+                    _ => Err(TiffError::UnsupportedDataType {
                         data_type: DecodingResult::U16(vec![]),
-                    });
+                    }),
                 }
-            }
-            Ok(images)
+            })
         }
         DicomColorType::RGB8(_) => {
-            // Load as 8-bit array for RGB
             let array = Array4::<u8>::decode_frames(decoder, frames_vec.iter().cloned())?;
-            let mut images = Vec::with_capacity(array.shape()[0]);
+            convert_frames_to_images(&array, |frame| {
+                let (height, width, channels) =
+                    (frame.shape()[0], frame.shape()[1], frame.shape()[2]);
 
-            for i in 0..array.shape()[0] {
-                let frame = array.slice(s![i, .., .., ..]);
-
-                if frame.shape()[2] == 3 {
-                    // RGB image
-                    let mut rgb_data = Vec::with_capacity(frame.shape()[0] * frame.shape()[1] * 3);
-                    for y in 0..frame.shape()[0] {
-                        for x in 0..frame.shape()[1] {
-                            rgb_data.push(frame[[y, x, 0]]);
-                            rgb_data.push(frame[[y, x, 1]]);
-                            rgb_data.push(frame[[y, x, 2]]);
-                        }
+                match channels {
+                    3 => {
+                        // RGB image
+                        let rgb_data = frame_to_rgb_data(frame);
+                        let image_buffer =
+                            image::ImageBuffer::from_raw(width as u32, height as u32, rgb_data)
+                                .ok_or(TiffError::DynamicImageError {
+                                    color_type: image::ColorType::Rgb8,
+                                })?;
+                        Ok(DynamicImage::ImageRgb8(image_buffer))
                     }
-                    images.push(DynamicImage::ImageRgb8(
-                        image::ImageBuffer::from_raw(
-                            frame.shape()[1] as u32,
-                            frame.shape()[0] as u32,
-                            rgb_data,
-                        )
-                        .ok_or(TiffError::DynamicImageError {
-                            color_type: image::ColorType::Rgb8,
-                        })?,
-                    ));
-                } else {
-                    return Err(TiffError::UnsupportedDataType {
+                    _ => Err(TiffError::UnsupportedDataType {
                         data_type: DecodingResult::U8(vec![]),
-                    });
+                    }),
                 }
-            }
-            Ok(images)
+            })
         }
     }
 }

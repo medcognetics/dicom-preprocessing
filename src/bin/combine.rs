@@ -1,6 +1,5 @@
 use arrow::array::{Int64Array, StringArray};
 use arrow::error::ArrowError;
-use arrow::record_batch::RecordBatch;
 
 use clap::Parser;
 use csv::Reader as CsvReader;
@@ -16,7 +15,6 @@ use indicatif::ParallelProgressIterator;
 
 use ndarray::Array4;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
-use parquet::errors::ParquetError;
 use rayon::prelude::*;
 use snafu::{Report, ResultExt, Snafu, Whatever};
 use std::collections::HashMap;
@@ -107,6 +105,7 @@ impl FrameMetadata {
         }
     }
 
+    #[allow(dead_code)]
     pub fn series_instance_uid(&self) -> &str {
         &self.series_instance_uid
     }

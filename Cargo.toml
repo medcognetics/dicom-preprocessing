@@ -68,6 +68,10 @@ path = "src/voilut/main.rs"
 name = "dicom-traces"
 path = "src/bin/trace.rs"
 
+[[bin]]
+name = "tiff-combine"
+path = "src/bin/combine.rs"
+
 [[bench]]
 name = "inode_sort"
 harness = false

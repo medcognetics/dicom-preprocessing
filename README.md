@@ -160,3 +160,29 @@ Direct preprocessing of a DICOM file or buffer into a Numpy array is achieved us
 This temporary file is spooled, having an in-memory capacity of 64MB with additional space allocated on disk as needed.
 This spool size was chosen to accommodate most preprocessed 2D images without being overly burdensome.
 In the future we will support a direct conversion, avoiding the need for an intermediate TIFF file.
+
+
+### CT Scan Stacking
+
+CT scans are often represented using multiple DICOM files, one per axial slice. 
+A CLI tool is provided to combine per-slice TIFF files (created through the preprocessing flow described above)
+into a single multi-frame TIFF. 
+This tool relies on accompanying CSV or Parquet metadata file which gives the `InstanceNumber`
+for each `SOPInstanceUID` to properly order the frames in a series.
+
+
+```
+Combine single-frame TIFF files into multi-frame TIFFs
+
+Usage: tiff-combine [OPTIONS] <SOURCE> <METADATA> <OUTPUT>
+
+Arguments:
+  <SOURCE>    Directory containing TIFF files with structure study_instance_uid/series_instance_uid/sop_instance_uid.tiff
+  <METADATA>  CSV or Parquet file with series_instance_uid, sop_instance_uid, and instance_number columns
+  <OUTPUT>    Output directory for combined multi-frame TIFFs
+
+Options:
+  -v, --verbose  Enable verbose logging
+  -h, --help     Print help
+  -V, --version  Print version
+```

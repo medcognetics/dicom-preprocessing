@@ -10,8 +10,8 @@ fn setup(num_files: usize) -> Vec<PathBuf> {
     // Create num_files random files in temp directory
     let mut paths = Vec::with_capacity(num_files);
     for i in 0..num_files {
-        let file_path = temp_dir.path().join(format!("file{}.txt", i));
-        std::fs::write(&file_path, format!("test content {}", i)).unwrap();
+        let file_path = temp_dir.path().join(format!("file{i}.txt"));
+        std::fs::write(&file_path, format!("test content {i}")).unwrap();
         paths.push(file_path);
     }
     paths

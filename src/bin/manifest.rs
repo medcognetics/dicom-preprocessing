@@ -312,7 +312,7 @@ mod tests {
         for i in 0..NUM_FILES {
             paths.push(create_test_tiff(
                 &study1_series1_dir,
-                &format!("image{}.tiff", i),
+                &format!("image{i}.tiff"),
             )?);
         }
 

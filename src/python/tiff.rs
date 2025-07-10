@@ -63,8 +63,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
                 if let Some(&max_frame) = frames.iter().max() {
                     if max_frame >= frame_count {
                         return Err(PyValueError::new_err(format!(
-                            "Frame index {} is out of bounds for TIFF with {} frames",
-                            max_frame, frame_count
+                            "Frame index {max_frame} is out of bounds for TIFF with {frame_count} frames"
                         )));
                     }
                 }
@@ -152,8 +151,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
                     if let Some(&max_frame) = frames.iter().max() {
                         if max_frame >= frame_count {
                             return Err(PyValueError::new_err(format!(
-                                "Frame index {} is out of bounds for TIFF with {} frames",
-                                max_frame, frame_count
+                                "Frame index {max_frame} is out of bounds for TIFF with {frame_count} frames"
                             )));
                         }
                     }
@@ -232,7 +230,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             let batch = match PyList::new(py, arrays) {
                 Ok(batch) => batch,
                 Err(e) => {
-                    PyRuntimeError::new_err(format!("Failed to create batch: {}", e)).restore(py);
+                    PyRuntimeError::new_err(format!("Failed to create batch: {e}")).restore(py);
                     return None;
                 }
             };

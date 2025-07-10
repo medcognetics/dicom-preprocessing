@@ -359,10 +359,7 @@ fn combine_series(
     let num_series = results.len();
     let num_files: usize = results.iter().sum();
 
-    println!(
-        "Combined {} series with {} total files",
-        num_series, num_files
-    );
+    println!("Combined {num_series} series with {num_files} total files");
 
     Ok((num_series, num_files))
 }
@@ -459,13 +456,13 @@ fn combine_single_series(
     {
         sop_uid
     } else {
-        format!("{}_combined", series_uid)
+        format!("{series_uid}_combined")
     };
 
     let output_file = output_path
         .join(&study_uid)
         .join(series_uid)
-        .join(format!("{}.tiff", first_sop_uid));
+        .join(format!("{first_sop_uid}.tiff"));
 
     // Create parent directory if it doesn't exist
     if let Some(parent) = output_file.parent() {
@@ -531,7 +528,7 @@ mod tests {
         let path = tmp_dir
             .join(study_uid)
             .join(series_uid)
-            .join(format!("{}.tiff", sop_uid));
+            .join(format!("{sop_uid}.tiff"));
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();

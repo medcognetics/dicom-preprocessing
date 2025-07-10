@@ -40,7 +40,7 @@ impl Setup for DicomFile {
     }
 
     fn subpath<P: AsRef<Path>>(&self, dir: P, index: usize) -> PathBuf {
-        dir.as_ref().join(format!("file{}.dcm", index))
+        dir.as_ref().join(format!("file{index}.dcm"))
     }
 }
 
@@ -52,7 +52,7 @@ impl Setup for OtherFile {
     }
 
     fn subpath<P: AsRef<Path>>(&self, dir: P, index: usize) -> PathBuf {
-        dir.as_ref().join(format!("file{}.txt", index))
+        dir.as_ref().join(format!("file{index}.txt"))
     }
 }
 
@@ -64,7 +64,7 @@ impl Setup for ExtensionlessFile {
     }
 
     fn subpath<P: AsRef<Path>>(&self, dir: P, index: usize) -> PathBuf {
-        dir.as_ref().join(format!("file{}", index))
+        dir.as_ref().join(format!("file{index}"))
     }
 }
 
@@ -76,7 +76,7 @@ impl Setup for Dir {
     }
 
     fn subpath<P: AsRef<Path>>(&self, dir: P, index: usize) -> PathBuf {
-        dir.as_ref().join(format!("subdir{}", index))
+        dir.as_ref().join(format!("subdir{index}"))
     }
 }
 

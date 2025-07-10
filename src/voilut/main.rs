@@ -58,7 +58,7 @@ fn run(args: Args) -> Result<(), Error> {
     println!("VOILUT summary for {}", args.source.display());
     match decoded.voi_lut_function() {
         Ok(Some(voi_lut_function)) => {
-            println!("VOI LUT Function: {:?}", voi_lut_function);
+            println!("VOI LUT Function: {voi_lut_function:?}");
         }
         _ => {
             println!("No valid VOI LUT Function found");
@@ -66,7 +66,7 @@ fn run(args: Args) -> Result<(), Error> {
     }
     match decoded.rescale() {
         Ok(rescale) => {
-            println!("Rescale: {:?}", rescale);
+            println!("Rescale: {rescale:?}");
         }
         _ => {
             println!("No valid Rescale found");
@@ -74,7 +74,7 @@ fn run(args: Args) -> Result<(), Error> {
     }
     match decoded.window() {
         Ok(Some(window)) => {
-            println!("Window: {:?}", window);
+            println!("Window: {window:?}");
         }
         _ => {
             println!("No valid Window found");

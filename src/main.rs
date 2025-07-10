@@ -95,7 +95,7 @@ impl fmt::Display for SupportedCompressor {
             SupportedCompressor::Lzw => "lzw",
             SupportedCompressor::Uncompressed => "none",
         };
-        write!(f, "{}", direction_str)
+        write!(f, "{direction_str}")
     }
 }
 
@@ -294,7 +294,7 @@ fn get_output_path<P: AsRef<Path>>(
             name: "SOP Instance UID",
         })?
         .into_owned();
-    let filename = format!("{}.tiff", sop_instance_uid);
+    let filename = format!("{sop_instance_uid}.tiff");
     let dest = dest.as_ref();
     Ok(dest
         .join(study_instance_uid)
@@ -561,7 +561,7 @@ mod tests {
             .into_owned();
 
         // Build the expected output file path
-        let filename = format!("{}.tiff", sop_instance_uid);
+        let filename = format!("{sop_instance_uid}.tiff");
         let output_file_path = output_dir
             .path()
             .join(study_instance_uid)

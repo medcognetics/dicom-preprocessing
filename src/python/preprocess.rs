@@ -77,8 +77,7 @@ impl PyPreprocessor {
             "maxpool" => FilterType::MaxPool,
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid filter type: {}",
-                    filter
+                    "Invalid filter type: {filter}"
                 )))
             }
         };
@@ -90,8 +89,7 @@ impl PyPreprocessor {
             "center" => PaddingDirection::Center,
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid padding direction: {}",
-                    padding_direction
+                    "Invalid padding direction: {padding_direction}"
                 )))
             }
         };
@@ -102,8 +100,7 @@ impl PyPreprocessor {
             "interpolate" => VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid volume handler: {}",
-                    volume_handler
+                    "Invalid volume handler: {volume_handler}"
                 )))
             }
         };
@@ -117,18 +114,17 @@ impl PyPreprocessor {
                 let window = WindowLevel {
                     center: first
                         .parse()
-                        .unwrap_or_else(|_| panic!("Invalid window center: {}", first)),
+                        .unwrap_or_else(|_| panic!("Invalid window center: {first}")),
                     width: second
                         .parse()
-                        .unwrap_or_else(|_| panic!("Invalid window width: {}", second)),
+                        .unwrap_or_else(|_| panic!("Invalid window width: {second}")),
                 };
                 let voi_lut = VoiLutOption::Custom(window);
                 ConvertOptions::default().with_voi_lut(voi_lut)
             }
             _ => {
                 return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid convert options: {}",
-                    convert_options
+                    "Invalid convert options: {convert_options}"
                 )))
             }
         };
@@ -185,29 +181,29 @@ where
     // Run preprocessing
     let (images, metadata) = preprocessor
         .prepare_image(dcm, parallel)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare image: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare image: {e}")))?;
 
     // Save the images to an in-memory temporary TIFF file
     let color_type = DicomColorType::try_from(dcm)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to get color type: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to get color type: {e}")))?;
     let compressor = Compressor::Uncompressed(Uncompressed);
     let saver = TiffSaver::new(compressor, color_type);
     let mut buffer = spooled_tempfile(SPOOL_SIZE);
     let mut encoder = TiffEncoder::new(&mut buffer)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create TIFF encoder: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create TIFF encoder: {e}")))?;
     images
         .into_iter()
         .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to save temporary TIFF: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to save temporary TIFF: {e}")))?;
 
     // Decode the TIFF file back to an array
     buffer
         .rewind()
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to rewind buffer: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to rewind buffer: {e}")))?;
     let mut decoder = Decoder::new(buffer)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {e}")))?;
     let array = Array4::<T>::decode(&mut decoder)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {}", e)))?;
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {e}")))?;
     Ok(array.into_pyarray(py))
 }
 
@@ -235,9 +231,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         let len = buffer.len_bytes();
         let ptr = buffer.buf_ptr();
         let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
-        let mut dcm = from_reader(bytes).map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create DICOM object: {}", e))
-        })?;
+        let mut dcm = from_reader(bytes)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create DICOM object: {e}")))?;
         Preprocessor::sanitize_dicom(&mut dcm);
         preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm, parallel)
     }
@@ -298,7 +293,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         }
 
         let mut dcm = open_file(path)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {}", e)))?;
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
         Preprocessor::sanitize_dicom(&mut dcm);
         preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm, parallel)
     }

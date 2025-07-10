@@ -158,5 +158,5 @@ fn main() {
         .sum();
 
     pb.finish();
-    println!("Total pixels read: {}", size);
+    println!("Total pixels read: {size}");
 }

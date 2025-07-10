@@ -58,7 +58,7 @@ impl fmt::Display for DisplayVolumeHandler {
             DisplayVolumeHandler::MaxIntensity => "max-intensity",
             DisplayVolumeHandler::Interpolate => "interpolate",
         };
-        write!(f, "{}", filter_str)
+        write!(f, "{filter_str}")
     }
 }
 

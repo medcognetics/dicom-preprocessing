@@ -31,7 +31,7 @@ impl fmt::Display for PaddingDirection {
             PaddingDirection::Center => "center",
             PaddingDirection::Zero => "zero",
         };
-        write!(f, "{}", direction_str)
+        write!(f, "{direction_str}")
     }
 }
 

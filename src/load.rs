@@ -118,14 +118,15 @@ impl LoadFromTiff<f32> for Array4<f32> {
 
 /// Convert frame data to RGB format for image creation
 fn frame_to_rgb_data<T: Copy>(frame: ndarray::ArrayView3<T>) -> Vec<T> {
-    let (height, width, channels) = (frame.shape()[0], frame.shape()[1], frame.shape()[2]);
-    assert_eq!(channels, 3, "Expected 3 channels for RGB conversion");
-
-    (0..height)
-        .flat_map(|y| {
-            (0..width).flat_map(move |x| [frame[[y, x, 0]], frame[[y, x, 1]], frame[[y, x, 2]]])
-        })
-        .collect()
+    match frame.shape() {
+        [height, width, 3] => (0..*height)
+            .flat_map(|y| {
+                (0..*width)
+                    .flat_map(move |x| [frame[[y, x, 0]], frame[[y, x, 1]], frame[[y, x, 2]]])
+            })
+            .collect(),
+        _ => panic!("Expected 3 or 4 channels for RGB conversion"),
+    }
 }
 
 /// Convert array frames to DynamicImages using a conversion function

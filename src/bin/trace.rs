@@ -475,7 +475,7 @@ fn write_output(
         .iter()
         .map(|(_, traces)| traces.len())
         .sum::<usize>();
-    println!("Wrote {} traces across {} images", num_traces, num_images);
+    println!("Wrote {num_traces} traces across {num_images} images");
     Ok((num_images, num_traces))
 }
 
@@ -570,7 +570,7 @@ fn process(
             .to_str()
             .unwrap_or_default();
         let path = output.join(study_instance_uid).join(series_instance_uid);
-        let filename = format!("{}.tiff", sop_instance_uid);
+        let filename = format!("{sop_instance_uid}.tiff");
         let path = path.join(filename);
 
         // Create parent directory if it doesn't exist
@@ -754,7 +754,7 @@ mod tests {
         let path = tmp_dir
             .join(study_instance_uid)
             .join("series")
-            .join(format!("{}.tiff", sop_instance_uid));
+            .join(format!("{sop_instance_uid}.tiff"));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
@@ -861,7 +861,7 @@ mod tests {
         // Create output directory
         let output_dir = tmp_dir.path().join("output");
         fs::create_dir(&output_dir).unwrap();
-        let output_path = output_dir.join(format!("output.{}", format));
+        let output_path = output_dir.join(format!("output.{format}"));
 
         // Create preview directory
         let preview_dir = tmp_dir.path().join("preview");

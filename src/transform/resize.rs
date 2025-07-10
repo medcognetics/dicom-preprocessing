@@ -36,7 +36,7 @@ impl fmt::Display for FilterType {
             FilterType::Lanczos3 => "lanczos3",
             FilterType::MaxPool => "maxpool",
         };
-        write!(f, "{}", filter_str)
+        write!(f, "{filter_str}")
     }
 }
 

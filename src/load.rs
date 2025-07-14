@@ -116,10 +116,11 @@ impl LoadFromTiff<f32> for Array4<f32> {
     }
 }
 
-/// Convert frame data to RGB format for image creation
+/// Convert frame data (RGB or RGBA) to RGB format for image creation.
+/// If alpha is present, it is ignored.
 fn frame_to_rgb_data<T: Copy>(frame: ndarray::ArrayView3<T>) -> Vec<T> {
     match frame.shape() {
-        [height, width, 3] => (0..*height)
+        [height, width, 3 | 4] => (0..*height)
             .flat_map(|y| {
                 (0..*width)
                     .flat_map(move |x| [frame[[y, x, 0]], frame[[y, x, 1]], frame[[y, x, 2]]])

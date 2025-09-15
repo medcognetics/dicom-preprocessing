@@ -1,7 +1,6 @@
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
 use ndarray::Array4;
-// Fix for rand crate - explicitly use SliceRandom trait
 use rand::prelude::*;
 use rand::SeedableRng;
 use rayon::prelude::*;

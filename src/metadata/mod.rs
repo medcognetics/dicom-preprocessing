@@ -1,7 +1,6 @@
 use crate::errors::tiff::TiffError;
 use std::io::{Seek, Write};
 use tiff::encoder::colortype::ColorType;
-// Removed unused Compression import
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 

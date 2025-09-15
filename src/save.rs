@@ -10,7 +10,6 @@ use tiff::encoder::TiffEncoder;
 
 use snafu::ResultExt;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
-// Removed unused compression imports
 
 use crate::color::DicomColorType;
 use crate::errors::{

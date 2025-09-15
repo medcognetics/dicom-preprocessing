@@ -5,7 +5,6 @@ use snafu::ResultExt;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
-// Removed unused Compression import
 use tiff::encoder::{ImageEncoder, TiffKind};
 use tiff::tags::Tag;
 

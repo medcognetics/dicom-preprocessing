@@ -5,7 +5,6 @@ use snafu::ResultExt;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::Compression;
 use tiff::encoder::{ImageEncoder, TiffKind};
 use tiff::tags::Tag;
 
@@ -30,12 +29,11 @@ impl Default for Version {
 }
 
 impl WriteTags for Version {
-    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    fn write_tags<W, C, K>(&self, tiff: &mut ImageEncoder<W, C, K>) -> Result<(), TiffError>
     where
         W: Write + Seek,
         C: ColorType,
         K: TiffKind,
-        D: Compression,
     {
         tiff.encoder().write_tag(Self::TAG, self.0.as_bytes())?;
         Ok(())
@@ -165,12 +163,11 @@ impl IntoIterator for FrameCount {
 }
 
 impl WriteTags for FrameCount {
-    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    fn write_tags<W, C, K>(&self, tiff: &mut ImageEncoder<W, C, K>) -> Result<(), TiffError>
     where
         W: Write + Seek,
         C: ColorType,
         K: TiffKind,
-        D: Compression,
     {
         let page_info = vec![0, self.0];
         tiff.encoder().write_tag(Self::TAG, page_info.as_slice())?;
@@ -234,12 +231,11 @@ impl InvertibleTransform<Coord> for PreprocessingMetadata {
 
 impl WriteTags for PreprocessingMetadata {
     /// Writes TIFF tags for the respective transforms, along with version and resolution metadata
-    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    fn write_tags<W, C, K>(&self, tiff: &mut ImageEncoder<W, C, K>) -> Result<(), TiffError>
     where
         W: Write + Seek,
         C: ColorType,
         K: TiffKind,
-        D: Compression,
     {
         // Write the resolution tag
         if let Some(resolution) = &self.resolution {

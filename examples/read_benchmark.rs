@@ -1,7 +1,7 @@
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressFinish, ProgressStyle};
 use ndarray::Array4;
-use rand::seq::SliceRandom;
+use rand::prelude::*;
 use rand::SeedableRng;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
@@ -91,6 +91,7 @@ fn open_tiff(path: &PathBuf, seed: u64) -> Result<Vec<usize>, TiffError> {
         .into_iter()
         .map(|f| f as usize)
         .collect::<Vec<_>>()
+        .as_slice()
         .choose(&mut rng)
         .unwrap();
     let frames = vec![frame];

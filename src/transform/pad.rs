@@ -3,7 +3,6 @@ use std::fmt;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::Compression;
 use tiff::encoder::ImageEncoder;
 use tiff::encoder::TiffKind;
 use tiff::tags::Tag;
@@ -152,12 +151,11 @@ impl InvertibleTransform<Coord> for Padding {
 }
 
 impl WriteTags for Padding {
-    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    fn write_tags<W, C, K>(&self, tiff: &mut ImageEncoder<W, C, K>) -> Result<(), TiffError>
     where
         W: Write + Seek,
         C: ColorType,
         K: TiffKind,
-        D: Compression,
     {
         let tag = Tag::Unknown(ACTIVE_AREA);
         let active_area = vec![self.left, self.top, self.right, self.bottom];

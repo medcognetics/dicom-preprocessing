@@ -4,7 +4,7 @@ use pyo3::{
     exceptions::{PyFileNotFoundError, PyNotADirectoryError, PyRuntimeError, PyValueError},
     pymodule,
     types::{PyAnyMethods, PyList, PyListMethods, PyModule},
-    Bound, IntoPyObject, PyAny, PyResult, Python,
+    Bound, IntoPyObject, Py, PyAny, PyResult, Python,
 };
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ impl PyPath {
     }
 
     /// Attempts to create a Python Path object from this PyPath
-    fn to_py_path(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn to_py_path(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let pathlib = py.import("pathlib")?;
         let path_class = pathlib.getattr("Path")?;
         path_class

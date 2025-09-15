@@ -3,7 +3,7 @@ use crate::errors::tiff::TiffError;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::Compression;
+// Removed unused Compression import
 use tiff::encoder::{ImageEncoder, Rational, TiffKind};
 use tiff::tags::ResolutionUnit;
 
@@ -94,12 +94,11 @@ impl Resolution {
 }
 
 impl WriteTags for Resolution {
-    fn write_tags<W, C, K, D>(&self, tiff: &mut ImageEncoder<W, C, K, D>) -> Result<(), TiffError>
+    fn write_tags<W, C, K>(&self, tiff: &mut ImageEncoder<W, C, K>) -> Result<(), TiffError>
     where
         W: Write + Seek,
         C: ColorType,
         K: TiffKind,
-        D: Compression,
     {
         tiff.x_resolution(Rational {
             n: (self.pixels_per_mm_x * MM_PER_CM) as u32,

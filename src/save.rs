@@ -4,12 +4,13 @@ use std::fs::File;
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use tiff::encoder::colortype::ColorType;
-use tiff::encoder::compression::{Compression, Compressor, Deflate, Packbits};
+use tiff::encoder::compression::Compressor;
+use tiff::encoder::Compression;
 use tiff::encoder::TiffEncoder;
 
 use snafu::ResultExt;
 use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
-use tiff::encoder::compression::{Lzw, Uncompressed};
+// Removed unused compression imports
 
 use crate::color::DicomColorType;
 use crate::errors::{
@@ -18,18 +19,27 @@ use crate::errors::{
 };
 use crate::metadata::{PreprocessingMetadata, WriteTags};
 
-// Trait for saving a DynamicImage to a TIFF via a TiffEncoder under a given color type and compression
-pub trait SaveToTiff<C, D>
+// Helper function to convert Compressor to Compression
+fn compressor_to_compression(compressor: &Compressor) -> Compression {
+    match compressor {
+        Compressor::Uncompressed(_) => Compression::Uncompressed,
+        Compressor::Lzw(_) => Compression::Lzw,
+        Compressor::Deflate(_) => Compression::Deflate(tiff::encoder::DeflateLevel::default()),
+        Compressor::Packbits(_) => Compression::Packbits,
+        _ => Compression::Uncompressed, // Default fallback for non-exhaustive enum
+    }
+}
+
+// Trait for saving a DynamicImage to a TIFF via a TiffEncoder under a given color type
+pub trait SaveToTiff<C>
 where
     C: ColorType,
-    D: Compression + Clone,
 {
     fn save<T: Write + Seek>(
         &self,
         encoder: &mut TiffEncoder<T>,
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
-        compression: D,
     ) -> Result<(), TiffError>;
 }
 
@@ -38,23 +48,18 @@ pub struct TiffSaver {
     color: DicomColorType,
 }
 
-/// Implement supported combinations of color type and compression
+/// Implement supported combinations of color type
 macro_rules! impl_save_frame {
-    ($color_type:ty, $compression:ty, $as_fn:ident) => {
-        impl SaveToTiff<$color_type, $compression> for TiffSaver {
+    ($color_type:ty, $as_fn:ident) => {
+        impl SaveToTiff<$color_type> for TiffSaver {
             fn save<T: Write + Seek>(
                 &self,
                 encoder: &mut TiffEncoder<T>,
                 image: &DynamicImage,
                 metadata: &PreprocessingMetadata,
-                compression: $compression,
             ) -> Result<(), TiffError> {
                 let (columns, rows) = image.dimensions();
-                let mut tiff = encoder.new_image_with_compression::<$color_type, _>(
-                    columns,
-                    rows,
-                    compression,
-                )?;
+                let mut tiff = encoder.new_image::<$color_type>(columns, rows)?;
 
                 metadata.write_tags(&mut tiff)?;
                 let bytes = image.$as_fn().ok_or(TiffError::DynamicImageError {
@@ -67,23 +72,10 @@ macro_rules! impl_save_frame {
     };
 }
 
-// Implementations for Gray16
-impl_save_frame!(Gray16, Uncompressed, as_luma16);
-impl_save_frame!(Gray16, Packbits, as_luma16);
-impl_save_frame!(Gray16, Lzw, as_luma16);
-impl_save_frame!(Gray16, Deflate, as_luma16);
-
-// Implementations for RGB8
-impl_save_frame!(RGB8, Uncompressed, as_rgb8);
-impl_save_frame!(RGB8, Packbits, as_rgb8);
-impl_save_frame!(RGB8, Lzw, as_rgb8);
-impl_save_frame!(RGB8, Deflate, as_rgb8);
-
-// Implementations for Gray8
-impl_save_frame!(Gray8, Uncompressed, as_luma8);
-impl_save_frame!(Gray8, Packbits, as_luma8);
-impl_save_frame!(Gray8, Lzw, as_luma8);
-impl_save_frame!(Gray8, Deflate, as_luma8);
+// Implementations for each color type
+impl_save_frame!(Gray16, as_luma16);
+impl_save_frame!(RGB8, as_rgb8);
+impl_save_frame!(Gray8, as_luma8);
 
 impl TiffSaver {
     pub fn new(compressor: Compressor, color: DicomColorType) -> Self {
@@ -97,7 +89,8 @@ impl TiffSaver {
         let output = output.as_ref();
         let file = File::create(output).context(IOSnafu { path: output })?;
         let file = BufWriter::new(file);
-        TiffEncoder::new(file).context(WriteSnafu { path: output })
+        let encoder = TiffEncoder::new(file).context(WriteSnafu { path: output })?;
+        Ok(encoder.with_compression(compressor_to_compression(&self.compressor)))
     }
 
     pub fn save<T: Write + Seek>(
@@ -106,42 +99,16 @@ impl TiffSaver {
         image: &DynamicImage,
         metadata: &PreprocessingMetadata,
     ) -> Result<(), TiffError> {
-        macro_rules! save_with {
-            ($color_type:ty, $compression:ty, $compressor:expr) => {
-                <TiffSaver as SaveToTiff<$color_type, $compression>>::save(
-                    self,
-                    encoder,
-                    image,
-                    metadata,
-                    $compressor,
-                )
-            };
-        }
-
-        match (&self.color, &self.compressor) {
-            // Monochrome 16-bit
-            (DicomColorType::Gray16(_), Compressor::Uncompressed(c)) => {
-                save_with!(Gray16, Uncompressed, *c)
+        match &self.color {
+            DicomColorType::Gray16(_) => {
+                <TiffSaver as SaveToTiff<Gray16>>::save(self, encoder, image, metadata)
             }
-            (DicomColorType::Gray16(_), Compressor::Packbits(c)) => {
-                save_with!(Gray16, Packbits, *c)
+            DicomColorType::RGB8(_) => {
+                <TiffSaver as SaveToTiff<RGB8>>::save(self, encoder, image, metadata)
             }
-            (DicomColorType::Gray16(_), Compressor::Lzw(c)) => save_with!(Gray16, Lzw, *c),
-            (DicomColorType::Gray16(_), Compressor::Deflate(c)) => save_with!(Gray16, Deflate, *c),
-            // RGB 8-bit
-            (DicomColorType::RGB8(_), Compressor::Uncompressed(c)) => {
-                save_with!(RGB8, Uncompressed, *c)
+            DicomColorType::Gray8(_) => {
+                <TiffSaver as SaveToTiff<Gray8>>::save(self, encoder, image, metadata)
             }
-            (DicomColorType::RGB8(_), Compressor::Packbits(c)) => save_with!(RGB8, Packbits, *c),
-            (DicomColorType::RGB8(_), Compressor::Lzw(c)) => save_with!(RGB8, Lzw, *c),
-            (DicomColorType::RGB8(_), Compressor::Deflate(c)) => save_with!(RGB8, Deflate, *c),
-            // Monochrome 8-bit
-            (DicomColorType::Gray8(_), Compressor::Uncompressed(c)) => {
-                save_with!(Gray8, Uncompressed, *c)
-            }
-            (DicomColorType::Gray8(_), Compressor::Packbits(c)) => save_with!(Gray8, Packbits, *c),
-            (DicomColorType::Gray8(_), Compressor::Lzw(c)) => save_with!(Gray8, Lzw, *c),
-            (DicomColorType::Gray8(_), Compressor::Deflate(c)) => save_with!(Gray8, Deflate, *c),
         }
     }
 }

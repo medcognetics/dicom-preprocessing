@@ -275,6 +275,7 @@ mod tests {
         let config = Preprocessor {
             crop: true,
             size: Some((64, 64)),
+            spacing: None,
             filter: FilterType::Triangle,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -319,9 +320,9 @@ mod tests {
     fn exec_test_luma16(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
         let array = Array4::<u16>::decode(&mut *decoder).unwrap();
         assert_eq!(array.shape()[0], images.len());
-        for i in 0..images.len() {
+        for (i, image) in images.iter().enumerate() {
             let actual_frame = array.slice(s![i, .., .., ..]);
-            let expected_frame = images[i].clone().into_luma16();
+            let expected_frame = image.clone().into_luma16();
             assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
             assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
             assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
@@ -336,9 +337,9 @@ mod tests {
     fn exec_test_luma8(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
         let array = Array4::<u8>::decode(&mut *decoder).unwrap();
         assert_eq!(array.shape()[0], images.len());
-        for i in 0..images.len() {
+        for (i, image) in images.iter().enumerate() {
             let actual_frame = array.slice(s![i, .., .., ..]);
-            let expected_frame = images[i].clone().into_luma8();
+            let expected_frame = image.clone().into_luma8();
             assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
             assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
             assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_MONO);
@@ -353,9 +354,9 @@ mod tests {
     fn exec_test_rgb8(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
         let array = Array4::<u8>::decode(&mut *decoder).unwrap();
         assert_eq!(array.shape()[0], images.len());
-        for i in 0..images.len() {
+        for (i, image) in images.iter().enumerate() {
             let actual_frame = array.slice(s![i, .., .., ..]);
-            let expected_frame = images[i].clone().into_rgb8();
+            let expected_frame = image.clone().into_rgb8();
             assert_eq!(actual_frame.shape()[0], expected_frame.height() as usize);
             assert_eq!(actual_frame.shape()[1], expected_frame.width() as usize);
             assert_eq!(actual_frame.shape()[2], NUM_CHANNELS_RGB);
@@ -372,9 +373,9 @@ mod tests {
     fn exec_test_float32(images: Vec<DynamicImage>, decoder: &mut Decoder<BufReader<File>>) {
         let array = Array4::<f32>::decode(&mut *decoder).unwrap();
         assert_eq!(array.shape()[0], images.len());
-        for i in 0..images.len() {
+        for (i, image) in images.iter().enumerate() {
             let actual_frame = array.slice(s![i, .., .., ..]);
-            let expected_frame = images[i].clone().into_luma16();
+            let expected_frame = image.clone().into_luma16();
             // Convert u16 pixels to normalized f32 values
             let pixels: Vec<f32> = expected_frame
                 .pixels()
@@ -399,6 +400,7 @@ mod tests {
         let config = Preprocessor {
             crop: true,
             size: Some((64, 64)),
+            spacing: None,
             filter: FilterType::Triangle,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -462,6 +464,7 @@ mod tests {
         let config = Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: FilterType::Triangle,
             padding_direction: PaddingDirection::default(),
             crop_max: false,

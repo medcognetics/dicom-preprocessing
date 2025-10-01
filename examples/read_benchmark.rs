@@ -70,7 +70,7 @@ fn find_tiff_files(dir: &PathBuf) -> impl Iterator<Item = PathBuf> {
 }
 
 /// Sort files by inode number to optimize for sequential reads
-fn sort_by_inode(files: &mut Vec<PathBuf>) {
+fn sort_by_inode(files: &mut [PathBuf]) {
     files.sort_by_key(|path| {
         std::fs::metadata(path).map(|m| m.ino()).unwrap_or(u64::MAX) // Fall back to end of list if metadata read fails
     });

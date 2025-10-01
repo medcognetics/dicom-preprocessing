@@ -304,7 +304,7 @@ mod tests {
             crop: Some(Crop { left: 0, top: 0, width: 1, height: 1 }),
             resize: Some(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest }),
             padding: Some(Padding { left: 0, top: 0, right: 1, bottom: 1 }),
-            resolution: Some(Resolution { pixels_per_mm_x: 1.0, pixels_per_mm_y: 1.0 }),
+            resolution: Some(Resolution { pixels_per_mm_x: 1.0, pixels_per_mm_y: 1.0, frames_per_mm: None }),
             num_frames: FrameCount(1),
         }
     )]
@@ -381,6 +381,7 @@ mod tests {
             resolution: Some(Resolution {
                 pixels_per_mm_x: 1.0,
                 pixels_per_mm_y: 1.0,
+                frames_per_mm: None,
             }),
             num_frames: FrameCount(1),
         };
@@ -418,6 +419,7 @@ mod tests {
             resolution: Some(Resolution {
                 pixels_per_mm_x: 1.0,
                 pixels_per_mm_y: 1.0,
+                frames_per_mm: None,
             }),
             num_frames: FrameCount(1),
         };

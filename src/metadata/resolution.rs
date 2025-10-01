@@ -16,10 +16,11 @@ use crate::metadata::WriteTags;
 const MM_PER_CM: f32 = 10.0;
 const MM_PER_IN: f32 = 25.4;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Resolution {
     pub pixels_per_mm_x: f32,
     pub pixels_per_mm_y: f32,
+    pub frames_per_mm: Option<f32>,
 }
 
 impl<T> TryFrom<&mut Decoder<T>> for Resolution
@@ -73,6 +74,7 @@ where
         Ok(Resolution {
             pixels_per_mm_x: x_resolution,
             pixels_per_mm_y: y_resolution,
+            frames_per_mm: None,
         })
     }
 }
@@ -82,6 +84,15 @@ impl Resolution {
         Resolution {
             pixels_per_mm_x,
             pixels_per_mm_y,
+            frames_per_mm: None,
+        }
+    }
+
+    pub fn new_3d(pixels_per_mm_x: f32, pixels_per_mm_y: f32, frames_per_mm: f32) -> Self {
+        Resolution {
+            pixels_per_mm_x,
+            pixels_per_mm_y,
+            frames_per_mm: Some(frames_per_mm),
         }
     }
 
@@ -89,7 +100,13 @@ impl Resolution {
         Resolution {
             pixels_per_mm_x: self.pixels_per_mm_x * value,
             pixels_per_mm_y: self.pixels_per_mm_y * value,
+            frames_per_mm: self.frames_per_mm.map(|f| f * value),
         }
+    }
+
+    pub fn with_frames_per_mm(mut self, frames_per_mm: f32) -> Self {
+        self.frames_per_mm = Some(frames_per_mm);
+        self
     }
 }
 
@@ -124,6 +141,17 @@ impl From<(f32, f32)> for Resolution {
         Resolution {
             pixels_per_mm_x,
             pixels_per_mm_y,
+            frames_per_mm: None,
+        }
+    }
+}
+
+impl From<(f32, f32, f32)> for Resolution {
+    fn from((pixels_per_mm_x, pixels_per_mm_y, frames_per_mm): (f32, f32, f32)) -> Self {
+        Resolution {
+            pixels_per_mm_x,
+            pixels_per_mm_y,
+            frames_per_mm: Some(frames_per_mm),
         }
     }
 }
@@ -163,8 +191,20 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
             .parse::<f32>()
             .context(ParseFloatSnafu)?;
 
-        // Convert to pixels per mm
-        Ok((1.0 / pixel_spacing_mm_x, 1.0 / pixel_spacing_mm_y).into())
+        // Try to read slice thickness or spacing between slices
+        let frame_spacing_mm = file
+            .get(tags::SPACING_BETWEEN_SLICES)
+            .or_else(|| file.get(tags::SLICE_THICKNESS))
+            .and_then(|elem| elem.value().to_str().ok())
+            .and_then(|s| s.parse::<f32>().ok());
+
+        // Convert to pixels per mm and frames per mm
+        let mut resolution: Resolution =
+            (1.0 / pixel_spacing_mm_x, 1.0 / pixel_spacing_mm_y).into();
+        if let Some(spacing_mm) = frame_spacing_mm {
+            resolution.frames_per_mm = Some(1.0 / spacing_mm);
+        }
+        Ok(resolution)
     }
 }
 
@@ -180,7 +220,7 @@ mod tests {
     use tiff::encoder::TiffEncoder;
 
     #[rstest]
-    #[case("pydicom/CT_small.dcm", Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888 })]
+    #[case("pydicom/CT_small.dcm", Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888, frames_per_mm: Some(0.2) })]
     fn test_try_from(#[case] dicom_path: &str, #[case] expected: Resolution) {
         let dicom_file = dicom_test_files::path(dicom_path).unwrap();
         let dicom_file = open_file(dicom_file).unwrap();
@@ -190,7 +230,7 @@ mod tests {
 
     #[rstest]
     #[case(
-        Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888 },
+        Resolution { pixels_per_mm_x: 1.5117888, pixels_per_mm_y: 1.5117888, frames_per_mm: None },
         1.5,
         1.5,
     )]
@@ -222,9 +262,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Resolution { pixels_per_mm_x: 1.0, pixels_per_mm_y: 1.0 }, 2.0, Resolution { pixels_per_mm_x: 2.0, pixels_per_mm_y: 2.0 })]
-    #[case(Resolution { pixels_per_mm_x: 1.5, pixels_per_mm_y: 1.5 }, 0.5, Resolution { pixels_per_mm_x: 0.75, pixels_per_mm_y: 0.75 })]
-    #[case(Resolution { pixels_per_mm_x: 2.0, pixels_per_mm_y: 2.0 }, 1.0, Resolution { pixels_per_mm_x: 2.0, pixels_per_mm_y: 2.0 })]
+    #[case(Resolution { pixels_per_mm_x: 1.0, pixels_per_mm_y: 1.0, frames_per_mm: None }, 2.0, Resolution { pixels_per_mm_x: 2.0, pixels_per_mm_y: 2.0, frames_per_mm: None })]
+    #[case(Resolution { pixels_per_mm_x: 1.5, pixels_per_mm_y: 1.5, frames_per_mm: None }, 0.5, Resolution { pixels_per_mm_x: 0.75, pixels_per_mm_y: 0.75, frames_per_mm: None })]
+    #[case(Resolution { pixels_per_mm_x: 2.0, pixels_per_mm_y: 2.0, frames_per_mm: Some(1.0) }, 1.0, Resolution { pixels_per_mm_x: 2.0, pixels_per_mm_y: 2.0, frames_per_mm: Some(1.0) })]
     fn test_scale(
         #[case] resolution: Resolution,
         #[case] scale_factor: f32,

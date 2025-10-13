@@ -64,7 +64,7 @@ impl From<imageops::FilterType> for FilterType {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Resize {
     pub scale_x: f32,
     pub scale_y: f32,

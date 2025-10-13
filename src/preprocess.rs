@@ -255,6 +255,105 @@ impl Preprocessor {
             },
         ))
     }
+
+    /// Processes multiple DICOM files with a common crop bound.
+    /// This is useful for CT scans where each slice is stored in a separate DICOM file.
+    /// The crop bounds are determined across all slices and applied consistently.
+    /// Output order matches input order.
+    pub fn prepare_images_batch(
+        &self,
+        files: &[FileDicomObject<InMemDicomObject>],
+        parallel: bool,
+    ) -> Result<(Vec<Vec<DynamicImage>>, PreprocessingMetadata), DicomError> {
+        if files.is_empty() {
+            return Err(DicomError::Other {
+                message: "Cannot process empty batch of files".to_string(),
+            });
+        }
+
+        // Decode all files and collect their images
+        let mut all_decoded_images: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
+        for file in files {
+            let images = match parallel {
+                false => self
+                    .volume_handler
+                    .decode_volume_with_options(file, &self.convert_options),
+                true => self
+                    .volume_handler
+                    .par_decode_volume_with_options(file, &self.convert_options),
+            }?;
+            all_decoded_images.push(images);
+        }
+
+        // Try to determine the resolution from the first file's pixel spacing attributes
+        let mut resolution = Resolution::try_from(&files[0]).ok();
+
+        // Flatten all images to determine common crop bounds
+        let all_images_flat: Vec<DynamicImage> = all_decoded_images
+            .iter()
+            .flat_map(|images| images.iter().cloned())
+            .collect();
+
+        // Determine common crop bounds across all images
+        let crop_config = self.get_crop(&all_images_flat);
+
+        // Apply crop to each batch of images
+        let mut cropped_batches: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
+        for images in all_decoded_images {
+            let cropped = match &crop_config {
+                Some(config) => config.apply_iter(images.into_iter()).collect(),
+                None => images,
+            };
+            cropped_batches.push(cropped);
+        }
+
+        // For resize and padding, use the first image from the first batch as reference
+        let first_image = &cropped_batches[0][0];
+        let resize_config = self.get_resize(&[first_image.clone()], &resolution);
+
+        // Apply resize to each batch
+        let mut resized_batches: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
+        for images in cropped_batches {
+            let resized = match &resize_config {
+                Some(config) => config.apply_iter(images.into_iter()).collect(),
+                None => images,
+            };
+            resized_batches.push(resized);
+        }
+
+        // Update the resolution if we resized
+        if let (Some(res), Some(config)) = (&resolution, &resize_config) {
+            resolution = Some(config.apply(res));
+        }
+
+        // Determine padding from the first image
+        let first_image = &resized_batches[0][0];
+        let padding_config = self.get_padding(&[first_image.clone()], &resize_config);
+
+        // Apply padding to each batch
+        let mut padded_batches: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
+        for images in resized_batches {
+            let padded = match &padding_config {
+                Some(config) => config.apply_iter(images.into_iter()).collect(),
+                None => images,
+            };
+            padded_batches.push(padded);
+        }
+
+        // Calculate total frames
+        let num_frames = padded_batches.iter().map(|b| b.len()).sum::<usize>().into();
+
+        Ok((
+            padded_batches,
+            PreprocessingMetadata {
+                crop: crop_config,
+                resize: resize_config,
+                padding: padding_config,
+                resolution,
+                num_frames,
+            },
+        ))
+    }
 }
 
 // Add this extension method for testing

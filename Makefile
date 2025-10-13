@@ -1,13 +1,15 @@
 PYTHON=pdm run python
 PYTHON_DIRS=tests examples dicom_preprocessing.pyi
 
+.PHONY: init develop quality style test-python test-python-pdb test
+
 init:
 	which pdm || pip install --user pdm
 	pdm venv create --with-pip
 	pdm install -d
 
 develop:
-	maturin develop -F python --release
+	pdm run maturin develop -F python --release
 
 quality:
 	cargo fmt -- --check
@@ -25,12 +27,12 @@ style:
 	$(PYTHON) -m autopep8 -a $(PYTHON_DIRS)
 	$(PYTHON) -m black $(PYTHON_DIRS)
 
-test-python: 
+test-python: develop
 	$(PYTHON) -m pytest \
 		-rs \
 		./tests/
 
-test-python-pdb: 
+test-python-pdb: develop
 	$(PYTHON) -m pytest \
 		-rs \
 		./tests/ \

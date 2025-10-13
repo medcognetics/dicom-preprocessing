@@ -235,7 +235,9 @@ where
     Array4<T>: LoadFromTiff<T>,
 {
     if dcms.is_empty() {
-        return Err(PyRuntimeError::new_err("Cannot process empty list of DICOMs"));
+        return Err(PyRuntimeError::new_err(
+            "Cannot process empty list of DICOMs",
+        ));
     }
 
     // Run batch preprocessing
@@ -432,9 +434,8 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
                     path.display()
                 )));
             }
-            let mut dcm = open_file(path).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}"))
-            })?;
+            let mut dcm = open_file(path)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
@@ -520,8 +521,10 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         preprocessor: &PyPreprocessor,
         parallel: bool,
     ) -> PyResult<Vec<Bound<'py, PyArray4<u8>>>> {
-        let buffers: Result<Vec<PyBuffer<u8>>, _> =
-            buffers.iter().map(|b| b.extract::<PyBuffer<u8>>()).collect();
+        let buffers: Result<Vec<PyBuffer<u8>>, _> = buffers
+            .iter()
+            .map(|b| b.extract::<PyBuffer<u8>>())
+            .collect();
         let buffers = buffers?;
         let buffer_refs: Vec<&PyBuffer<u8>> = buffers.iter().collect();
         preprocess_stream_slices::<u8>(py, buffer_refs, &preprocessor.inner, parallel)
@@ -535,8 +538,10 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         preprocessor: &PyPreprocessor,
         parallel: bool,
     ) -> PyResult<Vec<Bound<'py, PyArray4<u16>>>> {
-        let buffers: Result<Vec<PyBuffer<u8>>, _> =
-            buffers.iter().map(|b| b.extract::<PyBuffer<u8>>()).collect();
+        let buffers: Result<Vec<PyBuffer<u8>>, _> = buffers
+            .iter()
+            .map(|b| b.extract::<PyBuffer<u8>>())
+            .collect();
         let buffers = buffers?;
         let buffer_refs: Vec<&PyBuffer<u8>> = buffers.iter().collect();
         preprocess_stream_slices::<u16>(py, buffer_refs, &preprocessor.inner, parallel)
@@ -550,8 +555,10 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         preprocessor: &PyPreprocessor,
         parallel: bool,
     ) -> PyResult<Vec<Bound<'py, PyArray4<f32>>>> {
-        let buffers: Result<Vec<PyBuffer<u8>>, _> =
-            buffers.iter().map(|b| b.extract::<PyBuffer<u8>>()).collect();
+        let buffers: Result<Vec<PyBuffer<u8>>, _> = buffers
+            .iter()
+            .map(|b| b.extract::<PyBuffer<u8>>())
+            .collect();
         let buffers = buffers?;
         let buffer_refs: Vec<&PyBuffer<u8>> = buffers.iter().collect();
         preprocess_stream_slices::<f32>(py, buffer_refs, &preprocessor.inner, parallel)

@@ -242,7 +242,7 @@ def preprocess_u8_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint8]]:
     """Preprocess multiple DICOM files (slices) with common crop bounds and return as 8-bit unsigned integer arrays.
-    
+
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
     Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
     have the same spatial dimensions.
@@ -265,7 +265,7 @@ def preprocess_u16_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint16]]:
     """Preprocess multiple DICOM files (slices) with common crop bounds and return as 16-bit unsigned integer arrays.
-    
+
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
     Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
     have the same spatial dimensions.
@@ -289,7 +289,7 @@ def preprocess_f32_slices(
 ) -> List[npt.NDArray[np.float32]]:
     """Preprocess multiple DICOM files (slices) with common crop bounds and return as 32-bit floating point arrays.
     Values are scaled to the range :math:`[0, 1]`.
-    
+
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
     Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
     have the same spatial dimensions.
@@ -312,7 +312,7 @@ def preprocess_stream_u8_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint8]]:
     """Preprocess multiple DICOM files (slices) from bytes buffers with common crop bounds and return as 8-bit unsigned integer arrays.
-    
+
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
     Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
     have the same spatial dimensions.
@@ -335,7 +335,7 @@ def preprocess_stream_u16_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint16]]:
     """Preprocess multiple DICOM files (slices) from bytes buffers with common crop bounds and return as 16-bit unsigned integer arrays.
-    
+
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
     Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
     have the same spatial dimensions.
@@ -359,7 +359,7 @@ def preprocess_stream_f32_slices(
 ) -> List[npt.NDArray[np.float32]]:
     """Preprocess multiple DICOM files (slices) from bytes buffers with common crop bounds and return as 32-bit floating point arrays.
     Values are scaled to the range :math:`[0, 1]`.
-    
+
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
     Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
     have the same spatial dimensions.

@@ -1,9 +1,8 @@
-use criterion::{
-    black_box, measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{measurement::Measurement, BenchmarkGroup, BenchmarkId, Criterion, Throughput};
 use dicom_preprocessing::file::{
     DicomFileOperations as DicomFileTrait, DICM_PREFIX, DICM_PREFIX_LOCATION,
 };
+use std::hint::black_box;
 use std::io::{Seek, SeekFrom, Write};
 use std::path::Path;
 use std::path::PathBuf;

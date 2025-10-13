@@ -199,10 +199,11 @@ mod tests {
         fs::create_dir_all(&study2_series2_dir)?;
 
         // Create test files
-        let mut paths = Vec::new();
-        paths.push(create_test_tiff(&study1_series1_dir, "image1.tiff")?);
-        paths.push(create_test_tiff(&study1_series1_dir, "image2.tiff")?);
-        paths.push(create_test_tiff(&study2_series2_dir, "image3.tiff")?);
+        let paths = vec![
+            create_test_tiff(&study1_series1_dir, "image1.tiff")?,
+            create_test_tiff(&study1_series1_dir, "image2.tiff")?,
+            create_test_tiff(&study2_series2_dir, "image3.tiff")?,
+        ];
 
         Ok((temp_dir, paths))
     }

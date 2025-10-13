@@ -155,6 +155,7 @@ struct Args {
         help = "Target size (width,height)",
         long = "size",
         short = 's',
+        conflicts_with = "spacing",
         value_parser = clap::builder::ValueParser::new(|s: &str| {
             let parts: Vec<&str> = s.split(',').collect();
             if parts.len() == 2 {
@@ -167,6 +168,28 @@ struct Args {
         })
     )]
     size: Option<(u32, u32)>,
+
+    #[arg(
+        help = "Target pixel/voxel spacing in mm (x,y or x,y,z)",
+        long = "spacing",
+        conflicts_with = "size",
+        value_parser = clap::builder::ValueParser::new(|s: &str| {
+            let parts: Vec<&str> = s.split(',').collect();
+            if parts.len() == 2 {
+                let x = parts[0].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid x spacing"))?;
+                let y = parts[1].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid y spacing"))?;
+                Ok((x, y, None))
+            } else if parts.len() == 3 {
+                let x = parts[0].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid x spacing"))?;
+                let y = parts[1].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid y spacing"))?;
+                let z = parts[2].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid z spacing"))?;
+                Ok((x, y, Some(z)))
+            } else {
+                Err(clap::Error::raw(ErrorKind::InvalidValue, "Spacing must be in the format x,y or x,y,z"))
+            }
+        })
+    )]
+    spacing: Option<(f32, f32, Option<f32>)>,
 
     #[arg(
         help = "Filter type",
@@ -404,9 +427,20 @@ fn run(args: Args) -> Result<(), Error> {
             .with_voi_lut(VoiLutOption::Custom(WindowLevel { width, center })),
         None => ConvertOptions::default(),
     };
+
+    // Convert spacing argument to SpacingConfig
+    let spacing_config = args.spacing.map(|(x, y, z)| {
+        let mut config = dicom_preprocessing::preprocess::SpacingConfig::new(x, y);
+        if let Some(z_val) = z {
+            config = config.with_spacing_z(z_val);
+        }
+        config
+    });
+
     let preprocessor = Preprocessor {
         crop: args.crop,
         size: args.size,
+        spacing: spacing_config,
         filter: args.filter,
         padding_direction: args.padding_direction,
         crop_max: args.crop_max,
@@ -524,6 +558,7 @@ mod tests {
             output: output_dir.path().to_path_buf(),
             crop: true,
             size: Some((64, 64)),
+            spacing: None,
             filter: FilterType::default(),
             padding_direction: PaddingDirection::default(),
             strict: true,

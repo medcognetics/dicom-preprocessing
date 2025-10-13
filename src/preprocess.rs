@@ -1,5 +1,5 @@
 use dicom::core::header::HasLength;
-use image::DynamicImage;
+use image::{DynamicImage, GenericImageView};
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -12,11 +12,46 @@ use crate::transform::{
     Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
 
+/// Configuration for spacing-based resizing
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SpacingConfig {
+    /// Target pixel spacing in mm for x dimension
+    pub spacing_mm_x: f32,
+    /// Target pixel spacing in mm for y dimension
+    pub spacing_mm_y: f32,
+    /// Target spacing in mm for z dimension (between frames)
+    pub spacing_mm_z: Option<f32>,
+}
+
+impl SpacingConfig {
+    pub fn new(spacing_mm_x: f32, spacing_mm_y: f32) -> Self {
+        Self {
+            spacing_mm_x,
+            spacing_mm_y,
+            spacing_mm_z: None,
+        }
+    }
+
+    pub fn new_3d(spacing_mm_x: f32, spacing_mm_y: f32, spacing_mm_z: f32) -> Self {
+        Self {
+            spacing_mm_x,
+            spacing_mm_y,
+            spacing_mm_z: Some(spacing_mm_z),
+        }
+    }
+
+    pub fn with_spacing_z(mut self, spacing_mm_z: f32) -> Self {
+        self.spacing_mm_z = Some(spacing_mm_z);
+        self
+    }
+}
+
 // Responsible for preprocessing image data before saving
 #[derive(Debug, Clone)]
 pub struct Preprocessor {
     pub crop: bool,
     pub size: Option<(u32, u32)>,
+    pub spacing: Option<SpacingConfig>,
     pub filter: resize::FilterType,
     pub padding_direction: PaddingDirection,
     pub crop_max: bool,
@@ -33,6 +68,7 @@ impl Default for Preprocessor {
         Preprocessor {
             crop: true,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Triangle,
             padding_direction: PaddingDirection::Zero,
             crop_max: true,
@@ -59,19 +95,52 @@ impl Preprocessor {
         }
     }
 
-    fn get_resize(&self, images: &[DynamicImage]) -> Option<Resize> {
-        match self.size {
-            Some((target_width, target_height)) => {
+    fn get_resize(
+        &self,
+        images: &[DynamicImage],
+        resolution: &Option<Resolution>,
+    ) -> Option<Resize> {
+        // Compute target size from either fixed size or spacing
+        let target_size = match (self.size, self.spacing, resolution) {
+            // Fixed size takes precedence
+            (Some((w, h)), _, _) => Some((w, h)),
+            // Spacing-based sizing requires resolution info
+            (None, Some(spacing_config), Some(res)) => {
                 let first_image = images.first().unwrap();
-                let config = Resize::new(first_image, target_width, target_height, self.filter);
-                Some(config)
+                let (current_width, current_height) = first_image.dimensions();
+
+                // Target resolution = 1 / target_spacing_mm
+                let target_pixels_per_mm_x = 1.0 / spacing_config.spacing_mm_x;
+                let target_pixels_per_mm_y = 1.0 / spacing_config.spacing_mm_y;
+
+                // Scale factor = target_resolution / current_resolution
+                let scale_x = target_pixels_per_mm_x / res.pixels_per_mm_x;
+                let scale_y = target_pixels_per_mm_y / res.pixels_per_mm_y;
+
+                // New dimensions
+                let target_width = (current_width as f32 * scale_x).round() as u32;
+                let target_height = (current_height as f32 * scale_y).round() as u32;
+
+                Some((target_width, target_height))
             }
-            None => None,
-        }
+            _ => None,
+        };
+
+        target_size.map(|(target_width, target_height)| {
+            let first_image = images.first().unwrap();
+            Resize::new(first_image, target_width, target_height, self.filter)
+        })
     }
 
-    fn get_padding(&self, images: &[DynamicImage]) -> Option<Padding> {
-        match (self.use_padding, self.size) {
+    fn get_padding(
+        &self,
+        images: &[DynamicImage],
+        _resize_config: &Option<Resize>,
+    ) -> Option<Padding> {
+        // Use self.size directly - if resize happened, the images are already at the correct size
+        let target_size = self.size;
+
+        match (self.use_padding, target_size) {
             (true, Some((target_width, target_height))) => {
                 let first_image = images.first().unwrap();
                 let config = Padding::new(
@@ -81,6 +150,28 @@ impl Preprocessor {
                     self.padding_direction,
                 );
                 Some(config)
+            }
+            _ => None,
+        }
+    }
+
+    /// Compute target frame count based on spacing configuration
+    /// TODO: This will be used in future for z-spacing based frame interpolation
+    #[allow(dead_code)]
+    fn get_target_frames(&self, resolution: &Option<Resolution>) -> Option<u32> {
+        match (self.spacing, resolution) {
+            (Some(spacing_config), Some(res))
+                if spacing_config.spacing_mm_z.is_some() && res.frames_per_mm.is_some() =>
+            {
+                let target_spacing_mm_z = spacing_config.spacing_mm_z.unwrap();
+                let target_frames_per_mm = 1.0 / target_spacing_mm_z;
+                let current_frames_per_mm = res.frames_per_mm.unwrap();
+
+                // Scale factor for frames
+                let scale_z = target_frames_per_mm / current_frames_per_mm;
+
+                // Compute target frame count (assumes we know current frame count from volume handler)
+                Some((self.target_frames as f32 * scale_z).round() as u32)
             }
             _ => None,
         }
@@ -123,7 +214,7 @@ impl Preprocessor {
         }?;
 
         // Try to determine the resolution from pixel spacing attributes
-        let resolution = Resolution::try_from(file).ok();
+        let mut resolution = Resolution::try_from(file).ok();
 
         // Determine and apply crop
         let crop_config = self.get_crop(&image_data);
@@ -133,20 +224,19 @@ impl Preprocessor {
         };
 
         // Determine and apply resize, ensuring we also update the resolution
-        let resize_config = self.get_resize(&image_data);
+        let resize_config = self.get_resize(&image_data, &resolution);
         let image_data = match &resize_config {
             Some(config) => config.apply_iter(image_data.into_iter()).collect(),
             None => image_data,
         };
 
         // Update the resolution if we resized
-        let resolution = match (resolution, &resize_config) {
-            (Some(res), Some(config)) => Some(config.apply(&res)),
-            _ => None,
-        };
+        if let (Some(res), Some(config)) = (&resolution, &resize_config) {
+            resolution = Some(config.apply(res));
+        }
 
         // Determine and apply padding
-        let padding_config = self.get_padding(&image_data);
+        let padding_config = self.get_padding(&image_data, &resize_config);
         let image_data = match &padding_config {
             Some(config) => config.apply_iter(image_data.into_iter()).collect(),
             None => image_data,
@@ -172,7 +262,7 @@ impl Preprocessor {
     #[cfg(test)]
     fn prepare_image_for_test(
         &self,
-        images: &Vec<DynamicImage>,
+        images: &[DynamicImage],
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Try to determine the resolution (none for test images)
         let resolution = None;
@@ -180,12 +270,12 @@ impl Preprocessor {
         // Determine and apply crop
         let crop_config = self.get_crop(images);
         let image_data = match &crop_config {
-            Some(config) => config.apply_iter(images.clone().into_iter()).collect(),
-            None => images.clone(),
+            Some(config) => config.apply_iter(images.iter().cloned()).collect(),
+            None => images.to_vec(),
         };
 
         // Determine and apply resize, ensuring we also update the resolution
-        let resize_config = self.get_resize(&image_data);
+        let resize_config = self.get_resize(&image_data, &resolution);
         let image_data = match &resize_config {
             Some(config) => config.apply_iter(image_data.into_iter()).collect(),
             None => image_data,
@@ -198,7 +288,7 @@ impl Preprocessor {
         };
 
         // Determine and apply padding
-        let padding_config = self.get_padding(&image_data);
+        let padding_config = self.get_padding(&image_data, &resize_config);
         let image_data = match &padding_config {
             Some(config) => config.apply_iter(image_data.into_iter()).collect(),
             None => image_data,
@@ -238,6 +328,7 @@ mod tests {
         Preprocessor {
             crop: true,
             size: Some((64, 64)),
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -255,6 +346,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -272,6 +364,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -289,6 +382,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -306,6 +400,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -323,6 +418,7 @@ mod tests {
         Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -406,6 +502,7 @@ mod tests {
         let preprocessor = Preprocessor {
             crop: false,
             size: Some((target_width, target_height)),
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::Center,
             crop_max: false,
@@ -417,7 +514,8 @@ mod tests {
             convert_options: ConvertOptions::default(),
         };
 
-        let padding = preprocessor.get_padding(&[dynamic_image]);
+        let resize_config = None;
+        let padding = preprocessor.get_padding(&[dynamic_image], &resize_config);
         assert_eq!(padding, expected_padding);
     }
 
@@ -465,6 +563,7 @@ mod tests {
         let preprocessor = Preprocessor {
             crop: true,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::Center,
             crop_max: false,
@@ -477,7 +576,7 @@ mod tests {
         };
 
         let (processed_images, metadata) = preprocessor
-            .prepare_image_for_test(&vec![dynamic_image])
+            .prepare_image_for_test(&[dynamic_image])
             .unwrap();
 
         assert_eq!(processed_images.len(), 1);
@@ -509,6 +608,7 @@ mod tests {
         let preprocessor_1 = Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -523,6 +623,7 @@ mod tests {
         let preprocessor_2 = Preprocessor {
             crop: false,
             size: None,
+            spacing: None,
             filter: resize::FilterType::Nearest,
             padding_direction: PaddingDirection::default(),
             crop_max: false,
@@ -568,6 +669,131 @@ mod tests {
         assert!(
             found_difference,
             "Images should be different when using different convert_options"
+        );
+    }
+
+    #[rstest]
+    #[case("pydicom/CT_small.dcm", 1.0, 1.0)]
+    #[case("pydicom/CT_small.dcm", 0.5, 0.5)]
+    #[case("pydicom/CT_small.dcm", 2.0, 2.0)]
+    fn test_spacing_based_resize(
+        #[case] dicom_file_path: &str,
+        #[case] target_spacing_x: f32,
+        #[case] target_spacing_y: f32,
+    ) {
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Get native resolution
+        let native_resolution = Resolution::try_from(&dicom_file).unwrap();
+        let native_spacing_x = 1.0 / native_resolution.pixels_per_mm_x;
+        let native_spacing_y = 1.0 / native_resolution.pixels_per_mm_y;
+
+        // Get native dimensions
+        let native_width = dicom_file
+            .get(tags::COLUMNS)
+            .unwrap()
+            .to_int::<u32>()
+            .unwrap();
+        let native_height = dicom_file.get(tags::ROWS).unwrap().to_int::<u32>().unwrap();
+
+        // Create preprocessor with spacing config
+        let spacing_config = SpacingConfig::new(target_spacing_x, target_spacing_y);
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: Some(spacing_config),
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the DICOM file
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+        assert_eq!(images.len(), 1);
+
+        // Check that the output dimensions match expected scaling
+        let (output_width, output_height) = images[0].dimensions();
+        let expected_width =
+            (native_width as f32 * (native_spacing_x / target_spacing_x)).round() as u32;
+        let expected_height =
+            (native_height as f32 * (native_spacing_y / target_spacing_y)).round() as u32;
+
+        assert_eq!(
+            output_width, expected_width,
+            "Width should match expected based on spacing"
+        );
+        assert_eq!(
+            output_height, expected_height,
+            "Height should match expected based on spacing"
+        );
+
+        // Verify resolution metadata was updated correctly
+        let output_resolution = metadata.resolution.unwrap();
+        let output_spacing_x = 1.0 / output_resolution.pixels_per_mm_x;
+        let output_spacing_y = 1.0 / output_resolution.pixels_per_mm_y;
+
+        // Allow small floating point error (tolerance is higher for larger spacing values)
+        let tolerance = target_spacing_x.max(target_spacing_y) * 0.02; // 2% tolerance
+        assert!((output_spacing_x - target_spacing_x).abs() < tolerance,
+            "Output spacing X should be close to target. Got {output_spacing_x} expected {target_spacing_x}");
+        assert!((output_spacing_y - target_spacing_y).abs() < tolerance,
+            "Output spacing Y should be close to target. Got {output_spacing_y} expected {target_spacing_y}");
+    }
+
+    #[rstest]
+    #[case("pydicom/CT_small.dcm")]
+    fn test_spacing_without_resolution_does_nothing(#[case] dicom_file_path: &str) {
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Get native dimensions
+        let native_width = dicom_file
+            .get(tags::COLUMNS)
+            .unwrap()
+            .to_int::<u32>()
+            .unwrap();
+        let native_height = dicom_file.get(tags::ROWS).unwrap().to_int::<u32>().unwrap();
+
+        // Create preprocessor with spacing but remove resolution from the file
+        let spacing_config = SpacingConfig::new(1.0, 1.0);
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: Some(spacing_config),
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Create a copy without pixel spacing
+        let mut file_without_spacing = dicom_file.clone();
+        file_without_spacing.remove_element(tags::PIXEL_SPACING);
+        file_without_spacing.remove_element(tags::IMAGER_PIXEL_SPACING);
+
+        // Process - should keep original dimensions since no resolution info available
+        let (images, _) = preprocessor
+            .prepare_image(&file_without_spacing, false)
+            .unwrap();
+
+        let (output_width, output_height) = images[0].dimensions();
+        assert_eq!(
+            output_width, native_width,
+            "Width should remain unchanged without resolution info"
+        );
+        assert_eq!(
+            output_height, native_height,
+            "Height should remain unchanged without resolution info"
         );
     }
 }

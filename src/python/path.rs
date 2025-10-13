@@ -210,7 +210,7 @@ mod tests {
     #[case("/absolute/path")]
     #[case("relative/path/with/multiple/segments")]
     fn test_pypath_roundtrip(#[case] path: &str) {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             // Python Path -> PyPath
             let pathlib = py.import("pathlib").unwrap();
             let path_class = pathlib.getattr("Path").unwrap();
@@ -227,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_pypath_from_string() {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let path = "test/path";
             let py_str = path.into_pyobject(py).unwrap().unbind();
             let py_path: PyPath = py_str.extract(py).unwrap();

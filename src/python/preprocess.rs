@@ -44,6 +44,7 @@ impl PyPreprocessor {
     #[pyo3(signature = (
         crop=true,
         size=None,
+        spacing=None,
         filter="triangle",
         padding_direction="zero",
         crop_max=true,
@@ -58,6 +59,7 @@ impl PyPreprocessor {
     fn new(
         crop: bool,
         size: Option<(u32, u32)>,
+        spacing: Option<(f32, f32, Option<f32>)>,
         filter: &str,
         padding_direction: &str,
         crop_max: bool,
@@ -129,10 +131,19 @@ impl PyPreprocessor {
             }
         };
 
+        let spacing_config = spacing.map(|(x, y, z)| {
+            use crate::preprocess::SpacingConfig;
+            match z {
+                Some(z_val) => SpacingConfig::new_3d(x, y, z_val),
+                None => SpacingConfig::new(x, y),
+            }
+        });
+
         Ok(Self {
             inner: Preprocessor {
                 crop,
                 size,
+                spacing: spacing_config,
                 filter,
                 padding_direction,
                 crop_max,
@@ -148,9 +159,10 @@ impl PyPreprocessor {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Preprocessor(crop={}, size={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={}, convert_options={:?})",
+            "Preprocessor(crop={}, size={:?}, spacing={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={}, convert_options={:?})",
             self.inner.crop,
             self.inner.size,
+            self.inner.spacing,
             self.inner.filter,
             self.inner.padding_direction,
             self.inner.crop_max,

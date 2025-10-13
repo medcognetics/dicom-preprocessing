@@ -52,3 +52,8 @@ quality = [
   "flake8",
   "isort",
 ]
+
+[dependency-groups]
+build = [
+    "maturin>=1.0,<2.0",
+]

@@ -303,10 +303,11 @@ impl Preprocessor {
             });
         }
 
-        // Decode all files and collect their images
-        let mut all_decoded_images: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
+        // Decode all files and collect their images into a single volume
+        // For CT scans, each file is typically a single 2D slice
+        let mut combined_volume: Vec<DynamicImage> = Vec::new();
         for file in files {
-            let mut images = match parallel {
+            let images = match parallel {
                 false => self
                     .volume_handler
                     .decode_volume_with_options(file, &self.convert_options),
@@ -315,61 +316,49 @@ impl Preprocessor {
                     .par_decode_volume_with_options(file, &self.convert_options),
             }?;
 
-            // Apply z-spacing interpolation if needed for this file
-            let file_resolution = Resolution::try_from(file).ok();
-            if let Some(target_frames) =
-                self.compute_target_frame_count(images.len(), &file_resolution)
-            {
-                images = self.interpolate_z_spacing(images, target_frames);
-            }
-
-            all_decoded_images.push(images);
+            // Add all frames from this file to the combined volume
+            combined_volume.extend(images);
         }
 
         // Try to determine the resolution from the first file's pixel spacing attributes
         let mut resolution = Resolution::try_from(&files[0]).ok();
 
-        // Update z-resolution if we applied z-spacing interpolation
-        if let Some(ref mut res) = resolution {
-            if let Some(spacing_config) = self.spacing {
-                if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
-                    res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
+        // Apply z-spacing interpolation to the entire combined volume
+        if let Some(target_frames) =
+            self.compute_target_frame_count(combined_volume.len(), &resolution)
+        {
+            combined_volume = self.interpolate_z_spacing(combined_volume, target_frames);
+
+            // Update the z-resolution after interpolation
+            if let Some(ref mut res) = resolution {
+                if let Some(spacing_config) = self.spacing {
+                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
+                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
+                    }
                 }
             }
         }
 
-        // Flatten all images to determine common crop bounds
-        let all_images_flat: Vec<DynamicImage> = all_decoded_images
-            .iter()
-            .flat_map(|images| images.iter().cloned())
-            .collect();
+        // Use the combined volume for determining common crop bounds
+        let all_images_flat = combined_volume;
 
-        // Determine common crop bounds across all images
+        // Determine common crop bounds across all images in the volume
         let crop_config = self.get_crop(&all_images_flat);
 
-        // Apply crop to each batch of images
-        let mut cropped_batches: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
-        for images in all_decoded_images {
-            let cropped = match &crop_config {
-                Some(config) => config.apply_iter(images.into_iter()).collect(),
-                None => images,
-            };
-            cropped_batches.push(cropped);
-        }
+        // Apply crop to the entire volume
+        let cropped_volume = match &crop_config {
+            Some(config) => config.apply_iter(all_images_flat.into_iter()).collect(),
+            None => all_images_flat,
+        };
 
-        // For resize and padding, use the first image from the first batch as reference
-        let first_image = &cropped_batches[0][0];
-        let resize_config = self.get_resize(&[first_image.clone()], &resolution);
+        // Determine resize from the first image in the volume
+        let resize_config = self.get_resize(&cropped_volume, &resolution);
 
-        // Apply resize to each batch
-        let mut resized_batches: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
-        for images in cropped_batches {
-            let resized = match &resize_config {
-                Some(config) => config.apply_iter(images.into_iter()).collect(),
-                None => images,
-            };
-            resized_batches.push(resized);
-        }
+        // Apply resize to the entire volume
+        let resized_volume = match &resize_config {
+            Some(config) => config.apply_iter(cropped_volume.into_iter()).collect(),
+            None => cropped_volume,
+        };
 
         // Update the resolution if we resized
         if let (Some(res), Some(config)) = (&resolution, &resize_config) {
@@ -377,24 +366,24 @@ impl Preprocessor {
         }
 
         // Determine padding from the first image
-        let first_image = &resized_batches[0][0];
-        let padding_config = self.get_padding(&[first_image.clone()], &resize_config);
+        let padding_config = self.get_padding(&resized_volume, &resize_config);
 
-        // Apply padding to each batch
-        let mut padded_batches: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
-        for images in resized_batches {
-            let padded = match &padding_config {
-                Some(config) => config.apply_iter(images.into_iter()).collect(),
-                None => images,
-            };
-            padded_batches.push(padded);
-        }
+        // Apply padding to the entire volume
+        let padded_volume: Vec<DynamicImage> = match &padding_config {
+            Some(config) => config.apply_iter(resized_volume.into_iter()).collect(),
+            None => resized_volume,
+        };
 
-        // Calculate total frames
-        let num_frames = padded_batches.iter().map(|b| b.len()).sum::<usize>().into();
+        let num_frames = padded_volume.len().into();
+
+        // Split the volume back into individual slices
+        // After z-interpolation, the number of output slices may differ from input
+        // Each output slice is a single frame
+        let result_batches: Vec<Vec<DynamicImage>> =
+            padded_volume.into_iter().map(|image| vec![image]).collect();
 
         Ok((
-            padded_batches,
+            result_batches,
             PreprocessingMetadata {
                 crop: crop_config,
                 resize: resize_config,

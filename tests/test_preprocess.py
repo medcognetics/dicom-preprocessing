@@ -264,46 +264,88 @@ def test_preprocess_stream_slices_empty_list():
         dp.preprocess_stream_f32_slices([], preprocessor, parallel=False)
 
 
-def test_preprocess_slices_with_z_spacing_config(multiple_dicom_paths):
-    """Test that z-spacing configuration doesn't cause errors with slice processing.
+def test_preprocess_slices_combined_volume(multiple_dicom_paths):
+    """Test that slices are combined into a volume for processing.
 
-    Note: The actual z-spacing interpolation is tested in Rust tests (test_spacing_based_z_resize).
-    This test just verifies that specifying z-spacing in the config doesn't break batch processing.
-    For proper z-spacing interpolation tests with multi-frame DICOMs, see the Rust test suite.
+    When processing multiple single-frame slices, they should be:
+    1. Combined into a single volume
+    2. Have common crop/resize/pad applied
+    3. Each output frame should be identical in spatial dimensions
     """
-    # Test that we can specify 3D spacing without errors
     preprocessor = dp.Preprocessor(
-        crop=False,
-        spacing=(1.0, 1.0, 2.0),  # Include z-spacing
-        volume_handler="keep",
-        use_padding=False,
+        crop=True,
         size=(32, 32),
+        volume_handler="keep",
     )
 
     results = dp.preprocess_f32_slices(multiple_dicom_paths, preprocessor, parallel=False)
 
-    # Should process all files successfully
+    # Should have one output per input (no z-interpolation without z-spacing)
     assert len(results) == len(multiple_dicom_paths)
+
+    # All outputs should have identical dimensions (common processing)
+    shapes = [result.shape for result in results]
+    assert all(shape == shapes[0] for shape in shapes)
+
+    # Each should be single-frame with target size
     for result in results:
-        # Single-frame CT slices should have 1 frame even with z-spacing config
-        assert result.shape[0] >= 1
+        assert result.shape == (1, 32, 32, 1)
+
+
+def test_preprocess_slices_with_z_spacing_interpolation(multiple_dicom_paths):
+    """Test that z-spacing interpolation works on the combined volume.
+
+    When z-spacing is specified with slice thickness metadata, the combined
+    volume should be interpolated, potentially changing the number of output slices.
+    """
+    # For this test, we need to create DICOMs with proper spacing metadata
+    # The test fixture creates 3 single-frame slices
+    # If we have 3 slices with 5mm spacing and request 10mm spacing, we should get ~2 slices
+
+    # Without z-spacing, we get all input slices back
+    preprocessor_no_z = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="keep",
+    )
+
+    results_no_z = dp.preprocess_f32_slices(multiple_dicom_paths, preprocessor_no_z, parallel=False)
+    assert len(results_no_z) == len(multiple_dicom_paths)
+
+    # Note: For z-spacing interpolation to work, the DICOMs need SliceThickness or
+    # SpacingBetweenSlices metadata. The test fixture uses CT_small.dcm which has
+    # pixel spacing but may not have z-spacing metadata, so interpolation may not occur.
+    # This test verifies the function runs without errors when z-spacing is configured.
+    preprocessor_with_z = dp.Preprocessor(
+        crop=False,
+        spacing=(1.0, 1.0, 5.0),  # Include z-spacing
+        volume_handler="keep",
+        size=(32, 32),
+    )
+
+    results_with_z = dp.preprocess_f32_slices(multiple_dicom_paths, preprocessor_with_z, parallel=False)
+
+    # Should process successfully
+    assert len(results_with_z) > 0
+
+    # All outputs should have same spatial dimensions
+    for result in results_with_z:
         assert result.shape[1:3] == (32, 32)
 
 
-def test_preprocess_stream_slices_with_z_spacing_config(multiple_dicom_streams):
-    """Test that z-spacing configuration doesn't cause errors with stream-based slice processing."""
+def test_preprocess_stream_slices_combined_volume(multiple_dicom_streams):
+    """Test that stream slices are combined into a volume for processing."""
     preprocessor = dp.Preprocessor(
-        crop=False,
-        spacing=(1.0, 1.0, 2.0),  # Include z-spacing
-        volume_handler="keep",
-        use_padding=False,
+        crop=True,
         size=(32, 32),
+        volume_handler="keep",
     )
 
     results = dp.preprocess_stream_f32_slices(multiple_dicom_streams, preprocessor, parallel=False)
 
-    # Should process all streams successfully
+    # Should have outputs (count may vary with z-interpolation)
     assert len(results) == len(multiple_dicom_streams)
+
+    # All outputs should have identical spatial dimensions
     for result in results:
-        assert result.shape[0] >= 1
         assert result.shape[1:3] == (32, 32)

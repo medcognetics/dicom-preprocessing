@@ -241,19 +241,25 @@ def preprocess_stream_f32(
 def preprocess_u8_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint8]]:
-    """Preprocess multiple DICOM files (slices) with common crop bounds and return as 8-bit unsigned integer arrays.
+    """Preprocess multiple DICOM files (slices) as a combined volume and return as 8-bit unsigned integer arrays.
 
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
-    Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
-    have the same spatial dimensions.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
 
     Args:
-        paths: Sequence of paths to DICOM files, in desired output order
-        preprocessor: Optional preprocessing configuration
+        paths: Sequence of paths to DICOM files, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing is configured,
+                     the number of output slices may differ from input count.
         parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
-        List of 4D arrays with shape :math:`(N, H, W, C)`, one per input slice, in input order
+        List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-spacing interpolation is applied.
 
     Raises:
         FileNotFoundError: If any file cannot be found
@@ -264,19 +270,25 @@ def preprocess_u8_slices(
 def preprocess_u16_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint16]]:
-    """Preprocess multiple DICOM files (slices) with common crop bounds and return as 16-bit unsigned integer arrays.
+    """Preprocess multiple DICOM files (slices) as a combined volume and return as 16-bit unsigned integer arrays.
 
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
-    Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
-    have the same spatial dimensions.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
 
     Args:
-        paths: Sequence of paths to DICOM files, in desired output order
-        preprocessor: Optional preprocessing configuration
+        paths: Sequence of paths to DICOM files, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing is configured,
+                     the number of output slices may differ from input count.
         parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
-        List of 4D arrays with shape :math:`(N, H, W, C)`, one per input slice, in input order
+        List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-spacing interpolation is applied.
 
     Raises:
         FileNotFoundError: If any file cannot be found
@@ -287,20 +299,26 @@ def preprocess_u16_slices(
 def preprocess_f32_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.float32]]:
-    """Preprocess multiple DICOM files (slices) with common crop bounds and return as 32-bit floating point arrays.
+    """Preprocess multiple DICOM files (slices) as a combined volume and return as 32-bit floating point arrays.
     Values are scaled to the range :math:`[0, 1]`.
 
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
-    Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
-    have the same spatial dimensions.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
 
     Args:
-        paths: Sequence of paths to DICOM files, in desired output order
-        preprocessor: Optional preprocessing configuration
+        paths: Sequence of paths to DICOM files, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing is configured,
+                     the number of output slices may differ from input count.
         parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
-        List of 4D arrays with shape :math:`(N, H, W, C)`, one per input slice, in input order
+        List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-spacing interpolation is applied.
 
     Raises:
         FileNotFoundError: If any file cannot be found
@@ -311,19 +329,25 @@ def preprocess_f32_slices(
 def preprocess_stream_u8_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint8]]:
-    """Preprocess multiple DICOM files (slices) from bytes buffers with common crop bounds and return as 8-bit unsigned integer arrays.
+    """Preprocess multiple DICOM files (slices) from bytes buffers as a combined volume and return as 8-bit unsigned integer arrays.
 
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
-    Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
-    have the same spatial dimensions.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
 
     Args:
-        buffers: Sequence of DICOM file contents as bytes, in desired output order
-        preprocessor: Optional preprocessing configuration
+        buffers: Sequence of DICOM file contents as bytes, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing is configured,
+                     the number of output slices may differ from input count.
         parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
-        List of 4D arrays with shape :math:`(N, H, W, C)`, one per input slice, in input order
+        List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-spacing interpolation is applied.
 
     Raises:
         RuntimeError: If preprocessing fails or buffers list is empty
@@ -334,19 +358,25 @@ def preprocess_stream_u8_slices(
 def preprocess_stream_u16_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint16]]:
-    """Preprocess multiple DICOM files (slices) from bytes buffers with common crop bounds and return as 16-bit unsigned integer arrays.
+    """Preprocess multiple DICOM files (slices) from bytes buffers as a combined volume and return as 16-bit unsigned integer arrays.
 
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
-    Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
-    have the same spatial dimensions.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
 
     Args:
-        buffers: Sequence of DICOM file contents as bytes, in desired output order
-        preprocessor: Optional preprocessing configuration
+        buffers: Sequence of DICOM file contents as bytes, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing is configured,
+                     the number of output slices may differ from input count.
         parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
-        List of 4D arrays with shape :math:`(N, H, W, C)`, one per input slice, in input order
+        List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-spacing interpolation is applied.
 
     Raises:
         RuntimeError: If preprocessing fails or buffers list is empty
@@ -357,20 +387,26 @@ def preprocess_stream_u16_slices(
 def preprocess_stream_f32_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.float32]]:
-    """Preprocess multiple DICOM files (slices) from bytes buffers with common crop bounds and return as 32-bit floating point arrays.
+    """Preprocess multiple DICOM files (slices) from bytes buffers as a combined volume and return as 32-bit floating point arrays.
     Values are scaled to the range :math:`[0, 1]`.
 
     This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
-    Crop bounds are determined across all slices and applied consistently, ensuring all output arrays
-    have the same spatial dimensions.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
 
     Args:
-        buffers: Sequence of DICOM file contents as bytes, in desired output order
-        preprocessor: Optional preprocessing configuration
+        buffers: Sequence of DICOM file contents as bytes, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing is configured,
+                     the number of output slices may differ from input count.
         parallel: Whether to use parallel processing for multi-frame targets
 
     Returns:
-        List of 4D arrays with shape :math:`(N, H, W, C)`, one per input slice, in input order
+        List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-spacing interpolation is applied.
 
     Raises:
         RuntimeError: If preprocessing fails or buffers list is empty

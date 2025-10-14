@@ -306,7 +306,7 @@ impl Preprocessor {
         // Decode all files and collect their images
         let mut all_decoded_images: Vec<Vec<DynamicImage>> = Vec::with_capacity(files.len());
         for file in files {
-            let images = match parallel {
+            let mut images = match parallel {
                 false => self
                     .volume_handler
                     .decode_volume_with_options(file, &self.convert_options),
@@ -314,11 +314,29 @@ impl Preprocessor {
                     .volume_handler
                     .par_decode_volume_with_options(file, &self.convert_options),
             }?;
+
+            // Apply z-spacing interpolation if needed for this file
+            let file_resolution = Resolution::try_from(file).ok();
+            if let Some(target_frames) =
+                self.compute_target_frame_count(images.len(), &file_resolution)
+            {
+                images = self.interpolate_z_spacing(images, target_frames);
+            }
+
             all_decoded_images.push(images);
         }
 
         // Try to determine the resolution from the first file's pixel spacing attributes
         let mut resolution = Resolution::try_from(&files[0]).ok();
+
+        // Update z-resolution if we applied z-spacing interpolation
+        if let Some(ref mut res) = resolution {
+            if let Some(spacing_config) = self.spacing {
+                if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
+                    res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
+                }
+            }
+        }
 
         // Flatten all images to determine common crop bounds
         let all_images_flat: Vec<DynamicImage> = all_decoded_images

@@ -262,3 +262,48 @@ def test_preprocess_stream_slices_empty_list():
 
     with pytest.raises(RuntimeError, match="Cannot process empty"):
         dp.preprocess_stream_f32_slices([], preprocessor, parallel=False)
+
+
+def test_preprocess_slices_with_z_spacing_config(multiple_dicom_paths):
+    """Test that z-spacing configuration doesn't cause errors with slice processing.
+
+    Note: The actual z-spacing interpolation is tested in Rust tests (test_spacing_based_z_resize).
+    This test just verifies that specifying z-spacing in the config doesn't break batch processing.
+    For proper z-spacing interpolation tests with multi-frame DICOMs, see the Rust test suite.
+    """
+    # Test that we can specify 3D spacing without errors
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        spacing=(1.0, 1.0, 2.0),  # Include z-spacing
+        volume_handler="keep",
+        use_padding=False,
+        size=(32, 32),
+    )
+
+    results = dp.preprocess_f32_slices(multiple_dicom_paths, preprocessor, parallel=False)
+
+    # Should process all files successfully
+    assert len(results) == len(multiple_dicom_paths)
+    for result in results:
+        # Single-frame CT slices should have 1 frame even with z-spacing config
+        assert result.shape[0] >= 1
+        assert result.shape[1:3] == (32, 32)
+
+
+def test_preprocess_stream_slices_with_z_spacing_config(multiple_dicom_streams):
+    """Test that z-spacing configuration doesn't cause errors with stream-based slice processing."""
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        spacing=(1.0, 1.0, 2.0),  # Include z-spacing
+        volume_handler="keep",
+        use_padding=False,
+        size=(32, 32),
+    )
+
+    results = dp.preprocess_stream_f32_slices(multiple_dicom_streams, preprocessor, parallel=False)
+
+    # Should process all streams successfully
+    assert len(results) == len(multiple_dicom_streams)
+    for result in results:
+        assert result.shape[0] >= 1
+        assert result.shape[1:3] == (32, 32)

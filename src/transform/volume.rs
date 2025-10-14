@@ -357,7 +357,7 @@ impl InterpolateVolume {
     }
 
     /// Interpolate between frames using linear interpolation
-    fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
+    pub fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
         if frames.len() <= 1 {
             return frames.to_vec();
         }

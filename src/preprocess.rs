@@ -155,10 +155,12 @@ impl Preprocessor {
         }
     }
 
-    /// Compute target frame count based on spacing configuration
-    /// TODO: This will be used in future for z-spacing based frame interpolation
-    #[allow(dead_code)]
-    fn get_target_frames(&self, resolution: &Option<Resolution>) -> Option<u32> {
+    /// Compute target frame count based on spacing configuration and current frame count
+    fn compute_target_frame_count(
+        &self,
+        current_frame_count: usize,
+        resolution: &Option<Resolution>,
+    ) -> Option<u32> {
         match (self.spacing, resolution) {
             (Some(spacing_config), Some(res))
                 if spacing_config.spacing_mm_z.is_some() && res.frames_per_mm.is_some() =>
@@ -170,11 +172,26 @@ impl Preprocessor {
                 // Scale factor for frames
                 let scale_z = target_frames_per_mm / current_frames_per_mm;
 
-                // Compute target frame count (assumes we know current frame count from volume handler)
-                Some((self.target_frames as f32 * scale_z).round() as u32)
+                // Compute target frame count based on actual current frame count
+                Some((current_frame_count as f32 * scale_z).round() as u32)
             }
             _ => None,
         }
+    }
+
+    /// Apply z-direction interpolation to resample frames based on spacing
+    fn interpolate_z_spacing(
+        &self,
+        images: Vec<DynamicImage>,
+        target_frames: u32,
+    ) -> Vec<DynamicImage> {
+        use crate::volume::InterpolateVolume;
+
+        if images.len() <= 1 || target_frames <= 1 || images.len() == target_frames as usize {
+            return images;
+        }
+
+        InterpolateVolume::interpolate_frames(&images, target_frames)
     }
 
     /// Decoding will error if the VOILUT tag is present but empty.
@@ -204,7 +221,7 @@ impl Preprocessor {
         parallel: bool,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
-        let image_data = match parallel {
+        let mut image_data = match parallel {
             false => self
                 .volume_handler
                 .decode_volume_with_options(file, &self.convert_options),
@@ -215,6 +232,21 @@ impl Preprocessor {
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
+
+        // Apply z-spacing interpolation if needed
+        if let Some(target_frames) = self.compute_target_frame_count(image_data.len(), &resolution)
+        {
+            image_data = self.interpolate_z_spacing(image_data, target_frames);
+
+            // Update the z-resolution after interpolation
+            if let Some(ref mut res) = resolution {
+                if let Some(spacing_config) = self.spacing {
+                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
+                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
+                    }
+                }
+            }
+        }
 
         // Determine and apply crop
         let crop_config = self.get_crop(&image_data);
@@ -417,6 +449,7 @@ mod tests {
 
     use dicom::object::open_file;
 
+    use crate::metadata::FrameCount;
     use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
     use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
@@ -893,6 +926,80 @@ mod tests {
         assert_eq!(
             output_height, native_height,
             "Height should remain unchanged without resolution info"
+        );
+    }
+
+    #[rstest]
+    #[case("pydicom/emri_small.dcm", 10.0)] // Upsample: larger spacing = fewer frames
+    #[case("pydicom/emri_small.dcm", 2.5)] // Downsample: smaller spacing = more frames
+    fn test_spacing_based_z_resize(#[case] dicom_file_path: &str, #[case] target_spacing_z: f32) {
+        let mut dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Get native frame count
+        let native_frame_count: u32 = FrameCount::try_from(&dicom_file).unwrap().into();
+
+        // Clear any existing spacing metadata
+        dicom_file.remove_element(tags::PIXEL_SPACING);
+        dicom_file.remove_element(tags::IMAGER_PIXEL_SPACING);
+        dicom_file.remove_element(tags::SLICE_THICKNESS);
+        dicom_file.remove_element(tags::SPACING_BETWEEN_SLICES);
+
+        // Manually add pixel spacing and slice thickness for testing
+        // emri_small.dcm has 10 frames, let's assume 5mm spacing between slices
+        let native_spacing_z = 5.0; // mm
+        dicom_file.put_element(DataElement::new(
+            tags::PIXEL_SPACING,
+            VR::DS,
+            PrimitiveValue::from("0.5\\0.5"),
+        ));
+        dicom_file.put_element(DataElement::new(
+            tags::SLICE_THICKNESS,
+            VR::DS,
+            PrimitiveValue::from(native_spacing_z.to_string()),
+        ));
+
+        // Create preprocessor with 3D spacing config and Keep volume handler
+        let spacing_config = SpacingConfig::new(0.5, 0.5).with_spacing_z(target_spacing_z);
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: Some(spacing_config),
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the DICOM file
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+
+        // Check that the output frame count matches expected scaling
+        let expected_frame_count =
+            (native_frame_count as f32 * (native_spacing_z / target_spacing_z)).round() as usize;
+
+        assert_eq!(
+            images.len(),
+            expected_frame_count,
+            "Frame count should match expected based on z-spacing. Native frames: {native_frame_count}, Native spacing: {native_spacing_z}, Target spacing: {target_spacing_z}, Expected frames: {expected_frame_count}"
+        );
+
+        // Verify resolution metadata was updated correctly
+        let output_resolution = metadata.resolution.unwrap();
+        let output_spacing_z = output_resolution
+            .frames_per_mm
+            .map(|f| 1.0 / f)
+            .expect("Should have output z-spacing");
+
+        // Allow small floating point error
+        let tolerance = target_spacing_z * 0.05; // 5% tolerance
+        assert!(
+            (output_spacing_z - target_spacing_z).abs() < tolerance,
+            "Output spacing Z should be close to target. Got {output_spacing_z} expected {target_spacing_z}"
         );
     }
 }

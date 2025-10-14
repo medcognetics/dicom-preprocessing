@@ -134,6 +134,16 @@ impl HandleVolume for VolumeHandler {
     }
 }
 
+impl VolumeHandler {
+    /// Get the target frames from Interpolate handler, if applicable
+    pub fn get_target_frames(&self) -> Option<u32> {
+        match self {
+            VolumeHandler::Interpolate(handler) => Some(handler.target_frames),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 /// Keep all frames
 pub struct KeepVolume;
@@ -334,7 +344,7 @@ impl HandleVolume for MaxIntensity {
 #[derive(Debug, Clone, Copy)]
 /// Interpolate between frames using linear interpolation
 pub struct InterpolateVolume {
-    target_frames: u32,
+    pub(crate) target_frames: u32,
 }
 
 impl Default for InterpolateVolume {

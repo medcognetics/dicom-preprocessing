@@ -234,8 +234,12 @@ impl Preprocessor {
         let mut resolution = Resolution::try_from(file).ok();
 
         // Apply z-spacing interpolation if needed
-        if let Some(target_frames) = self.compute_target_frame_count(image_data.len(), &resolution)
-        {
+        // First check if there's a spacing-based target, otherwise use VolumeHandler target
+        let target_frames = self
+            .compute_target_frame_count(image_data.len(), &resolution)
+            .or_else(|| self.volume_handler.get_target_frames());
+
+        if let Some(target_frames) = target_frames {
             image_data = self.interpolate_z_spacing(image_data, target_frames);
 
             // Update the z-resolution after interpolation
@@ -324,9 +328,12 @@ impl Preprocessor {
         let mut resolution = Resolution::try_from(&files[0]).ok();
 
         // Apply z-spacing interpolation to the entire combined volume
-        if let Some(target_frames) =
-            self.compute_target_frame_count(combined_volume.len(), &resolution)
-        {
+        // First check if there's a spacing-based target, otherwise use VolumeHandler target
+        let target_frames = self
+            .compute_target_frame_count(combined_volume.len(), &resolution)
+            .or_else(|| self.volume_handler.get_target_frames());
+
+        if let Some(target_frames) = target_frames {
             combined_volume = self.interpolate_z_spacing(combined_volume, target_frames);
 
             // Update the z-resolution after interpolation
@@ -937,6 +944,44 @@ mod tests {
     }
 
     #[rstest]
+    #[case("pydicom/emri_small.dcm", 16)] // Downsample to 16 frames
+    #[case("pydicom/emri_small.dcm", 20)] // Upsample to 20 frames
+    fn test_interpolate_volume_handler(#[case] dicom_file_path: &str, #[case] target_frames: u32) {
+        use crate::volume::InterpolateVolume;
+
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Get native frame count
+        let native_frame_count: u32 = FrameCount::try_from(&dicom_file).unwrap().into();
+
+        // Create preprocessor with Interpolate volume handler
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the DICOM file
+        let (images, _metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+
+        // Check that the output frame count matches target_frames
+        assert_eq!(
+            images.len(),
+            target_frames as usize,
+            "Frame count should match target_frames. Native frames: {native_frame_count}, Target: {target_frames}"
+        );
+    }
+
+    #[rstest]
     #[case("pydicom/emri_small.dcm", 10.0)] // Upsample: larger spacing = fewer frames
     #[case("pydicom/emri_small.dcm", 2.5)] // Downsample: smaller spacing = more frames
     fn test_spacing_based_z_resize(#[case] dicom_file_path: &str, #[case] target_spacing_z: f32) {
@@ -1007,6 +1052,68 @@ mod tests {
         assert!(
             (output_spacing_z - target_spacing_z).abs() < tolerance,
             "Output spacing Z should be close to target. Got {output_spacing_z} expected {target_spacing_z}"
+        );
+    }
+
+    #[rstest]
+    #[case(32)] // Test with 32 target frames
+    #[case(16)] // Test with 16 target frames
+    fn test_interpolate_volume_handler_batch(#[case] target_frames: u32) {
+        use crate::volume::InterpolateVolume;
+
+        // Open multiple CT slices - pydicom has CT_small.dcm which is a single slice
+        // We'll simulate a batch by loading the same file multiple times
+        let dicom_file_1 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_2 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_3 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_4 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_5 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+
+        let files = vec![
+            dicom_file_1,
+            dicom_file_2,
+            dicom_file_3,
+            dicom_file_4,
+            dicom_file_5,
+        ];
+
+        // Create preprocessor with Interpolate volume handler
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the batch
+        let (image_batches, metadata) = preprocessor.prepare_images_batch(&files, false).unwrap();
+
+        // The total number of output frames should match target_frames
+        let total_frames: usize = image_batches.iter().map(|batch| batch.len()).sum();
+        assert_eq!(
+            total_frames,
+            target_frames as usize,
+            "Total frame count should match target_frames after interpolation. Got {total_frames}, expected {target_frames}"
+        );
+
+        // Verify metadata reports the correct number of frames
+        let metadata_frames: usize = metadata.num_frames.into();
+        assert_eq!(
+            metadata_frames, target_frames as usize,
+            "Metadata should report correct frame count"
         );
     }
 }

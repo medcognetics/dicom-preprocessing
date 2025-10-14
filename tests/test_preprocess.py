@@ -349,3 +349,162 @@ def test_preprocess_stream_slices_combined_volume(multiple_dicom_streams):
     # All outputs should have identical spatial dimensions
     for result in results:
         assert result.shape[1:3] == (32, 32)
+
+
+@pytest.fixture
+def multiframe_dicom_path(tmp_path):
+    """Create a multi-frame DICOM file for testing."""
+    source = pydicom.data.get_testdata_file("emri_small.dcm")
+    path = tmp_path / "multiframe.dcm"
+    shutil.copy(source, path)
+    return path
+
+
+@pytest.fixture
+def multiframe_dicom_stream(multiframe_dicom_path):
+    """Load multi-frame DICOM file as byte stream."""
+    with open(multiframe_dicom_path, "rb") as f:
+        return f.read()
+
+
+@pytest.mark.parametrize("target_frames", [8, 16, 32])
+def test_interpolate_volume_handler_single_file(multiframe_dicom_path, target_frames):
+    """Test that interpolate volume handler correctly interpolates frames."""
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=target_frames,
+    )
+
+    result = dp.preprocess_f32(multiframe_dicom_path, preprocessor, parallel=False)
+
+    # Should have exactly target_frames output frames
+    assert result.shape[0] == target_frames, f"Expected {target_frames} frames, got {result.shape[0]}"
+    assert result.shape[1:3] == (32, 32)
+    assert result.dtype == np.float32
+
+
+@pytest.mark.parametrize("target_frames", [8, 16])
+def test_interpolate_volume_handler_stream(multiframe_dicom_stream, target_frames):
+    """Test that interpolate volume handler works with streams."""
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=target_frames,
+    )
+
+    result = dp.preprocess_stream_f32(multiframe_dicom_stream, preprocessor, parallel=False)
+
+    # Should have exactly target_frames output frames
+    assert result.shape[0] == target_frames, f"Expected {target_frames} frames, got {result.shape[0]}"
+    assert result.shape[1:3] == (32, 32)
+    assert result.dtype == np.float32
+
+
+@pytest.mark.parametrize("target_frames", [8, 16, 32])
+def test_interpolate_volume_handler_slices(multiple_dicom_paths, target_frames):
+    """Test that interpolate volume handler works with multiple slices.
+
+    When processing multiple single-frame slices with the interpolate handler,
+    they should be combined into a volume and interpolated to target_frames.
+    """
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=target_frames,
+    )
+
+    results = dp.preprocess_f32_slices(multiple_dicom_paths, preprocessor, parallel=False)
+
+    # Total number of output frames should equal target_frames
+    total_frames = sum(result.shape[0] for result in results)
+    assert total_frames == target_frames, f"Expected {target_frames} total frames, got {total_frames}"
+
+    # All outputs should have same spatial dimensions
+    for result in results:
+        assert result.shape[1:3] == (32, 32)
+        assert result.dtype == np.float32
+
+
+@pytest.mark.parametrize("target_frames", [8, 16])
+def test_interpolate_volume_handler_stream_slices(multiple_dicom_streams, target_frames):
+    """Test that interpolate volume handler works with stream slices."""
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=target_frames,
+    )
+
+    results = dp.preprocess_stream_f32_slices(multiple_dicom_streams, preprocessor, parallel=False)
+
+    # Total number of output frames should equal target_frames
+    total_frames = sum(result.shape[0] for result in results)
+    assert total_frames == target_frames, f"Expected {target_frames} total frames, got {total_frames}"
+
+    # All outputs should have same spatial dimensions
+    for result in results:
+        assert result.shape[1:3] == (32, 32)
+        assert result.dtype == np.float32
+
+
+def test_interpolate_vs_keep_different_frame_counts(multiframe_dicom_path):
+    """Test that interpolate handler produces different frame count than keep handler."""
+    preprocessor_keep = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="keep",
+    )
+
+    preprocessor_interpolate = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=16,
+    )
+
+    result_keep = dp.preprocess_f32(multiframe_dicom_path, preprocessor_keep, parallel=False)
+    result_interpolate = dp.preprocess_f32(multiframe_dicom_path, preprocessor_interpolate, parallel=False)
+
+    # Frame counts should differ
+    assert result_keep.shape[0] != result_interpolate.shape[0]
+    assert result_interpolate.shape[0] == 16
+
+    # Spatial dimensions should be the same
+    assert result_keep.shape[1:3] == result_interpolate.shape[1:3]
+
+
+def test_interpolate_handler_without_spacing(multiframe_dicom_stream):
+    """Test that interpolate handler works when no z-spacing metadata is available.
+
+    This tests the fix where VolumeHandler::Interpolate should interpolate frames
+    even when spacing metadata is not available, using the target_frames parameter.
+    """
+    # Create preprocessors with different target_frames
+    preprocessor_8 = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=8,
+    )
+
+    preprocessor_24 = dp.Preprocessor(
+        crop=False,
+        size=(32, 32),
+        volume_handler="interpolate",
+        target_frames=24,
+    )
+
+    result_8 = dp.preprocess_stream_f32(multiframe_dicom_stream, preprocessor_8, parallel=False)
+    result_24 = dp.preprocess_stream_f32(multiframe_dicom_stream, preprocessor_24, parallel=False)
+
+    # Both should produce the exact number of target frames
+    assert result_8.shape[0] == 8, f"Expected 8 frames, got {result_8.shape[0]}"
+    assert result_24.shape[0] == 24, f"Expected 24 frames, got {result_24.shape[0]}"
+
+    # Verify spatial dimensions are correct
+    assert result_8.shape[1:3] == (32, 32)
+    assert result_24.shape[1:3] == (32, 32)

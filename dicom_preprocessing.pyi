@@ -8,13 +8,14 @@ __version__: str
 
 class Crop:
     """Crop transformation metadata.
-    
+
     Attributes:
         left: Left offset in pixels
         top: Top offset in pixels
         width: Width of cropped region in pixels
         height: Height of cropped region in pixels
     """
+
     left: int
     top: int
     width: int
@@ -22,25 +23,27 @@ class Crop:
 
 class Resize:
     """Resize transformation metadata.
-    
+
     Attributes:
         scale_x: Horizontal scale factor
         scale_y: Vertical scale factor
         filter: Interpolation filter name (e.g., "nearest", "triangle")
     """
+
     scale_x: float
     scale_y: float
     filter: str
 
 class Padding:
     """Padding transformation metadata.
-    
+
     Attributes:
         left: Left padding in pixels
         top: Top padding in pixels
         right: Right padding in pixels
         bottom: Bottom padding in pixels
     """
+
     left: int
     top: int
     right: int
@@ -48,21 +51,22 @@ class Padding:
 
 class Resolution:
     """Image resolution metadata.
-    
+
     Attributes:
         pixels_per_mm_x: Horizontal resolution in pixels per millimeter
         pixels_per_mm_y: Vertical resolution in pixels per millimeter
         frames_per_mm: Optional z-axis resolution in frames per millimeter
     """
+
     pixels_per_mm_x: float
     pixels_per_mm_y: float
     frames_per_mm: Optional[float]
 
 class PreprocessingMetadata:
     """Complete preprocessing metadata including all transformations applied.
-    
+
     This metadata can be used to map coordinates between preprocessed and original image spaces.
-    
+
     Attributes:
         crop: Crop transformation, if applied
         resize: Resize transformation, if applied
@@ -70,6 +74,7 @@ class PreprocessingMetadata:
         resolution: Image resolution, if available
         num_frames: Number of frames in the output
     """
+
     crop: Optional[Crop]
     resize: Optional[Resize]
     padding: Optional[Padding]

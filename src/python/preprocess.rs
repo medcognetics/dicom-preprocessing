@@ -400,7 +400,8 @@ where
     T: Clone + Zero + Element,
     Array4<T>: LoadFromTiff<T>,
 {
-    let (array, _metadata) = preprocess_with_temp_tiff_and_metadata(py, preprocessor, dcm, parallel)?;
+    let (array, _metadata) =
+        preprocess_with_temp_tiff_and_metadata(py, preprocessor, dcm, parallel)?;
     Ok(array)
 }
 
@@ -457,7 +458,8 @@ where
     T: Clone + Zero + Element,
     Array4<T>: LoadFromTiff<T>,
 {
-    let (arrays, _metadata) = preprocess_slices_with_temp_tiff_and_metadata(py, preprocessor, dcms, parallel)?;
+    let (arrays, _metadata) =
+        preprocess_slices_with_temp_tiff_and_metadata(py, preprocessor, dcms, parallel)?;
     Ok(arrays)
 }
 
@@ -961,7 +963,12 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
-        preprocess_slices_with_temp_tiff_and_metadata::<u8>(py, &preprocessor.inner, &dcms, parallel)
+        preprocess_slices_with_temp_tiff_and_metadata::<u8>(
+            py,
+            &preprocessor.inner,
+            &dcms,
+            parallel,
+        )
     }
 
     #[pyfn(m)]
@@ -988,7 +995,12 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
-        preprocess_slices_with_temp_tiff_and_metadata::<u16>(py, &preprocessor.inner, &dcms, parallel)
+        preprocess_slices_with_temp_tiff_and_metadata::<u16>(
+            py,
+            &preprocessor.inner,
+            &dcms,
+            parallel,
+        )
     }
 
     #[pyfn(m)]
@@ -1015,7 +1027,12 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
-        preprocess_slices_with_temp_tiff_and_metadata::<f32>(py, &preprocessor.inner, &dcms, parallel)
+        preprocess_slices_with_temp_tiff_and_metadata::<f32>(
+            py,
+            &preprocessor.inner,
+            &dcms,
+            parallel,
+        )
     }
 
     #[pyfn(m)]
@@ -1047,7 +1064,12 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
-        preprocess_slices_with_temp_tiff_and_metadata::<u8>(py, &preprocessor.inner, &dcms, parallel)
+        preprocess_slices_with_temp_tiff_and_metadata::<u8>(
+            py,
+            &preprocessor.inner,
+            &dcms,
+            parallel,
+        )
     }
 
     #[pyfn(m)]
@@ -1079,7 +1101,12 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
-        preprocess_slices_with_temp_tiff_and_metadata::<u16>(py, &preprocessor.inner, &dcms, parallel)
+        preprocess_slices_with_temp_tiff_and_metadata::<u16>(
+            py,
+            &preprocessor.inner,
+            &dcms,
+            parallel,
+        )
     }
 
     #[pyfn(m)]
@@ -1111,7 +1138,12 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
             Preprocessor::sanitize_dicom(&mut dcm);
             dcms.push(dcm);
         }
-        preprocess_slices_with_temp_tiff_and_metadata::<f32>(py, &preprocessor.inner, &dcms, parallel)
+        preprocess_slices_with_temp_tiff_and_metadata::<f32>(
+            py,
+            &preprocessor.inner,
+            &dcms,
+            parallel,
+        )
     }
 
     m.add_class::<PyPreprocessor>()?;

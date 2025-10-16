@@ -109,11 +109,9 @@ def test_preprocess_f32_spacing(dicom_stream):
 def multiple_dicom_paths(tmp_path):
     """Create multiple DICOM files to simulate CT slices."""
     source = pydicom.data.get_testdata_file("CT_small.dcm")
-    paths = []
-    for i in range(3):
-        path = tmp_path / f"slice_{i:03d}.dcm"
-        shutil.copy(source, path)
-        paths.append(path)
+    paths = [
+        (shutil.copy(source, tmp_path / f"slice_{i:03d}.dcm"), tmp_path / f"slice_{i:03d}.dcm")[1] for i in range(3)
+    ]
     return paths
 
 

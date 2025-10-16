@@ -6,6 +6,76 @@ import numpy.typing as npt
 
 __version__: str
 
+class Crop:
+    """Crop transformation metadata.
+    
+    Attributes:
+        left: Left offset in pixels
+        top: Top offset in pixels
+        width: Width of cropped region in pixels
+        height: Height of cropped region in pixels
+    """
+    left: int
+    top: int
+    width: int
+    height: int
+
+class Resize:
+    """Resize transformation metadata.
+    
+    Attributes:
+        scale_x: Horizontal scale factor
+        scale_y: Vertical scale factor
+        filter: Interpolation filter name (e.g., "nearest", "triangle")
+    """
+    scale_x: float
+    scale_y: float
+    filter: str
+
+class Padding:
+    """Padding transformation metadata.
+    
+    Attributes:
+        left: Left padding in pixels
+        top: Top padding in pixels
+        right: Right padding in pixels
+        bottom: Bottom padding in pixels
+    """
+    left: int
+    top: int
+    right: int
+    bottom: int
+
+class Resolution:
+    """Image resolution metadata.
+    
+    Attributes:
+        pixels_per_mm_x: Horizontal resolution in pixels per millimeter
+        pixels_per_mm_y: Vertical resolution in pixels per millimeter
+        frames_per_mm: Optional z-axis resolution in frames per millimeter
+    """
+    pixels_per_mm_x: float
+    pixels_per_mm_y: float
+    frames_per_mm: Optional[float]
+
+class PreprocessingMetadata:
+    """Complete preprocessing metadata including all transformations applied.
+    
+    This metadata can be used to map coordinates between preprocessed and original image spaces.
+    
+    Attributes:
+        crop: Crop transformation, if applied
+        resize: Resize transformation, if applied
+        padding: Padding transformation, if applied
+        resolution: Image resolution, if available
+        num_frames: Number of frames in the output
+    """
+    crop: Optional[Crop]
+    resize: Optional[Resize]
+    padding: Optional[Padding]
+    resolution: Optional[Resolution]
+    num_frames: int
+
 class Preprocessor:
     """Configuration for DICOM preprocessing.
 
@@ -414,6 +484,310 @@ def preprocess_stream_f32_slices(
 
     Returns:
         List of 4D arrays with shape :math:`(1, H, W, C)`, one per output slice.
+        Length may differ from input if z-axis interpolation is applied.
+
+    Raises:
+        RuntimeError: If preprocessing fails or buffers list is empty
+        ValueError: If any buffer is not contiguous
+    """
+    ...
+
+def preprocess_u8_with_metadata(
+    path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[npt.NDArray[np.uint8], PreprocessingMetadata]:
+    """Preprocess a DICOM file and return as 8-bit unsigned integer array along with metadata.
+
+    Args:
+        path: Path to DICOM file
+        preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (array, metadata) where array has shape :math:`(N, H, W, C)` and metadata
+        contains information about transformations applied
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        RuntimeError: If preprocessing fails
+    """
+    ...
+
+def preprocess_u16_with_metadata(
+    path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[npt.NDArray[np.uint16], PreprocessingMetadata]:
+    """Preprocess a DICOM file and return as 16-bit unsigned integer array along with metadata.
+
+    Args:
+        path: Path to DICOM file
+        preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (array, metadata) where array has shape :math:`(N, H, W, C)` and metadata
+        contains information about transformations applied
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        RuntimeError: If preprocessing fails
+    """
+    ...
+
+def preprocess_f32_with_metadata(
+    path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[npt.NDArray[np.float32], PreprocessingMetadata]:
+    """Preprocess a DICOM file and return as 32-bit floating point array along with metadata.
+    Values are scaled to the range :math:`[0, 1]`.
+
+    Args:
+        path: Path to DICOM file
+        preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (array, metadata) where array has shape :math:`(N, H, W, C)` and metadata
+        contains information about transformations applied
+
+    Raises:
+        FileNotFoundError: If file cannot be found
+        RuntimeError: If preprocessing fails
+    """
+    ...
+
+def preprocess_stream_u8_with_metadata(
+    buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[npt.NDArray[np.uint8], PreprocessingMetadata]:
+    """Preprocess a DICOM file from a bytes buffer and return as 8-bit unsigned integer array along with metadata.
+
+    Args:
+        buffer: DICOM file contents as bytes
+        preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (array, metadata) where array has shape :math:`(N, H, W, C)` and metadata
+        contains information about transformations applied
+
+    Raises:
+        RuntimeError: If preprocessing fails
+        ValueError: If buffer is not contiguous
+    """
+    ...
+
+def preprocess_stream_u16_with_metadata(
+    buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[npt.NDArray[np.uint16], PreprocessingMetadata]:
+    """Preprocess a DICOM file from a bytes buffer and return as 16-bit unsigned integer array along with metadata.
+
+    Args:
+        buffer: DICOM file contents as bytes
+        preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (array, metadata) where array has shape :math:`(N, H, W, C)` and metadata
+        contains information about transformations applied
+
+    Raises:
+        RuntimeError: If preprocessing fails
+        ValueError: If buffer is not contiguous
+    """
+    ...
+
+def preprocess_stream_f32_with_metadata(
+    buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[npt.NDArray[np.float32], PreprocessingMetadata]:
+    """Preprocess a DICOM file from a bytes buffer and return as 32-bit floating point array along with metadata.
+    Values are scaled to the range :math:`[0, 1]`.
+
+    Args:
+        buffer: DICOM file contents as bytes
+        preprocessor: Optional preprocessing configuration
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (array, metadata) where array has shape :math:`(N, H, W, C)` and metadata
+        contains information about transformations applied
+
+    Raises:
+        RuntimeError: If preprocessing fails
+        ValueError: If buffer is not contiguous
+    """
+    ...
+
+def preprocess_u8_slices_with_metadata(
+    paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[List[npt.NDArray[np.uint8]], PreprocessingMetadata]:
+    """Preprocess multiple DICOM files (slices) as a combined volume and return as 8-bit unsigned integer arrays along with metadata.
+
+    This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
+
+    Args:
+        paths: Sequence of paths to DICOM files, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing or interpolate volume handler
+                     is configured, the number of output slices may differ from input count.
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (arrays, metadata) where arrays is a list of 4D arrays with shape :math:`(1, H, W, C)`,
+        one per output slice, and metadata contains information about transformations applied.
+        Length may differ from input if z-axis interpolation is applied.
+
+    Raises:
+        FileNotFoundError: If any file cannot be found
+        RuntimeError: If preprocessing fails or paths list is empty
+    """
+    ...
+
+def preprocess_u16_slices_with_metadata(
+    paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[List[npt.NDArray[np.uint16]], PreprocessingMetadata]:
+    """Preprocess multiple DICOM files (slices) as a combined volume and return as 16-bit unsigned integer arrays along with metadata.
+
+    This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
+
+    Args:
+        paths: Sequence of paths to DICOM files, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing or interpolate volume handler
+                     is configured, the number of output slices may differ from input count.
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (arrays, metadata) where arrays is a list of 4D arrays with shape :math:`(1, H, W, C)`,
+        one per output slice, and metadata contains information about transformations applied.
+        Length may differ from input if z-axis interpolation is applied.
+
+    Raises:
+        FileNotFoundError: If any file cannot be found
+        RuntimeError: If preprocessing fails or paths list is empty
+    """
+    ...
+
+def preprocess_f32_slices_with_metadata(
+    paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[List[npt.NDArray[np.float32]], PreprocessingMetadata]:
+    """Preprocess multiple DICOM files (slices) as a combined volume and return as 32-bit floating point arrays along with metadata.
+    Values are scaled to the range :math:`[0, 1]`.
+
+    This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
+
+    Args:
+        paths: Sequence of paths to DICOM files, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing or interpolate volume handler
+                     is configured, the number of output slices may differ from input count.
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (arrays, metadata) where arrays is a list of 4D arrays with shape :math:`(1, H, W, C)`,
+        one per output slice, and metadata contains information about transformations applied.
+        Length may differ from input if z-axis interpolation is applied.
+
+    Raises:
+        FileNotFoundError: If any file cannot be found
+        RuntimeError: If preprocessing fails or paths list is empty
+    """
+    ...
+
+def preprocess_stream_u8_slices_with_metadata(
+    buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[List[npt.NDArray[np.uint8]], PreprocessingMetadata]:
+    """Preprocess multiple DICOM files (slices) from bytes buffers as a combined volume and return as 8-bit unsigned integer arrays along with metadata.
+
+    This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
+
+    Args:
+        buffers: Sequence of DICOM file contents as bytes, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing or interpolate volume handler
+                     is configured, the number of output slices may differ from input count.
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (arrays, metadata) where arrays is a list of 4D arrays with shape :math:`(1, H, W, C)`,
+        one per output slice, and metadata contains information about transformations applied.
+        Length may differ from input if z-axis interpolation is applied.
+
+    Raises:
+        RuntimeError: If preprocessing fails or buffers list is empty
+        ValueError: If any buffer is not contiguous
+    """
+    ...
+
+def preprocess_stream_u16_slices_with_metadata(
+    buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[List[npt.NDArray[np.uint16]], PreprocessingMetadata]:
+    """Preprocess multiple DICOM files (slices) from bytes buffers as a combined volume and return as 16-bit unsigned integer arrays along with metadata.
+
+    This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
+
+    Args:
+        buffers: Sequence of DICOM file contents as bytes, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing or interpolate volume handler
+                     is configured, the number of output slices may differ from input count.
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (arrays, metadata) where arrays is a list of 4D arrays with shape :math:`(1, H, W, C)`,
+        one per output slice, and metadata contains information about transformations applied.
+        Length may differ from input if z-axis interpolation is applied.
+
+    Raises:
+        RuntimeError: If preprocessing fails or buffers list is empty
+        ValueError: If any buffer is not contiguous
+    """
+    ...
+
+def preprocess_stream_f32_slices_with_metadata(
+    buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
+) -> Tuple[List[npt.NDArray[np.float32]], PreprocessingMetadata]:
+    """Preprocess multiple DICOM files (slices) from bytes buffers as a combined volume and return as 32-bit floating point arrays along with metadata.
+    Values are scaled to the range :math:`[0, 1]`.
+
+    This function is designed for CT scans where each axial slice is stored in a separate DICOM file.
+    All slices are combined into a single 3D volume, then:
+    1. Z-spacing interpolation is applied (if configured), potentially changing the number of slices
+    2. Common crop bounds are determined and applied to all slices
+    3. Resize and padding are applied consistently
+
+    Each output array represents a single 2D slice from the processed volume.
+
+    Args:
+        buffers: Sequence of DICOM file contents as bytes, ordered from first to last slice
+        preprocessor: Optional preprocessing configuration. If z-spacing or interpolate volume handler
+                     is configured, the number of output slices may differ from input count.
+        parallel: Whether to use parallel processing for multi-frame targets
+
+    Returns:
+        Tuple of (arrays, metadata) where arrays is a list of 4D arrays with shape :math:`(1, H, W, C)`,
+        one per output slice, and metadata contains information about transformations applied.
         Length may differ from input if z-axis interpolation is applied.
 
     Raises:

@@ -506,3 +506,177 @@ def test_interpolate_handler_without_spacing(multiframe_dicom_stream):
     # Verify spatial dimensions are correct
     assert result_8.shape[1:3] == (32, 32)
     assert result_24.shape[1:3] == (32, 32)
+
+
+# Tests for metadata exposure
+def test_metadata_classes_exist():
+    """Test that metadata classes are available."""
+    assert hasattr(dp, "Crop")
+    assert hasattr(dp, "Resize")
+    assert hasattr(dp, "Padding")
+    assert hasattr(dp, "Resolution")
+    assert hasattr(dp, "PreprocessingMetadata")
+
+
+def test_preprocess_with_metadata_basic(dicom_path):
+    """Test basic metadata retrieval from preprocessing."""
+    preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    
+    # Check result is same as regular preprocessing
+    result_regular = dp.preprocess_f32(dicom_path, preprocessor, parallel=False)
+    assert np.allclose(result, result_regular)
+    
+    # Check metadata exists and has expected structure
+    assert isinstance(metadata, dp.PreprocessingMetadata)
+    assert metadata.num_frames == 1
+    assert metadata.crop is not None or metadata.resize is not None or metadata.padding is not None
+
+
+def test_preprocess_with_metadata_crop(dicom_path):
+    """Test that crop metadata is populated correctly."""
+    preprocessor = dp.Preprocessor(size=None, crop=True, use_padding=False)
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    
+    assert metadata.crop is not None
+    assert isinstance(metadata.crop, dp.Crop)
+    assert metadata.crop.left >= 0
+    assert metadata.crop.top >= 0
+    assert metadata.crop.width > 0
+    assert metadata.crop.height > 0
+
+
+def test_preprocess_with_metadata_resize(dicom_path):
+    """Test that resize metadata is populated correctly."""
+    preprocessor = dp.Preprocessor(size=(64, 64), crop=False, use_padding=False)
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    
+    assert metadata.resize is not None
+    assert isinstance(metadata.resize, dp.Resize)
+    assert metadata.resize.scale_x > 0
+    assert metadata.resize.scale_y > 0
+    assert metadata.resize.scale_x == metadata.resize.scale_y  # Should maintain aspect ratio
+    assert isinstance(metadata.resize.filter, str)
+
+
+def test_preprocess_with_metadata_padding(dicom_path):
+    """Test that padding metadata is populated correctly."""
+    preprocessor = dp.Preprocessor(size=(128, 128), crop=False, use_padding=True, padding_direction="center")
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    
+    # Padding might be None if image already matches size
+    if metadata.padding is not None:
+        assert isinstance(metadata.padding, dp.Padding)
+        assert metadata.padding.left >= 0
+        assert metadata.padding.top >= 0
+        assert metadata.padding.right >= 0
+        assert metadata.padding.bottom >= 0
+
+
+def test_preprocess_with_metadata_resolution(dicom_path):
+    """Test that resolution metadata is populated when available."""
+    preprocessor = dp.Preprocessor(size=(32, 32))
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    
+    # Resolution may or may not be available depending on DICOM metadata
+    if metadata.resolution is not None:
+        assert isinstance(metadata.resolution, dp.Resolution)
+        assert metadata.resolution.pixels_per_mm_x > 0
+        assert metadata.resolution.pixels_per_mm_y > 0
+        # frames_per_mm might be None
+
+
+def test_preprocess_stream_with_metadata(dicom_stream):
+    """Test metadata retrieval with stream preprocessing."""
+    preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
+    result, metadata = dp.preprocess_stream_f32_with_metadata(dicom_stream, preprocessor, parallel=False)
+    
+    assert isinstance(metadata, dp.PreprocessingMetadata)
+    assert result.shape == (1, 32, 32, 1)
+
+
+def test_preprocess_slices_with_metadata(multiple_dicom_paths):
+    """Test metadata retrieval with slice preprocessing."""
+    preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
+    results, metadata = dp.preprocess_f32_slices_with_metadata(multiple_dicom_paths, preprocessor, parallel=False)
+    
+    assert isinstance(metadata, dp.PreprocessingMetadata)
+    assert len(results) == len(multiple_dicom_paths)
+    
+    # All slices should have same shape due to common crop
+    shapes = [r.shape for r in results]
+    assert all(shape == shapes[0] for shape in shapes)
+
+
+def test_preprocess_stream_slices_with_metadata(multiple_dicom_streams):
+    """Test metadata retrieval with stream slice preprocessing."""
+    preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
+    results, metadata = dp.preprocess_stream_f32_slices_with_metadata(
+        multiple_dicom_streams, preprocessor, parallel=False
+    )
+    
+    assert isinstance(metadata, dp.PreprocessingMetadata)
+    assert len(results) == len(multiple_dicom_streams)
+
+
+def test_metadata_backwards_compatibility(dicom_path):
+    """Test that old functions still work without metadata."""
+    preprocessor = dp.Preprocessor(size=(32, 32))
+    
+    # Old function should still work
+    result_old = dp.preprocess_f32(dicom_path, preprocessor, parallel=False)
+    
+    # New function with metadata
+    result_new, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    
+    # Results should be identical
+    assert np.allclose(result_old, result_new)
+
+
+@pytest.mark.parametrize("dtype_func,dtype_func_with_meta", [
+    (dp.preprocess_u8, dp.preprocess_u8_with_metadata),
+    (dp.preprocess_u16, dp.preprocess_u16_with_metadata),
+    (dp.preprocess_f32, dp.preprocess_f32_with_metadata),
+])
+def test_all_dtypes_with_metadata(dicom_path, dtype_func, dtype_func_with_meta):
+    """Test that all data type variants support metadata."""
+    preprocessor = dp.Preprocessor(size=(32, 32))
+    
+    result_old = dtype_func(dicom_path, preprocessor, parallel=False)
+    result_new, metadata = dtype_func_with_meta(dicom_path, preprocessor, parallel=False)
+    
+    assert np.array_equal(result_old, result_new)
+    assert isinstance(metadata, dp.PreprocessingMetadata)
+
+
+def test_metadata_repr():
+    """Test that metadata classes have reasonable string representations."""
+    preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
+    # Get a real DICOM to test with
+    import shutil
+    import tempfile
+    import pydicom
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "test.dcm"
+        source = pydicom.data.get_testdata_file("CT_small.dcm")
+        shutil.copy(source, path)
+        
+        result, metadata = dp.preprocess_f32_with_metadata(path, preprocessor, parallel=False)
+        
+        # Test __repr__ methods exist and work
+        assert "PreprocessingMetadata" in repr(metadata)
+        
+        if metadata.crop:
+            assert "Crop" in repr(metadata.crop)
+            assert str(metadata.crop.left) in repr(metadata.crop)
+        
+        if metadata.resize:
+            assert "Resize" in repr(metadata.resize)
+            assert str(metadata.resize.scale_x) in repr(metadata.resize)
+        
+        if metadata.padding:
+            assert "Padding" in repr(metadata.padding)
+        
+        if metadata.resolution:
+            assert "Resolution" in repr(metadata.resolution)

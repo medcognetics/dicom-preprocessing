@@ -64,7 +64,7 @@ where
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct FrameCount(u16);
 
 impl FrameCount {
@@ -176,7 +176,7 @@ impl WriteTags for FrameCount {
 }
 
 /// Tracks all of the preprocessing metadata and augmentations
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct PreprocessingMetadata {
     pub crop: Option<Crop>,
     pub resize: Option<Resize>,

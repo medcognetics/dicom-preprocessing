@@ -457,6 +457,7 @@ impl Preprocessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::volume::InterpolateVolume;
     use dicom::core::{DataElement, PrimitiveValue, VR};
     use dicom::dictionary_std::tags;
     use dicom::pixeldata::WindowLevel;
@@ -947,8 +948,6 @@ mod tests {
     #[case("pydicom/emri_small.dcm", 16)] // Downsample to 16 frames
     #[case("pydicom/emri_small.dcm", 20)] // Upsample to 20 frames
     fn test_interpolate_volume_handler(#[case] dicom_file_path: &str, #[case] target_frames: u32) {
-        use crate::volume::InterpolateVolume;
-
         let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 
         // Get native frame count

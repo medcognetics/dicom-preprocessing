@@ -155,10 +155,12 @@ impl Preprocessor {
         }
     }
 
-    /// Compute target frame count based on spacing configuration
-    /// TODO: This will be used in future for z-spacing based frame interpolation
-    #[allow(dead_code)]
-    fn get_target_frames(&self, resolution: &Option<Resolution>) -> Option<u32> {
+    /// Compute target frame count based on spacing configuration and current frame count
+    fn compute_target_frame_count(
+        &self,
+        current_frame_count: usize,
+        resolution: &Option<Resolution>,
+    ) -> Option<u32> {
         match (self.spacing, resolution) {
             (Some(spacing_config), Some(res))
                 if spacing_config.spacing_mm_z.is_some() && res.frames_per_mm.is_some() =>
@@ -170,11 +172,26 @@ impl Preprocessor {
                 // Scale factor for frames
                 let scale_z = target_frames_per_mm / current_frames_per_mm;
 
-                // Compute target frame count (assumes we know current frame count from volume handler)
-                Some((self.target_frames as f32 * scale_z).round() as u32)
+                // Compute target frame count based on actual current frame count
+                Some((current_frame_count as f32 * scale_z).round() as u32)
             }
             _ => None,
         }
+    }
+
+    /// Apply z-direction interpolation to resample frames based on spacing
+    fn interpolate_z_spacing(
+        &self,
+        images: Vec<DynamicImage>,
+        target_frames: u32,
+    ) -> Vec<DynamicImage> {
+        use crate::volume::InterpolateVolume;
+
+        if images.len() <= 1 || target_frames <= 1 || images.len() == target_frames as usize {
+            return images;
+        }
+
+        InterpolateVolume::interpolate_frames(&images, target_frames)
     }
 
     /// Decoding will error if the VOILUT tag is present but empty.
@@ -204,7 +221,7 @@ impl Preprocessor {
         parallel: bool,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
-        let image_data = match parallel {
+        let mut image_data = match parallel {
             false => self
                 .volume_handler
                 .decode_volume_with_options(file, &self.convert_options),
@@ -215,6 +232,25 @@ impl Preprocessor {
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
+
+        // Apply z-spacing interpolation if needed
+        // First check if there's a spacing-based target, otherwise use VolumeHandler target
+        let target_frames = self
+            .compute_target_frame_count(image_data.len(), &resolution)
+            .or_else(|| self.volume_handler.get_target_frames());
+
+        if let Some(target_frames) = target_frames {
+            image_data = self.interpolate_z_spacing(image_data, target_frames);
+
+            // Update the z-resolution after interpolation
+            if let Some(ref mut res) = resolution {
+                if let Some(spacing_config) = self.spacing {
+                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
+                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
+                    }
+                }
+            }
+        }
 
         // Determine and apply crop
         let crop_config = self.get_crop(&image_data);
@@ -246,6 +282,115 @@ impl Preprocessor {
 
         Ok((
             image_data,
+            PreprocessingMetadata {
+                crop: crop_config,
+                resize: resize_config,
+                padding: padding_config,
+                resolution,
+                num_frames,
+            },
+        ))
+    }
+
+    /// Processes multiple DICOM files with a common crop bound.
+    /// This is useful for CT scans where each slice is stored in a separate DICOM file.
+    /// The crop bounds are determined across all slices and applied consistently.
+    /// Output order matches input order.
+    pub fn prepare_images_batch(
+        &self,
+        files: &[FileDicomObject<InMemDicomObject>],
+        parallel: bool,
+    ) -> Result<(Vec<Vec<DynamicImage>>, PreprocessingMetadata), DicomError> {
+        if files.is_empty() {
+            return Err(DicomError::Other {
+                message: "Cannot process empty batch of files".to_string(),
+            });
+        }
+
+        // Decode all files and collect their images into a single volume
+        // For CT scans, each file is typically a single 2D slice
+        let mut combined_volume: Vec<DynamicImage> = Vec::new();
+        for file in files {
+            let images = match parallel {
+                false => self
+                    .volume_handler
+                    .decode_volume_with_options(file, &self.convert_options),
+                true => self
+                    .volume_handler
+                    .par_decode_volume_with_options(file, &self.convert_options),
+            }?;
+
+            // Add all frames from this file to the combined volume
+            combined_volume.extend(images);
+        }
+
+        // Try to determine the resolution from the first file's pixel spacing attributes
+        let mut resolution = Resolution::try_from(&files[0]).ok();
+
+        // Apply z-spacing interpolation to the entire combined volume
+        // First check if there's a spacing-based target, otherwise use VolumeHandler target
+        let target_frames = self
+            .compute_target_frame_count(combined_volume.len(), &resolution)
+            .or_else(|| self.volume_handler.get_target_frames());
+
+        if let Some(target_frames) = target_frames {
+            combined_volume = self.interpolate_z_spacing(combined_volume, target_frames);
+
+            // Update the z-resolution after interpolation
+            if let Some(ref mut res) = resolution {
+                if let Some(spacing_config) = self.spacing {
+                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
+                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
+                    }
+                }
+            }
+        }
+
+        // Use the combined volume for determining common crop bounds
+        let all_images_flat = combined_volume;
+
+        // Determine common crop bounds across all images in the volume
+        let crop_config = self.get_crop(&all_images_flat);
+
+        // Apply crop to the entire volume
+        let cropped_volume = match &crop_config {
+            Some(config) => config.apply_iter(all_images_flat.into_iter()).collect(),
+            None => all_images_flat,
+        };
+
+        // Determine resize from the first image in the volume
+        let resize_config = self.get_resize(&cropped_volume, &resolution);
+
+        // Apply resize to the entire volume
+        let resized_volume = match &resize_config {
+            Some(config) => config.apply_iter(cropped_volume.into_iter()).collect(),
+            None => cropped_volume,
+        };
+
+        // Update the resolution if we resized
+        if let (Some(res), Some(config)) = (&resolution, &resize_config) {
+            resolution = Some(config.apply(res));
+        }
+
+        // Determine padding from the first image
+        let padding_config = self.get_padding(&resized_volume, &resize_config);
+
+        // Apply padding to the entire volume
+        let padded_volume: Vec<DynamicImage> = match &padding_config {
+            Some(config) => config.apply_iter(resized_volume.into_iter()).collect(),
+            None => resized_volume,
+        };
+
+        let num_frames = padded_volume.len().into();
+
+        // Split the volume back into individual slices
+        // After z-interpolation, the number of output slices may differ from input
+        // Each output slice is a single frame
+        let result_batches: Vec<Vec<DynamicImage>> =
+            padded_volume.into_iter().map(|image| vec![image]).collect();
+
+        Ok((
+            result_batches,
             PreprocessingMetadata {
                 crop: crop_config,
                 resize: resize_config,
@@ -312,12 +457,14 @@ impl Preprocessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::volume::InterpolateVolume;
     use dicom::core::{DataElement, PrimitiveValue, VR};
     use dicom::dictionary_std::tags;
     use dicom::pixeldata::WindowLevel;
 
     use dicom::object::open_file;
 
+    use crate::metadata::FrameCount;
     use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
     use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
@@ -794,6 +941,178 @@ mod tests {
         assert_eq!(
             output_height, native_height,
             "Height should remain unchanged without resolution info"
+        );
+    }
+
+    #[rstest]
+    #[case("pydicom/emri_small.dcm", 16)] // Downsample to 16 frames
+    #[case("pydicom/emri_small.dcm", 20)] // Upsample to 20 frames
+    fn test_interpolate_volume_handler(#[case] dicom_file_path: &str, #[case] target_frames: u32) {
+        let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Get native frame count
+        let native_frame_count: u32 = FrameCount::try_from(&dicom_file).unwrap().into();
+
+        // Create preprocessor with Interpolate volume handler
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the DICOM file
+        let (images, _metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+
+        // Check that the output frame count matches target_frames
+        assert_eq!(
+            images.len(),
+            target_frames as usize,
+            "Frame count should match target_frames. Native frames: {native_frame_count}, Target: {target_frames}"
+        );
+    }
+
+    #[rstest]
+    #[case("pydicom/emri_small.dcm", 10.0)] // Upsample: larger spacing = fewer frames
+    #[case("pydicom/emri_small.dcm", 2.5)] // Downsample: smaller spacing = more frames
+    fn test_spacing_based_z_resize(#[case] dicom_file_path: &str, #[case] target_spacing_z: f32) {
+        let mut dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
+
+        // Get native frame count
+        let native_frame_count: u32 = FrameCount::try_from(&dicom_file).unwrap().into();
+
+        // Clear any existing spacing metadata
+        dicom_file.remove_element(tags::PIXEL_SPACING);
+        dicom_file.remove_element(tags::IMAGER_PIXEL_SPACING);
+        dicom_file.remove_element(tags::SLICE_THICKNESS);
+        dicom_file.remove_element(tags::SPACING_BETWEEN_SLICES);
+
+        // Manually add pixel spacing and slice thickness for testing
+        // emri_small.dcm has 10 frames, let's assume 5mm spacing between slices
+        let native_spacing_z = 5.0; // mm
+        dicom_file.put_element(DataElement::new(
+            tags::PIXEL_SPACING,
+            VR::DS,
+            PrimitiveValue::from("0.5\\0.5"),
+        ));
+        dicom_file.put_element(DataElement::new(
+            tags::SLICE_THICKNESS,
+            VR::DS,
+            PrimitiveValue::from(native_spacing_z.to_string()),
+        ));
+
+        // Create preprocessor with 3D spacing config and Keep volume handler
+        let spacing_config = SpacingConfig::new(0.5, 0.5).with_spacing_z(target_spacing_z);
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: Some(spacing_config),
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the DICOM file
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+
+        // Check that the output frame count matches expected scaling
+        let expected_frame_count =
+            (native_frame_count as f32 * (native_spacing_z / target_spacing_z)).round() as usize;
+
+        assert_eq!(
+            images.len(),
+            expected_frame_count,
+            "Frame count should match expected based on z-spacing. Native frames: {native_frame_count}, Native spacing: {native_spacing_z}, Target spacing: {target_spacing_z}, Expected frames: {expected_frame_count}"
+        );
+
+        // Verify resolution metadata was updated correctly
+        let output_resolution = metadata.resolution.unwrap();
+        let output_spacing_z = output_resolution
+            .frames_per_mm
+            .map(|f| 1.0 / f)
+            .expect("Should have output z-spacing");
+
+        // Allow small floating point error
+        let tolerance = target_spacing_z * 0.05; // 5% tolerance
+        assert!(
+            (output_spacing_z - target_spacing_z).abs() < tolerance,
+            "Output spacing Z should be close to target. Got {output_spacing_z} expected {target_spacing_z}"
+        );
+    }
+
+    #[rstest]
+    #[case(32)] // Test with 32 target frames
+    #[case(16)] // Test with 16 target frames
+    fn test_interpolate_volume_handler_batch(#[case] target_frames: u32) {
+        use crate::volume::InterpolateVolume;
+
+        // Open multiple CT slices - pydicom has CT_small.dcm which is a single slice
+        // We'll simulate a batch by loading the same file multiple times
+        let dicom_file_1 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_2 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_3 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_4 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_5 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+
+        let files = vec![
+            dicom_file_1,
+            dicom_file_2,
+            dicom_file_3,
+            dicom_file_4,
+            dicom_file_5,
+        ];
+
+        // Create preprocessor with Interpolate volume handler
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames,
+            convert_options: ConvertOptions::default(),
+        };
+
+        // Process the batch
+        let (image_batches, metadata) = preprocessor.prepare_images_batch(&files, false).unwrap();
+
+        // The total number of output frames should match target_frames
+        let total_frames: usize = image_batches.iter().map(|batch| batch.len()).sum();
+        assert_eq!(
+            total_frames,
+            target_frames as usize,
+            "Total frame count should match target_frames after interpolation. Got {total_frames}, expected {target_frames}"
+        );
+
+        // Verify metadata reports the correct number of frames
+        let metadata_frames: usize = metadata.num_frames.into();
+        assert_eq!(
+            metadata_frames, target_frames as usize,
+            "Metadata should report correct frame count"
         );
     }
 }

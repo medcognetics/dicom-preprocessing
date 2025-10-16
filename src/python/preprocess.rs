@@ -1,5 +1,6 @@
 use crate::color::DicomColorType;
 use crate::load::LoadFromTiff;
+use crate::metadata::PreprocessingMetadata;
 use crate::preprocess::Preprocessor;
 use crate::python::path::PyPath;
 use crate::save::TiffSaver;
@@ -219,6 +220,73 @@ where
     Ok(array.into_pyarray(py))
 }
 
+/*
+Preprocess multiple DICOM files (slices) with common crop bounds.
+Returns a 5D array with shape (num_slices, num_frames, height, width, channels).
+ */
+fn preprocess_slices_with_temp_tiff<'py, T>(
+    py: Python<'py>,
+    preprocessor: &Preprocessor,
+    dcms: &[FileDicomObject<InMemDicomObject>],
+    parallel: bool,
+) -> PyResult<Vec<Bound<'py, PyArray4<T>>>>
+where
+    T: Clone + Zero + Element,
+    Array4<T>: LoadFromTiff<T>,
+{
+    if dcms.is_empty() {
+        return Err(PyRuntimeError::new_err(
+            "Cannot process empty list of DICOMs",
+        ));
+    }
+
+    // Run batch preprocessing
+    let (batch_images, metadata) = preprocessor
+        .prepare_images_batch(dcms, parallel)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare images batch: {e}")))?;
+
+    // Get color type from first DICOM (assumed same for all slices)
+    let color_type = DicomColorType::try_from(&dcms[0])
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to get color type: {e}")))?;
+    let compressor = Compressor::Uncompressed(Uncompressed);
+    let saver = TiffSaver::new(compressor, color_type);
+
+    // Process each slice's images
+    let mut result_arrays = Vec::with_capacity(batch_images.len());
+    for images in batch_images {
+        // Create metadata for this specific slice with correct frame count
+        let slice_num_frames = images.len().into();
+        let slice_metadata = PreprocessingMetadata {
+            crop: metadata.crop,
+            resize: metadata.resize,
+            padding: metadata.padding,
+            resolution: metadata.resolution,
+            num_frames: slice_num_frames,
+        };
+
+        // Save images to temporary TIFF
+        let mut buffer = spooled_tempfile(SPOOL_SIZE);
+        let mut encoder = TiffEncoder::new(&mut buffer)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create TIFF encoder: {e}")))?;
+        images
+            .into_iter()
+            .try_for_each(|image| saver.save(&mut encoder, &image, &slice_metadata))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to save temporary TIFF: {e}")))?;
+
+        // Decode the TIFF file back to an array
+        buffer
+            .rewind()
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to rewind buffer: {e}")))?;
+        let mut decoder = Decoder::new(buffer)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {e}")))?;
+        let array = Array4::<T>::decode(&mut decoder)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {e}")))?;
+        result_arrays.push(array.into_pyarray(py));
+    }
+
+    Ok(result_arrays)
+}
+
 #[pymodule]
 #[pyo3(name = "preprocess")]
 pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
@@ -344,6 +412,156 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
     ) -> PyResult<Bound<'py, PyArray4<f32>>> {
         let path = path.extract::<PyPath>()?;
         preprocess_file::<f32, _>(py, path, &preprocessor.inner, parallel)
+    }
+
+    fn preprocess_slices<'py, T, P>(
+        py: Python<'py>,
+        paths: Vec<P>,
+        preprocessor: &Preprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<T>>>>
+    where
+        T: Clone + Zero + Element,
+        Array4<T>: LoadFromTiff<T>,
+        P: AsRef<Path>,
+    {
+        let mut dcms = Vec::with_capacity(paths.len());
+        for path in &paths {
+            let path = path.as_ref();
+            if !path.is_file() {
+                return Err(PyFileNotFoundError::new_err(format!(
+                    "File not found: {}",
+                    path.display()
+                )));
+            }
+            let mut dcm = open_file(path)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
+            Preprocessor::sanitize_dicom(&mut dcm);
+            dcms.push(dcm);
+        }
+        preprocess_slices_with_temp_tiff::<T>(py, preprocessor, &dcms, parallel)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "preprocess_u8_slices", signature = (paths, preprocessor, parallel=false))]
+    fn preprocess_u8_slices<'py>(
+        py: Python<'py>,
+        paths: Vec<Bound<'py, PyAny>>,
+        preprocessor: &PyPreprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<u8>>>> {
+        let paths: Result<Vec<PyPath>, _> = paths.iter().map(|p| p.extract::<PyPath>()).collect();
+        let paths = paths?;
+        preprocess_slices::<u8, _>(py, paths, &preprocessor.inner, parallel)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "preprocess_u16_slices", signature = (paths, preprocessor, parallel=false))]
+    fn preprocess_u16_slices<'py>(
+        py: Python<'py>,
+        paths: Vec<Bound<'py, PyAny>>,
+        preprocessor: &PyPreprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<u16>>>> {
+        let paths: Result<Vec<PyPath>, _> = paths.iter().map(|p| p.extract::<PyPath>()).collect();
+        let paths = paths?;
+        preprocess_slices::<u16, _>(py, paths, &preprocessor.inner, parallel)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "preprocess_f32_slices", signature = (paths, preprocessor, parallel=false))]
+    fn preprocess_f32_slices<'py>(
+        py: Python<'py>,
+        paths: Vec<Bound<'py, PyAny>>,
+        preprocessor: &PyPreprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<f32>>>> {
+        let paths: Result<Vec<PyPath>, _> = paths.iter().map(|p| p.extract::<PyPath>()).collect();
+        let paths = paths?;
+        preprocess_slices::<f32, _>(py, paths, &preprocessor.inner, parallel)
+    }
+
+    fn preprocess_stream_slices<'py, T>(
+        py: Python<'py>,
+        buffers: Vec<&PyBuffer<u8>>,
+        preprocessor: &Preprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<T>>>>
+    where
+        T: Clone + Zero + Element,
+        Array4<T>: LoadFromTiff<T>,
+    {
+        let mut dcms = Vec::with_capacity(buffers.len());
+        for buffer in buffers {
+            // Check if buffer is readable and contiguous
+            if !buffer.is_c_contiguous() {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(
+                    "Buffer must be C-contiguous",
+                ));
+            }
+
+            // Create a slice from the buffer and read it into a DICOM object
+            let len = buffer.len_bytes();
+            let ptr = buffer.buf_ptr();
+            let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+            let mut dcm = from_reader(bytes).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create DICOM object: {e}"))
+            })?;
+            Preprocessor::sanitize_dicom(&mut dcm);
+            dcms.push(dcm);
+        }
+        preprocess_slices_with_temp_tiff::<T>(py, preprocessor, &dcms, parallel)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "preprocess_stream_u8_slices", signature = (buffers, preprocessor, parallel=false))]
+    fn preprocess_stream_u8_slices<'py>(
+        py: Python<'py>,
+        buffers: Vec<Bound<'py, PyAny>>,
+        preprocessor: &PyPreprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<u8>>>> {
+        let buffers: Result<Vec<PyBuffer<u8>>, _> = buffers
+            .iter()
+            .map(|b| b.extract::<PyBuffer<u8>>())
+            .collect();
+        let buffers = buffers?;
+        let buffer_refs: Vec<&PyBuffer<u8>> = buffers.iter().collect();
+        preprocess_stream_slices::<u8>(py, buffer_refs, &preprocessor.inner, parallel)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "preprocess_stream_u16_slices", signature = (buffers, preprocessor, parallel=false))]
+    fn preprocess_stream_u16_slices<'py>(
+        py: Python<'py>,
+        buffers: Vec<Bound<'py, PyAny>>,
+        preprocessor: &PyPreprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<u16>>>> {
+        let buffers: Result<Vec<PyBuffer<u8>>, _> = buffers
+            .iter()
+            .map(|b| b.extract::<PyBuffer<u8>>())
+            .collect();
+        let buffers = buffers?;
+        let buffer_refs: Vec<&PyBuffer<u8>> = buffers.iter().collect();
+        preprocess_stream_slices::<u16>(py, buffer_refs, &preprocessor.inner, parallel)
+    }
+
+    #[pyfn(m)]
+    #[pyo3(name = "preprocess_stream_f32_slices", signature = (buffers, preprocessor, parallel=false))]
+    fn preprocess_stream_f32_slices<'py>(
+        py: Python<'py>,
+        buffers: Vec<Bound<'py, PyAny>>,
+        preprocessor: &PyPreprocessor,
+        parallel: bool,
+    ) -> PyResult<Vec<Bound<'py, PyArray4<f32>>>> {
+        let buffers: Result<Vec<PyBuffer<u8>>, _> = buffers
+            .iter()
+            .map(|b| b.extract::<PyBuffer<u8>>())
+            .collect();
+        let buffers = buffers?;
+        let buffer_refs: Vec<&PyBuffer<u8>> = buffers.iter().collect();
+        preprocess_stream_slices::<f32>(py, buffer_refs, &preprocessor.inner, parallel)
     }
 
     m.add_class::<PyPreprocessor>()?;

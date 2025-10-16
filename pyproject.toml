@@ -57,3 +57,8 @@ quality = [
 build = [
     "maturin>=1.0,<2.0",
 ]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+  "ignore:.*tag.*had too many entries.*:UserWarning",
+]

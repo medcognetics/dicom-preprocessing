@@ -20,7 +20,7 @@ const DEFAULT_CHECK_MAX: bool = false;
 const DEFAULT_RESIZE_SIZE: u32 = 512;
 const NONZERO_THRESHOLD: u8 = 1;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Crop {
     pub left: u32,
     pub top: u32,

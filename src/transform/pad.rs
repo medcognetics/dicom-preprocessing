@@ -34,7 +34,7 @@ impl fmt::Display for PaddingDirection {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Padding {
     pub left: u32,
     pub top: u32,

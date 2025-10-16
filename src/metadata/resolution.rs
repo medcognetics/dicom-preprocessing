@@ -16,7 +16,7 @@ use crate::metadata::WriteTags;
 const MM_PER_CM: f32 = 10.0;
 const MM_PER_IN: f32 = 25.4;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Resolution {
     pub pixels_per_mm_x: f32,
     pub pixels_per_mm_y: f32,

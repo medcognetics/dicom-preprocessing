@@ -652,35 +652,29 @@ def test_all_dtypes_with_metadata(dicom_path, dtype_func, dtype_func_with_meta):
     assert isinstance(metadata, dp.PreprocessingMetadata)
 
 
-def test_metadata_repr():
+def test_metadata_repr(tmp_path):
     """Test that metadata classes have reasonable string representations."""
     preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
     # Get a real DICOM to test with
-    import shutil
-    import tempfile
+    path = tmp_path / "test.dcm"
+    source = pydicom.data.get_testdata_file("CT_small.dcm")
+    shutil.copy(source, path)
 
-    import pydicom
+    result, metadata = dp.preprocess_f32_with_metadata(path, preprocessor, parallel=False)
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        path = Path(tmpdir) / "test.dcm"
-        source = pydicom.data.get_testdata_file("CT_small.dcm")
-        shutil.copy(source, path)
+    # Test __repr__ methods exist and work
+    assert "PreprocessingMetadata" in repr(metadata)
 
-        result, metadata = dp.preprocess_f32_with_metadata(path, preprocessor, parallel=False)
+    if metadata.crop:
+        assert "Crop" in repr(metadata.crop)
+        assert str(metadata.crop.left) in repr(metadata.crop)
 
-        # Test __repr__ methods exist and work
-        assert "PreprocessingMetadata" in repr(metadata)
+    if metadata.resize:
+        assert "Resize" in repr(metadata.resize)
+        assert str(metadata.resize.scale_x) in repr(metadata.resize)
 
-        if metadata.crop:
-            assert "Crop" in repr(metadata.crop)
-            assert str(metadata.crop.left) in repr(metadata.crop)
+    if metadata.padding:
+        assert "Padding" in repr(metadata.padding)
 
-        if metadata.resize:
-            assert "Resize" in repr(metadata.resize)
-            assert str(metadata.resize.scale_x) in repr(metadata.resize)
-
-        if metadata.padding:
-            assert "Padding" in repr(metadata.padding)
-
-        if metadata.resolution:
-            assert "Resolution" in repr(metadata.resolution)
+    if metadata.resolution:
+        assert "Resolution" in repr(metadata.resolution)

@@ -280,7 +280,6 @@ fn resize_all_tiffs(
         .collect();
 
     results?;
-    println!("Resized {num_files} TIFF files");
     Ok(num_files)
 }
 
@@ -305,6 +304,8 @@ mod tests {
     use rstest::rstest;
     use std::fs;
     use tempfile::TempDir;
+
+    const TOLERANCE: f32 = 1e-6;
 
     fn create_test_tiff(path: &Path, width: u32, height: u32, num_frames: usize) -> PathBuf {
         let array = Array4::<u8>::zeros((num_frames, height as usize, width as usize, 1));
@@ -381,8 +382,8 @@ mod tests {
         let metadata = PreprocessingMetadata::try_from(&mut decoder).unwrap();
         assert!(metadata.resize.is_some());
         let resize = metadata.resize.unwrap();
-        assert!((resize.scale_x - scale).abs() < 1e-6);
-        assert!((resize.scale_y - scale).abs() < 1e-6);
+        assert!((resize.scale_x - scale).abs() < TOLERANCE);
+        assert!((resize.scale_y - scale).abs() < TOLERANCE);
     }
 
     #[rstest]
@@ -618,7 +619,7 @@ mod tests {
         assert!(metadata.resize.is_some());
         let resize = metadata.resize.unwrap();
         // Should be 2.0 * 0.5 = 1.0
-        assert!((resize.scale_x - 1.0).abs() < 1e-6);
-        assert!((resize.scale_y - 1.0).abs() < 1e-6);
+        assert!((resize.scale_x - 1.0).abs() < TOLERANCE);
+        assert!((resize.scale_y - 1.0).abs() < TOLERANCE);
     }
 }

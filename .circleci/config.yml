@@ -64,9 +64,6 @@ jobs:
                 name: Version information
                 command: rustc --version; cargo --version; rustup --version; uv --version
             - run:
-                name: Install uv
-                command: curl -LsSf https://astral.sh/uv/install.sh | sh
-            - run:
                 name: Install dependencies
                 command: make init
             - save_cache:

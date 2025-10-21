@@ -1,15 +1,14 @@
-PYTHON=pdm run python
+PYTHON=uv run python
 PYTHON_DIRS=tests examples dicom_preprocessing.pyi
 
 .PHONY: init develop quality style test-python test-python-pdb test
 
 init:
-	which pdm || pip install --user pdm
-	pdm venv create --with-pip
-	pdm install -d
+	which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+	uv sync --all-groups
 
 develop:
-	pdm run maturin develop -F python --release
+	uv run maturin develop -F python --release
 
 quality:
 	cargo fmt -- --check

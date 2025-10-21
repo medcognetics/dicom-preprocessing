@@ -47,12 +47,12 @@ jobs:
 
     test_python:
         docker:
-            - image: cimg/python:3.11-node
+            - image: cimg/python:3.14
         steps:
             - checkout
             - restore_cache:
                 keys:
-                  - v1-dependencies-{{ checksum "pdm.lock" }}
+                  - v1-dependencies-{{ checksum "uv.lock" }}
             - attach_workspace:
                 at: .
             - run:
@@ -62,15 +62,15 @@ jobs:
                     echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
             - run:
                 name: Version information
-                command: rustc --version; cargo --version; rustup --version
+                command: rustc --version; cargo --version; rustup --version; uv --version
             - run:
                 name: Install dependencies
                 command: make init
             - save_cache:
                 paths:
                   - ~/.cache/pip
-                  - ~/.cache/pdm
-                key: v1-dependencies-{{ checksum "pdm.lock" }}
+                  - ~/.cache/uv
+                key: v1-dependencies-{{ checksum "uv.lock" }}
             - run:
                 name: Run tests
                 command: make test-python

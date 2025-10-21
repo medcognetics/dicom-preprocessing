@@ -38,24 +38,20 @@ lines_after_imports = 2
 multi_line_output = 3
 use_parentheses = false
 
-[tool.pdm.dev-dependencies]
-test = [
-  "pytest",
-  "numpy",
-  "Pillow",
-  "pydicom",
-]
-quality = [
-  "autoflake",
-  "autopep8",
-  "black",
-  "flake8",
-  "isort",
-]
-
 [dependency-groups]
 build = [
     "maturin>=1.0,<2.0",
+]
+dev = [
+    "autoflake",
+    "autopep8",
+    "black",
+    "flake8",
+    "isort",
+    "pytest",
+    "numpy",
+    "Pillow",
+    "pydicom",
 ]
 
 [tool.pytest.ini_options]

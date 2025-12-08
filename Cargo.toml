@@ -21,6 +21,7 @@ thiserror = "2.0"
 env_logger = "0.11"
 image = "0.25"
 tiff = "0.10"
+half = "2.4"
 snafu = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
@@ -71,6 +72,10 @@ path = "src/bin/trace.rs"
 [[bin]]
 name = "tiff-combine"
 path = "src/bin/combine.rs"
+
+[[bin]]
+name = "tiff-stats"
+path = "src/bin/tiff_stats.rs"
 
 [[bench]]
 name = "inode_sort"

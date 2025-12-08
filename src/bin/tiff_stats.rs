@@ -49,6 +49,14 @@ struct Args {
     source: PathBuf,
 
     #[arg(
+        help = "Normalize pixel values to [0, 1] range based on input dtype maximum",
+        long = "normalize",
+        short = 'n',
+        default_value = "false"
+    )]
+    normalize: bool,
+
+    #[arg(
         help = "Enable verbose logging",
         long = "verbose",
         short = 'v',
@@ -183,7 +191,11 @@ fn load_source_files(source_path: &PathBuf) -> Result<Vec<PathBuf>, Error> {
 }
 
 /// Process a single TIFF file and accumulate statistics
-fn process_tiff(path: &PathBuf, expected_channels: Option<usize>) -> Result<WelfordState, Error> {
+fn process_tiff(
+    path: &PathBuf,
+    expected_channels: Option<usize>,
+    normalize: bool,
+) -> Result<WelfordState, Error> {
     let file = File::open(path).context(IOSnafu)?;
     let reader = BufReader::new(file);
     let mut decoder = Decoder::new(reader).context(TiffReadSnafu)?;
@@ -218,37 +230,37 @@ fn process_tiff(path: &PathBuf, expected_channels: Option<usize>) -> Result<Welf
         // Process pixels based on bit depth
         match result {
             DecodingResult::U8(data) => {
-                process_pixels_u8(&data, num_channels, &mut state);
+                process_pixels_u8(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::U16(data) => {
-                process_pixels_u16(&data, num_channels, &mut state);
+                process_pixels_u16(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::U32(data) => {
-                process_pixels_u32(&data, num_channels, &mut state);
+                process_pixels_u32(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::U64(data) => {
-                process_pixels_u64(&data, num_channels, &mut state);
+                process_pixels_u64(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::F32(data) => {
-                process_pixels_f32(&data, num_channels, &mut state);
+                process_pixels_f32(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::F64(data) => {
-                process_pixels_f64(&data, num_channels, &mut state);
+                process_pixels_f64(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::I8(data) => {
-                process_pixels_i8(&data, num_channels, &mut state);
+                process_pixels_i8(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::I16(data) => {
-                process_pixels_i16(&data, num_channels, &mut state);
+                process_pixels_i16(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::I32(data) => {
-                process_pixels_i32(&data, num_channels, &mut state);
+                process_pixels_i32(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::I64(data) => {
-                process_pixels_i64(&data, num_channels, &mut state);
+                process_pixels_i64(&data, num_channels, normalize, &mut state);
             }
             DecodingResult::F16(data) => {
-                process_pixels_f16(&data, num_channels, &mut state);
+                process_pixels_f16(&data, num_channels, normalize, &mut state);
             }
         }
 
@@ -262,88 +274,219 @@ fn process_tiff(path: &PathBuf, expected_channels: Option<usize>) -> Result<Welf
     Ok(state)
 }
 
-fn process_pixels_u8(data: &[u8], num_channels: usize, state: &mut WelfordState) {
+fn process_pixels_u8(data: &[u8], num_channels: usize, normalize: bool, state: &mut WelfordState) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (u8::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_u16(
+    data: &[u16],
+    num_channels: usize,
+    normalize: bool,
+    state: &mut WelfordState,
+) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (u16::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_u32(
+    data: &[u32],
+    num_channels: usize,
+    normalize: bool,
+    state: &mut WelfordState,
+) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (u32::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_u64(
+    data: &[u64],
+    num_channels: usize,
+    normalize: bool,
+    state: &mut WelfordState,
+) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (u64::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_i8(data: &[i8], num_channels: usize, normalize: bool, state: &mut WelfordState) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (i8::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_i16(
+    data: &[i16],
+    num_channels: usize,
+    normalize: bool,
+    state: &mut WelfordState,
+) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (i16::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_i32(
+    data: &[i32],
+    num_channels: usize,
+    normalize: bool,
+    state: &mut WelfordState,
+) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (i32::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_i64(
+    data: &[i64],
+    num_channels: usize,
+    normalize: bool,
+    state: &mut WelfordState,
+) {
+    if normalize {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk
+                .iter()
+                .map(|&x| (x as f64) / (i64::MAX as f64))
+                .collect();
+            state.update(&values);
+        }
+    } else {
+        for chunk in data.chunks_exact(num_channels) {
+            let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
+            state.update(&values);
+        }
+    }
+}
+
+fn process_pixels_f32(
+    data: &[f32],
+    num_channels: usize,
+    _normalize: bool,
+    state: &mut WelfordState,
+) {
+    // F32 is already in floating point, normalization doesn't apply the same way
+    // Assume values are already in appropriate range
     for chunk in data.chunks_exact(num_channels) {
         let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
         state.update(&values);
     }
 }
 
-fn process_pixels_u16(data: &[u16], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_u32(data: &[u32], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_u64(data: &[u64], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_i8(data: &[i8], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_i16(data: &[i16], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_i32(data: &[i32], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_i64(data: &[i64], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_f32(data: &[f32], num_channels: usize, state: &mut WelfordState) {
-    for chunk in data.chunks_exact(num_channels) {
-        let values: Vec<f64> = chunk.iter().map(|&x| x as f64).collect();
-        state.update(&values);
-    }
-}
-
-fn process_pixels_f64(data: &[f64], num_channels: usize, state: &mut WelfordState) {
+fn process_pixels_f64(
+    data: &[f64],
+    num_channels: usize,
+    _normalize: bool,
+    state: &mut WelfordState,
+) {
+    // F64 is already in floating point, normalization doesn't apply the same way
+    // Assume values are already in appropriate range
     for chunk in data.chunks_exact(num_channels) {
         state.update(chunk);
     }
 }
 
-fn process_pixels_f16(data: &[half::f16], num_channels: usize, state: &mut WelfordState) {
+fn process_pixels_f16(
+    data: &[half::f16],
+    num_channels: usize,
+    _normalize: bool,
+    state: &mut WelfordState,
+) {
+    // F16 is already in floating point, normalization doesn't apply the same way
+    // Assume values are already in appropriate range
     for chunk in data.chunks_exact(num_channels) {
         let values: Vec<f64> = chunk.iter().map(|&x| f64::from(x)).collect();
         state.update(&values);
     }
 }
 
-fn compute_stats(source_files: Vec<PathBuf>) -> Result<WelfordState, Error> {
+fn compute_stats(source_files: Vec<PathBuf>, normalize: bool) -> Result<WelfordState, Error> {
     let pb = default_bar(source_files.len() as u64);
     pb.set_message("Computing statistics");
 
     // Process first file to determine number of channels
-    let first_state = process_tiff(&source_files[0], None)?;
+    let first_state = process_tiff(&source_files[0], None, normalize)?;
     let num_channels = first_state.num_channels();
 
     // Accumulator for merging results from parallel processing
@@ -353,7 +496,7 @@ fn compute_stats(source_files: Vec<PathBuf>) -> Result<WelfordState, Error> {
     let results: Result<Vec<_>, Error> = source_files[1..]
         .into_par_iter()
         .progress_with(pb)
-        .map(|path| process_tiff(path, Some(num_channels)))
+        .map(|path| process_tiff(path, Some(num_channels), normalize))
         .collect();
 
     let states = results?;
@@ -367,12 +510,15 @@ fn compute_stats(source_files: Vec<PathBuf>) -> Result<WelfordState, Error> {
     Ok(final_state)
 }
 
-fn print_results(state: &WelfordState) {
+fn print_results(state: &WelfordState, normalize: bool) {
     let std = state.std();
 
     println!("\nPixel Statistics:");
     println!("Total pixels processed: {}", state.count);
     println!("Number of channels: {}", state.num_channels());
+    if normalize {
+        println!("Values normalized to [0, 1] range");
+    }
     println!();
 
     for (i, (&mean, &std)) in state.mean.iter().zip(std.iter()).enumerate() {
@@ -383,8 +529,8 @@ fn print_results(state: &WelfordState) {
 fn run(args: Args) -> Result<(), Error> {
     validate_args(&args)?;
     let source_files = load_source_files(&args.source)?;
-    let state = compute_stats(source_files)?;
-    print_results(&state);
+    let state = compute_stats(source_files, args.normalize)?;
+    print_results(&state, args.normalize);
     Ok(())
 }
 
@@ -516,11 +662,12 @@ mod tests {
 
         let args = Args {
             source: source_dir,
+            normalize: false,
             verbose: false,
         };
 
         let source_files = load_source_files(&args.source).unwrap();
-        let state = compute_stats(source_files).unwrap();
+        let state = compute_stats(source_files, false).unwrap();
 
         // All pixels are 128, so mean should be 128 and std should be 0
         assert_eq!(state.num_channels(), 1);
@@ -541,11 +688,12 @@ mod tests {
 
         let args = Args {
             source: source_dir,
+            normalize: false,
             verbose: false,
         };
 
         let source_files = load_source_files(&args.source).unwrap();
-        let state = compute_stats(source_files).unwrap();
+        let state = compute_stats(source_files, false).unwrap();
 
         // Mean should be 150
         assert_eq!(state.num_channels(), 1);
@@ -563,11 +711,12 @@ mod tests {
 
         let args = Args {
             source: source_dir,
+            normalize: false,
             verbose: false,
         };
 
         let source_files = load_source_files(&args.source).unwrap();
-        let state = compute_stats(source_files).unwrap();
+        let state = compute_stats(source_files, false).unwrap();
 
         // All pixels in all frames are 100
         assert_eq!(state.count, 4 * 4 * 5);
@@ -590,11 +739,12 @@ mod tests {
 
         let args = Args {
             source: source_dir,
+            normalize: false,
             verbose: false,
         };
 
         let source_files = load_source_files(&args.source).unwrap();
-        let result = compute_stats(source_files);
+        let result = compute_stats(source_files, false);
 
         // Should fail due to inconsistent channels
         assert!(matches!(result, Err(Error::InconsistentChannels { .. })));
@@ -605,6 +755,7 @@ mod tests {
         let tmp_dir = TempDir::new().unwrap();
         let args = Args {
             source: tmp_dir.path().join("nonexistent"),
+            normalize: false,
             verbose: false,
         };
         assert!(matches!(run(args), Err(Error::InvalidSourcePath { .. })));
@@ -618,8 +769,49 @@ mod tests {
 
         let args = Args {
             source: source_dir,
+            normalize: false,
             verbose: false,
         };
         assert!(matches!(run(args), Err(Error::NoSources { .. })));
+    }
+
+    #[test]
+    fn test_normalize_u8() {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+
+        // Create TIFF with u8 values: 0, 127, 255
+        create_test_tiff_gray(&source_dir.join("test1.tiff"), 2, 2, 1, 0);
+        create_test_tiff_gray(&source_dir.join("test2.tiff"), 2, 2, 1, 127);
+        create_test_tiff_gray(&source_dir.join("test3.tiff"), 2, 2, 1, 255);
+
+        let source_files = load_source_files(&source_dir).unwrap();
+        let state = compute_stats(source_files, true).unwrap();
+
+        // With normalization, mean should be (0 + 127/255 + 1) / 3 ≈ 0.498
+        // Expected: (0 + 0.498039 + 1.0) / 3 = 0.499346
+        assert_eq!(state.num_channels(), 1);
+        assert!((state.mean[0] - 0.499346).abs() < TOLERANCE);
+    }
+
+    #[test]
+    fn test_normalize_vs_raw() {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+
+        let tiff_path = source_dir.join("test.tiff");
+        create_test_tiff_gray(&tiff_path, 4, 4, 1, 128);
+
+        let source_files = load_source_files(&source_dir).unwrap();
+
+        // Without normalization
+        let state_raw = compute_stats(source_files.clone(), false).unwrap();
+        assert!((state_raw.mean[0] - 128.0).abs() < TOLERANCE);
+
+        // With normalization (128 / 255 ≈ 0.502)
+        let state_norm = compute_stats(source_files, true).unwrap();
+        assert!((state_norm.mean[0] - (128.0 / 255.0)).abs() < TOLERANCE);
     }
 }

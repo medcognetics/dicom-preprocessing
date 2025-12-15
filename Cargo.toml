@@ -82,6 +82,10 @@ path = "src/bin/combine.rs"
 name = "tiff-stats"
 path = "src/bin/tiff_stats.rs"
 
+[[bin]]
+name = "mask-preprocess"
+path = "src/bin/mask.rs"
+
 [[bench]]
 name = "inode_sort"
 harness = false

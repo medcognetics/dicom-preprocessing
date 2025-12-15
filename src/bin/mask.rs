@@ -9,7 +9,7 @@ use dicom_preprocessing::metadata::PreprocessingMetadata;
 use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::{FilterType, Resize, Transform};
 use image::DynamicImage;
-use image::ImageReader;
+use image::{GenericImage, GenericImageView, ImageReader, Rgba};
 use indicatif::ParallelProgressIterator;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use parquet::errors::ParquetError;
@@ -22,10 +22,44 @@ use std::path::Path;
 use std::path::PathBuf;
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::{Gray8, RGB8};
-use tiff::encoder::compression::{Compressor, Uncompressed};
+use tiff::encoder::compression::Compressor;
 use tracing::{error, Level};
+use std::fmt;
 
 const BATCH_SIZE: usize = 128;
+
+#[derive(Debug, Clone, clap::ValueEnum, Default)]
+enum SupportedCompressor {
+    #[default]
+    Packbits,
+    Lzw,
+    Uncompressed,
+}
+
+impl From<SupportedCompressor> for Compressor {
+    fn from(value: SupportedCompressor) -> Self {
+        match value {
+            SupportedCompressor::Packbits => {
+                Compressor::Packbits(tiff::encoder::compression::Packbits)
+            }
+            SupportedCompressor::Lzw => Compressor::Lzw(tiff::encoder::compression::Lzw),
+            SupportedCompressor::Uncompressed => {
+                Compressor::Uncompressed(tiff::encoder::compression::Uncompressed)
+            }
+        }
+    }
+}
+
+impl fmt::Display for SupportedCompressor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let compressor_str = match self {
+            SupportedCompressor::Packbits => "packbits",
+            SupportedCompressor::Lzw => "lzw",
+            SupportedCompressor::Uncompressed => "none",
+        };
+        write!(f, "{compressor_str}")
+    }
+}
 
 #[derive(Debug, Snafu)]
 enum Error {
@@ -41,8 +75,9 @@ enum Error {
     #[snafu(display("No entries found in manifest: {}", path.display()))]
     NoManifestEntries { path: PathBuf },
 
-    #[snafu(display("IO error: {:?}", source))]
+    #[snafu(display("IO error on path '{}': {:?}", path.display(), source))]
     IO {
+        path: PathBuf,
         #[snafu(source(from(std::io::Error, Box::new)))]
         source: Box<std::io::Error>,
     },
@@ -104,12 +139,65 @@ struct Args {
     output: PathBuf,
 
     #[arg(
+        help = "Padding fill value as comma-separated RGB (e.g., '255,0,0' for red) or single grayscale value (e.g., '128')",
+        long = "fill",
+        short = 'f',
+        value_parser = parse_fill_value,
+        default_value = None
+    )]
+    fill: Option<Rgba<u8>>,
+
+    #[arg(
+        help = "Compression type",
+        long = "compressor",
+        short = 'z',
+        value_parser = clap::value_parser!(SupportedCompressor),
+        default_value_t = SupportedCompressor::default(),
+    )]
+    compressor: SupportedCompressor,
+
+    #[arg(
         help = "Enable verbose logging",
         long = "verbose",
         short = 'v',
         default_value = "false"
     )]
     verbose: bool,
+}
+
+/// Parse fill value from string (either "R,G,B" or single grayscale value)
+fn parse_fill_value(s: &str) -> Result<Rgba<u8>, String> {
+    let parts: Vec<&str> = s.split(',').collect();
+    match parts.len() {
+        1 => {
+            // Single grayscale value
+            let val = parts[0]
+                .trim()
+                .parse::<u8>()
+                .map_err(|e| format!("Invalid grayscale value: {}", e))?;
+            Ok(Rgba([val, val, val, 255]))
+        }
+        3 => {
+            // RGB triplet
+            let r = parts[0]
+                .trim()
+                .parse::<u8>()
+                .map_err(|e| format!("Invalid R value: {}", e))?;
+            let g = parts[1]
+                .trim()
+                .parse::<u8>()
+                .map_err(|e| format!("Invalid G value: {}", e))?;
+            let b = parts[2]
+                .trim()
+                .parse::<u8>()
+                .map_err(|e| format!("Invalid B value: {}", e))?;
+            Ok(Rgba([r, g, b, 255]))
+        }
+        _ => Err(format!(
+            "Fill value must be either a single grayscale value or R,G,B triplet, got: {}",
+            s
+        )),
+    }
 }
 
 fn main() {
@@ -143,7 +231,9 @@ fn validate_paths(args: &Args) -> Result<(), Error> {
         });
     }
     if !args.output.is_dir() {
-        std::fs::create_dir_all(&args.output).context(IOSnafu)?;
+        std::fs::create_dir_all(&args.output).with_context(|_| IOSnafu {
+            path: args.output.clone(),
+        })?;
     }
     Ok(())
 }
@@ -173,7 +263,9 @@ fn load_manifest_csv(path: &Path) -> Result<Vec<ManifestEntry>, Error> {
 }
 
 fn load_manifest_parquet(path: &Path) -> Result<Vec<ManifestEntry>, Error> {
-    let file = File::open(path).context(IOSnafu)?;
+    let file = File::open(path).with_context(|_| IOSnafu {
+        path: path.to_path_buf(),
+    })?;
     let reader = ParquetRecordBatchReader::try_new(file, BATCH_SIZE).context(ParquetSnafu)?;
     let mut entries = Vec::new();
 
@@ -235,14 +327,22 @@ fn find_mask(mask_dir: &Path, sop_instance_uid: &str) -> Option<PathBuf> {
 /// Load mask image from file (supports PNG and TIFF)
 fn load_mask(path: &Path) -> Result<DynamicImage, Error> {
     let reader = ImageReader::open(path)
-        .context(IOSnafu)?
+        .with_context(|_| IOSnafu {
+            path: path.to_path_buf(),
+        })?
         .with_guessed_format()
-        .context(IOSnafu)?;
+        .with_context(|_| IOSnafu {
+            path: path.to_path_buf(),
+        })?;
     reader.decode().context(ImageReadSnafu)
 }
 
 /// Apply preprocessing transforms to a mask image
-fn apply_transforms(image: &DynamicImage, metadata: &PreprocessingMetadata) -> DynamicImage {
+fn apply_transforms(
+    image: &DynamicImage,
+    metadata: &PreprocessingMetadata,
+    fill_value: Option<Rgba<u8>>,
+) -> DynamicImage {
     // Apply crop
     let image = metadata
         .crop
@@ -265,12 +365,70 @@ fn apply_transforms(image: &DynamicImage, metadata: &PreprocessingMetadata) -> D
         })
         .unwrap_or(image);
 
-    // Apply padding
+    // Apply padding with custom fill value
     metadata
         .padding
         .as_ref()
-        .map(|padding| padding.apply(&image))
+        .map(|padding| apply_padding_with_fill(&image, padding, fill_value))
         .unwrap_or(image)
+}
+
+/// Apply padding with a custom fill value
+fn apply_padding_with_fill(
+    image: &DynamicImage,
+    padding: &dicom_preprocessing::Padding,
+    fill_value: Option<Rgba<u8>>,
+) -> DynamicImage {
+    use image::{Luma, Rgb};
+    
+    let (width, height) = image.dimensions();
+    let mut padded_image = DynamicImage::new(
+        width + padding.left + padding.right,
+        height + padding.top + padding.bottom,
+        image.color(),
+    );
+
+    // Fill with custom color if specified, converting to match image type
+    if let Some(fill) = fill_value {
+        for y in 0..padded_image.height() {
+            for x in 0..padded_image.width() {
+                // Convert fill value to match the image color type
+                match &mut padded_image {
+                    DynamicImage::ImageLuma8(img) => {
+                        // For grayscale, use the R channel value
+                        img.put_pixel(x, y, Luma([fill[0]]));
+                    }
+                    DynamicImage::ImageLuma16(img) => {
+                        let val = (fill[0] as u16) << 8 | fill[0] as u16;
+                        img.put_pixel(x, y, Luma([val]));
+                    }
+                    DynamicImage::ImageRgb8(img) => {
+                        img.put_pixel(x, y, Rgb([fill[0], fill[1], fill[2]]));
+                    }
+                    DynamicImage::ImageRgb16(img) => {
+                        let r = (fill[0] as u16) << 8 | fill[0] as u16;
+                        let g = (fill[1] as u16) << 8 | fill[1] as u16;
+                        let b = (fill[2] as u16) << 8 | fill[2] as u16;
+                        img.put_pixel(x, y, Rgb([r, g, b]));
+                    }
+                    _ => {
+                        // For other types, use the generic put_pixel
+                        padded_image.put_pixel(x, y, fill);
+                    }
+                }
+            }
+        }
+    }
+
+    // Copy original image content
+    for y in 0..height {
+        for x in 0..width {
+            let pixel = image.get_pixel(x, y);
+            padded_image.put_pixel(x + padding.left, y + padding.top, pixel);
+        }
+    }
+
+    padded_image
 }
 
 /// Process a single mask file
@@ -279,6 +437,8 @@ fn process_mask(
     source_dir: &Path,
     mask_dir: &Path,
     output_dir: &Path,
+    fill_value: Option<Rgba<u8>>,
+    compressor: SupportedCompressor,
 ) -> Result<Option<PathBuf>, Error> {
     // Find the corresponding mask
     let mask_path = match find_mask(mask_dir, &entry.sop_instance_uid) {
@@ -294,7 +454,9 @@ fn process_mask(
 
     // Load the preprocessed TIFF to get metadata
     let source_path = source_dir.join(&entry.path);
-    let file = File::open(&source_path).context(IOSnafu)?;
+    let file = File::open(&source_path).with_context(|_| IOSnafu {
+        path: source_path.clone(),
+    })?;
     let reader = BufReader::new(file);
     let mut decoder = Decoder::new(reader)
         .map_err(TiffError::from)
@@ -303,12 +465,14 @@ fn process_mask(
 
     // Load and transform the mask
     let mask = load_mask(&mask_path)?;
-    let transformed = apply_transforms(&mask, &metadata);
+    let transformed = apply_transforms(&mask, &metadata, fill_value);
 
     // Determine output path (preserve directory structure from manifest path)
     let output_path = output_dir.join(entry.path.with_extension("tiff"));
     if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent).context(IOSnafu)?;
+        std::fs::create_dir_all(parent).with_context(|_| IOSnafu {
+            path: parent.to_path_buf(),
+        })?;
     }
 
     // Determine color type based on input mask
@@ -328,7 +492,7 @@ fn process_mask(
     };
 
     // Save the transformed mask
-    let saver = TiffSaver::new(Compressor::Uncompressed(Uncompressed), color);
+    let saver = TiffSaver::new(compressor.into(), color);
     let mut encoder = saver.open_tiff(&output_path).context(TiffWriteSnafu)?;
     saver
         .save(&mut encoder, &transformed, &metadata)
@@ -375,7 +539,7 @@ fn run(args: Args) -> Result<usize, Error> {
     let results: Vec<_> = entries
         .par_iter()
         .progress_with(pb)
-        .map(|entry| process_mask(entry, &source_dir, &args.masks, &args.output))
+        .map(|entry| process_mask(entry, &source_dir, &args.masks, &args.output, args.fill, args.compressor.clone()))
         .collect::<Result<Vec<_>, _>>()?;
 
     let processed_count = results.iter().filter(|r| r.is_some()).count();
@@ -564,7 +728,7 @@ mod tests {
             num_frames: FrameCount::from(1_u16),
         };
 
-        let result = apply_transforms(&img, &metadata);
+        let result = apply_transforms(&img, &metadata, None);
         assert_eq!(result.width(), expected_width);
         assert_eq!(result.height(), expected_height);
     }
@@ -595,7 +759,7 @@ mod tests {
             num_frames: FrameCount::from(1_u16),
         };
 
-        let result = apply_transforms(&img, &metadata);
+        let result = apply_transforms(&img, &metadata, None);
         assert_eq!(result.width(), 60);
         assert_eq!(result.height(), 60);
     }
@@ -625,7 +789,7 @@ mod tests {
             num_frames: FrameCount::from(1_u16),
         };
 
-        let result = apply_transforms(&img, &metadata);
+        let result = apply_transforms(&img, &metadata, None);
         let result = result.into_luma8();
 
         // Check that we get a scaled checkerboard (each original pixel becomes 2x2)
@@ -713,7 +877,7 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir).unwrap();
+        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
         assert!(result.is_some());
 
         let output_path = result.unwrap();
@@ -756,7 +920,7 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir).unwrap();
+        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
         assert!(result.is_some());
 
         let output_path = result.unwrap();
@@ -798,7 +962,7 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir).unwrap();
+        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
         assert!(result.is_some());
     }
 
@@ -828,7 +992,7 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir).unwrap();
+        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
         assert!(result.is_none());
     }
 
@@ -885,6 +1049,8 @@ mod tests {
             manifest: manifest_path,
             masks: mask_dir,
             output: output_dir.clone(),
+            fill: None,
+            compressor: SupportedCompressor::default(),
             verbose: true,
         };
 
@@ -922,7 +1088,7 @@ mod tests {
             num_frames: FrameCount::from(1_u16),
         };
 
-        let result = apply_transforms(&img, &metadata);
+        let result = apply_transforms(&img, &metadata, None);
         let result = result.into_luma8();
 
         // All pixels in result should be 255
@@ -963,7 +1129,7 @@ mod tests {
             num_frames: FrameCount::from(1_u16),
         };
 
-        let result = apply_transforms(&img, &metadata);
+        let result = apply_transforms(&img, &metadata, None);
         let result = result.into_luma8();
 
         assert_eq!(result.width(), 70);
@@ -986,6 +1152,136 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_padding_with_custom_fill_value() {
+        let img = DynamicImage::new_luma8(50, 50);
+        let img = {
+            let mut gray = img.into_luma8();
+            for y in 0..50 {
+                for x in 0..50 {
+                    gray.put_pixel(x, y, Luma([128]));
+                }
+            }
+            DynamicImage::ImageLuma8(gray)
+        };
+
+        let metadata = PreprocessingMetadata {
+            crop: None,
+            resize: None,
+            padding: Some(Padding {
+                left: 10,
+                top: 10,
+                right: 10,
+                bottom: 10,
+            }),
+            resolution: None,
+            num_frames: FrameCount::from(1_u16),
+        };
+
+        // Test with red fill (255, 0, 0) - should be converted to grayscale
+        let fill_value = Some(Rgba([255, 0, 0, 255]));
+        let result = apply_transforms(&img, &metadata, fill_value);
+        let result = result.into_luma8();
+
+        assert_eq!(result.width(), 70);
+        assert_eq!(result.height(), 70);
+
+        // Check padding area has the fill value (red as grayscale = 255)
+        assert_eq!(
+            result.get_pixel(0, 0)[0],
+            255,
+            "Top-left padding should be red (255)"
+        );
+        assert_eq!(
+            result.get_pixel(5, 5)[0],
+            255,
+            "Padding area should be red (255)"
+        );
+        assert_eq!(
+            result.get_pixel(69, 69)[0],
+            255,
+            "Bottom-right padding should be red (255)"
+        );
+
+        // Check original content is preserved
+        assert_eq!(
+            result.get_pixel(10, 10)[0],
+            128,
+            "Original content should be preserved"
+        );
+        assert_eq!(
+            result.get_pixel(30, 30)[0],
+            128,
+            "Original content should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_padding_with_grayscale_fill_value() {
+        let img = DynamicImage::new_luma8(50, 50);
+        let img = {
+            let mut gray = img.into_luma8();
+            for y in 0..50 {
+                for x in 0..50 {
+                    gray.put_pixel(x, y, Luma([200]));
+                }
+            }
+            DynamicImage::ImageLuma8(gray)
+        };
+
+        let metadata = PreprocessingMetadata {
+            crop: None,
+            resize: None,
+            padding: Some(Padding {
+                left: 5,
+                top: 5,
+                right: 5,
+                bottom: 5,
+            }),
+            resolution: None,
+            num_frames: FrameCount::from(1_u16),
+        };
+
+        // Test with grayscale fill value (100, 100, 100)
+        let fill_value = Some(Rgba([100, 100, 100, 255]));
+        let result = apply_transforms(&img, &metadata, fill_value);
+        let result = result.into_luma8();
+
+        // Check padding area has the fill value
+        assert_eq!(
+            result.get_pixel(0, 0)[0],
+            100,
+            "Padding should have fill value"
+        );
+
+        // Check original content is preserved
+        assert_eq!(
+            result.get_pixel(5, 5)[0],
+            200,
+            "Original content should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_parse_fill_value() {
+        // Test single grayscale value
+        let gray = parse_fill_value("128").unwrap();
+        assert_eq!(gray, Rgba([128, 128, 128, 255]));
+
+        // Test RGB triplet
+        let red = parse_fill_value("255,0,0").unwrap();
+        assert_eq!(red, Rgba([255, 0, 0, 255]));
+
+        let white = parse_fill_value("255, 255, 255").unwrap();
+        assert_eq!(white, Rgba([255, 255, 255, 255]));
+
+        // Test errors
+        assert!(parse_fill_value("invalid").is_err());
+        assert!(parse_fill_value("256").is_err());
+        assert!(parse_fill_value("1,2").is_err());
+        assert!(parse_fill_value("1,2,3,4").is_err());
     }
 
     #[test]
@@ -1036,6 +1332,8 @@ mod tests {
             manifest: manifest_path,
             masks: mask_dir,
             output: output_dir.clone(),
+            fill: None,
+            compressor: SupportedCompressor::default(),
             verbose: false,
         };
 

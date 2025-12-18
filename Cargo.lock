@@ -967,6 +967,7 @@ dependencies = [
  "dicom-pixeldata",
  "dicom-test-files",
  "env_logger",
+ "half",
  "image",
  "imageproc",
  "indicatif",

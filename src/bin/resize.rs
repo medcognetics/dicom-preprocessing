@@ -232,6 +232,16 @@ fn resize_tiff(
         metadata.resolution = Some(resize.apply(resolution));
     }
 
+    // Update padding if present - scale padding values to account for resized coordinate space
+    if let Some(padding) = metadata.padding {
+        metadata.padding = Some(dicom_preprocessing::transform::pad::Padding {
+            left: (padding.left as f32 * scale).round() as u32,
+            top: (padding.top as f32 * scale).round() as u32,
+            right: (padding.right as f32 * scale).round() as u32,
+            bottom: (padding.bottom as f32 * scale).round() as u32,
+        });
+    }
+
     // Create output directory if it doesn't exist
     if let Some(parent) = output_path.parent() {
         std::fs::create_dir_all(parent).context(IOSnafu)?;
@@ -621,5 +631,78 @@ mod tests {
         // Should be 2.0 * 0.5 = 1.0
         assert!((resize.scale_x - 1.0).abs() < TOLERANCE);
         assert!((resize.scale_y - 1.0).abs() < TOLERANCE);
+    }
+
+    #[rstest]
+    #[case(0.5)]
+    #[case(2.0)]
+    #[case(0.25)]
+    fn test_resize_with_padding(#[case] scale: f32) {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        let output_dir = tmp_dir.path().join("output");
+        fs::create_dir(&source_dir).unwrap();
+        fs::create_dir(&output_dir).unwrap();
+
+        // Create a TIFF with padding metadata
+        let input_path = source_dir.join("test.tiff");
+        let initial_padding = dicom_preprocessing::transform::pad::Padding {
+            left: 10,
+            top: 20,
+            right: 30,
+            bottom: 40,
+        };
+        let metadata = PreprocessingMetadata {
+            crop: None,
+            resize: None,
+            padding: Some(initial_padding),
+            resolution: None,
+            num_frames: FrameCount::from(1_u16),
+        };
+
+        let array = Array4::<u8>::zeros((1, 64, 64, 1));
+        let saver = TiffSaver::new(
+            Compressor::Uncompressed(Uncompressed),
+            DicomColorType::Gray8(tiff::encoder::colortype::Gray8),
+        );
+        {
+            let mut encoder = saver.open_tiff(&input_path).unwrap();
+            let dynamic_image = DynamicImage::ImageLuma8(
+                image::ImageBuffer::from_raw(64, 64, array.into_raw_vec_and_offset().0).unwrap(),
+            );
+            saver.save(&mut encoder, &dynamic_image, &metadata).unwrap();
+        }
+
+        // Apply resize
+        let args = Args {
+            source: source_dir,
+            output: output_dir.clone(),
+            scale,
+            filter: FilterType::Triangle,
+            verbose: false,
+        };
+
+        run(args).unwrap();
+
+        // Verify padding metadata is scaled
+        let output_path = output_dir.join("test.tiff");
+        let file = File::open(output_path).unwrap();
+        let reader = BufReader::new(file);
+        let mut decoder = Decoder::new(reader).unwrap();
+        let metadata = PreprocessingMetadata::try_from(&mut decoder).unwrap();
+
+        assert!(metadata.padding.is_some());
+        let padding = metadata.padding.unwrap();
+
+        // Padding values should be scaled by the scale factor
+        let expected_left = (initial_padding.left as f32 * scale).round() as u32;
+        let expected_top = (initial_padding.top as f32 * scale).round() as u32;
+        let expected_right = (initial_padding.right as f32 * scale).round() as u32;
+        let expected_bottom = (initial_padding.bottom as f32 * scale).round() as u32;
+
+        assert_eq!(padding.left, expected_left);
+        assert_eq!(padding.top, expected_top);
+        assert_eq!(padding.right, expected_right);
+        assert_eq!(padding.bottom, expected_bottom);
     }
 }

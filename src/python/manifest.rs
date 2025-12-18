@@ -11,7 +11,7 @@ use pyo3::{
 };
 use std::clone::Clone;
 
-use crate::manifest::{get_manifest, get_manifest_with_progress};
+use crate::manifest::get_manifest_with_progress;
 
 #[pyclass]
 #[derive(Clone)]

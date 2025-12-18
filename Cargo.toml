@@ -14,14 +14,14 @@ dicom = { version = "0.8.2", features = ["image", "ndarray"]}
 dicom-pixeldata = { version = "0.8.2", features = ["openjp2", "rayon"]}
 indicatif = { version= "0.18", features= ["rayon"] }
 clap = { version = "4.5", features = ["derive"] }
-rayon = "1.10"
+rayon = "1.11"
 rust_search = "2.1"
 log = "0.4"
 thiserror = "2.0"
 env_logger = "0.11"
 image = "0.25"
 tiff = "0.10"
-half = "2.4"
+half = "2.7"
 snafu = "0.8"
 tracing = "0.1"
 tracing-subscriber = "0.3"
@@ -31,16 +31,16 @@ itertools = "0.14"
 imageproc = "0.25"
 pyo3 = { version = "0.26", features = ["extension-module"], optional = true }
 numpy = { version = "0.26", optional = true }
-arrow = "56.0"
-parquet = "56.0"
-tempfile = { version = "3.10", optional = true }
-csv = "1.3"
+arrow = "57.1"
+parquet = "57.1"
+tempfile = { version = "3.23", optional = true }
+csv = "1.4"
 
 [features]
 python = ["pyo3", "numpy", "tempfile"]
 
 [dev-dependencies]
-tempfile = "3.10"
+tempfile = "3.23"
 dicom-test-files = "0.3"
 rstest = "0.26"
 rand = "0.9"

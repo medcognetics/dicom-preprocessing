@@ -506,8 +506,9 @@ impl HandleVolume for InterpolateVolume {
 /// 3. Compute MIP across slices for each Laplacian pyramid level
 /// 4. Fuse high-frequency MIP with central slice using nonlinear combination
 /// 5. Reconstruct the final image
-
-/// Fusion parameters (α, β, p) for a pyramid level
+///
+/// ## Fusion parameters (α, β, p) for a pyramid level
+///
 /// Formula: r(k) = α * Expand(g_{k+1}) + β * (Expand(g_{k+1}))^p * (L_k + ML_k)
 #[derive(Debug, Clone, Copy)]
 pub struct FusionParams {
@@ -654,8 +655,8 @@ impl LaplacianMip {
 
     /// Downsample by factor of 2 (after blur)
     fn downsample(data: &[f32], width: usize, height: usize) -> (Vec<f32>, usize, usize) {
-        let new_width = (width + 1) / 2;
-        let new_height = (height + 1) / 2;
+        let new_width = width.div_ceil(2);
+        let new_height = height.div_ceil(2);
         let mut result = vec![0.0f32; new_width * new_height];
 
         for y in 0..new_height {
@@ -897,7 +898,7 @@ impl LaplacianMip {
         let num_levels = self.num_levels.min(max_levels);
 
         // Convert all frames to f32 grayscale (normalized 0-1)
-        let gray_frames: Vec<Vec<f32>> = frames.iter().map(|f| Self::to_grayscale_f32(f)).collect();
+        let gray_frames: Vec<Vec<f32>> = frames.iter().map(Self::to_grayscale_f32).collect();
 
         // Get central frame (projection view - PV)
         let central_idx = frames.len() / 2;

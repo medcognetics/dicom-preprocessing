@@ -6,6 +6,7 @@ import numpy.typing as npt
 
 __version__: str
 
+
 class Crop:
     """Crop transformation metadata.
 
@@ -21,6 +22,7 @@ class Crop:
     width: int
     height: int
 
+
 class Resize:
     """Resize transformation metadata.
 
@@ -33,6 +35,7 @@ class Resize:
     scale_x: float
     scale_y: float
     filter: str
+
 
 class Padding:
     """Padding transformation metadata.
@@ -49,6 +52,7 @@ class Padding:
     right: int
     bottom: int
 
+
 class Resolution:
     """Image resolution metadata.
 
@@ -61,6 +65,7 @@ class Resolution:
     pixels_per_mm_x: float
     pixels_per_mm_y: float
     frames_per_mm: Optional[float]
+
 
 class PreprocessingMetadata:
     """Complete preprocessing metadata including all transformations applied.
@@ -80,6 +85,7 @@ class PreprocessingMetadata:
     padding: Optional[Padding]
     resolution: Optional[Resolution]
     num_frames: int
+
 
 class Preprocessor:
     """Configuration for DICOM preprocessing.
@@ -135,6 +141,7 @@ class Preprocessor:
         convert_options: str = "default",
     ) -> None: ...
 
+
 def get_frame_count(path: Union[str, Path]) -> int:
     """Get the number of frames in a TIFF file.
 
@@ -150,6 +157,7 @@ def get_frame_count(path: Union[str, Path]) -> int:
         RuntimeError: If frame count cannot be determined
     """
     ...
+
 
 def load_tiff_u8(path: Union[str, Path], frames: Optional[Sequence[int]] = None) -> npt.NDArray[np.uint8]:
     """Load a TIFF file as an unsigned 8-bit numpy array.
@@ -169,6 +177,7 @@ def load_tiff_u8(path: Union[str, Path], frames: Optional[Sequence[int]] = None)
     """
     ...
 
+
 def load_tiff_u16(path: Union[str, Path], frames: Optional[Sequence[int]] = None) -> npt.NDArray[np.uint16]:
     """Load a TIFF file as an unsigned 16-bit numpy array.
     If the TIFF is of a different bit depth, it will be scaled to 16-bit.
@@ -187,6 +196,7 @@ def load_tiff_u16(path: Union[str, Path], frames: Optional[Sequence[int]] = None
     """
     ...
 
+
 def load_tiff_f32(path: Union[str, Path], frames: Optional[Sequence[int]] = None) -> npt.NDArray[np.float32]:
     """Load a TIFF file as a 32-bit floating-point numpy array.
     Inputs are scaled to the range :math:`[0, 1]` according to the source bit depth.
@@ -204,6 +214,7 @@ def load_tiff_f32(path: Union[str, Path], frames: Optional[Sequence[int]] = None
         RuntimeError: If TIFF decoding fails
     """
     ...
+
 
 def preprocess_u8(
     path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -224,6 +235,7 @@ def preprocess_u8(
     """
     ...
 
+
 def preprocess_u16(
     path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> npt.NDArray[np.uint16]:
@@ -242,6 +254,7 @@ def preprocess_u16(
         RuntimeError: If preprocessing fails
     """
     ...
+
 
 def preprocess_f32(
     path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -263,6 +276,7 @@ def preprocess_f32(
     """
     ...
 
+
 def preprocess_stream_u8(
     buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> npt.NDArray[np.uint8]:
@@ -281,6 +295,7 @@ def preprocess_stream_u8(
         ValueError: If buffer is not contiguous
     """
     ...
+
 
 def preprocess_stream_u16(
     buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -301,6 +316,7 @@ def preprocess_stream_u16(
     """
     ...
 
+
 def preprocess_stream_f32(
     buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> npt.NDArray[np.float32]:
@@ -320,6 +336,7 @@ def preprocess_stream_f32(
         ValueError: If buffer is not contiguous
     """
     ...
+
 
 def preprocess_u8_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -350,6 +367,7 @@ def preprocess_u8_slices(
     """
     ...
 
+
 def preprocess_u16_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint16]]:
@@ -378,6 +396,7 @@ def preprocess_u16_slices(
         RuntimeError: If preprocessing fails or paths list is empty
     """
     ...
+
 
 def preprocess_f32_slices(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -409,6 +428,7 @@ def preprocess_f32_slices(
     """
     ...
 
+
 def preprocess_stream_u8_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint8]]:
@@ -438,6 +458,7 @@ def preprocess_stream_u8_slices(
     """
     ...
 
+
 def preprocess_stream_u16_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> List[npt.NDArray[np.uint16]]:
@@ -466,6 +487,7 @@ def preprocess_stream_u16_slices(
         ValueError: If any buffer is not contiguous
     """
     ...
+
 
 def preprocess_stream_f32_slices(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -497,6 +519,7 @@ def preprocess_stream_f32_slices(
     """
     ...
 
+
 def preprocess_u8_with_metadata(
     path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[npt.NDArray[np.uint8], PreprocessingMetadata]:
@@ -517,6 +540,7 @@ def preprocess_u8_with_metadata(
     """
     ...
 
+
 def preprocess_u16_with_metadata(
     path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[npt.NDArray[np.uint16], PreprocessingMetadata]:
@@ -536,6 +560,7 @@ def preprocess_u16_with_metadata(
         RuntimeError: If preprocessing fails
     """
     ...
+
 
 def preprocess_f32_with_metadata(
     path: Union[str, Path], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -558,6 +583,7 @@ def preprocess_f32_with_metadata(
     """
     ...
 
+
 def preprocess_stream_u8_with_metadata(
     buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[npt.NDArray[np.uint8], PreprocessingMetadata]:
@@ -577,6 +603,7 @@ def preprocess_stream_u8_with_metadata(
         ValueError: If buffer is not contiguous
     """
     ...
+
 
 def preprocess_stream_u16_with_metadata(
     buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -598,6 +625,7 @@ def preprocess_stream_u16_with_metadata(
     """
     ...
 
+
 def preprocess_stream_f32_with_metadata(
     buffer: bytes, preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[npt.NDArray[np.float32], PreprocessingMetadata]:
@@ -618,6 +646,7 @@ def preprocess_stream_f32_with_metadata(
         ValueError: If buffer is not contiguous
     """
     ...
+
 
 def preprocess_u8_slices_with_metadata(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -649,6 +678,7 @@ def preprocess_u8_slices_with_metadata(
     """
     ...
 
+
 def preprocess_u16_slices_with_metadata(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[List[npt.NDArray[np.uint16]], PreprocessingMetadata]:
@@ -678,6 +708,7 @@ def preprocess_u16_slices_with_metadata(
         RuntimeError: If preprocessing fails or paths list is empty
     """
     ...
+
 
 def preprocess_f32_slices_with_metadata(
     paths: Sequence[Union[str, Path]], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -710,6 +741,7 @@ def preprocess_f32_slices_with_metadata(
     """
     ...
 
+
 def preprocess_stream_u8_slices_with_metadata(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[List[npt.NDArray[np.uint8]], PreprocessingMetadata]:
@@ -740,6 +772,7 @@ def preprocess_stream_u8_slices_with_metadata(
     """
     ...
 
+
 def preprocess_stream_u16_slices_with_metadata(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
 ) -> Tuple[List[npt.NDArray[np.uint16]], PreprocessingMetadata]:
@@ -769,6 +802,7 @@ def preprocess_stream_u16_slices_with_metadata(
         ValueError: If any buffer is not contiguous
     """
     ...
+
 
 def preprocess_stream_f32_slices_with_metadata(
     buffers: Sequence[bytes], preprocessor: Optional[Preprocessor] = None, parallel: bool = False
@@ -801,6 +835,7 @@ def preprocess_stream_f32_slices_with_metadata(
     """
     ...
 
+
 def find_dicom_files(path: Path, spinner: bool = False) -> List[Path]:
     """Find all DICOM files in a directory recursively.
 
@@ -812,6 +847,7 @@ def find_dicom_files(path: Path, spinner: bool = False) -> List[Path]:
         List of paths to DICOM files
     """
     ...
+
 
 def find_tiff_files(path: Path, spinner: bool = False) -> List[Path]:
     """Find all TIFF files in a directory recursively.
@@ -825,6 +861,7 @@ def find_tiff_files(path: Path, spinner: bool = False) -> List[Path]:
     """
     ...
 
+
 def read_dicom_paths(path: Path, bar: bool = False) -> List[Path]:
     """Read paths to DICOM files from a text file containing one path per line.
 
@@ -836,6 +873,7 @@ def read_dicom_paths(path: Path, bar: bool = False) -> List[Path]:
         List of paths to DICOM files
     """
     ...
+
 
 def read_tiff_paths(path: Path, bar: bool = False) -> List[Path]:
     """Read paths to TIFF files from a text file containing one path per line.
@@ -849,6 +887,7 @@ def read_tiff_paths(path: Path, bar: bool = False) -> List[Path]:
     """
     ...
 
+
 def inode_sort(paths: List[Path], bar: bool = False) -> List[Path]:
     """Sort paths by inode number.
 
@@ -861,6 +900,7 @@ def inode_sort(paths: List[Path], bar: bool = False) -> List[Path]:
     """
     ...
 
+
 class ManifestEntry:
     path: Path
     sop_instance_uid: str
@@ -871,6 +911,7 @@ class ManifestEntry:
     def relative_path(self, root: Path) -> Path:
         """Get the path of this entry relative to a root path"""
         ...
+
 
 def get_manifest(path: Path, bar: bool = False) -> List[ManifestEntry]:
     """Gets manifest entries for preprocessed TIFF files in a directory.
@@ -887,6 +928,7 @@ def get_manifest(path: Path, bar: bool = False) -> List[ManifestEntry]:
         List of manifest entries
     """
     ...
+
 
 def load_tiff_f32_batched(
     paths: List[Path], batch_size: int, frames: Optional[Sequence[int]] = None

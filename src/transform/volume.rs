@@ -25,7 +25,7 @@
 //!
 //! ### Key Parameters
 //!
-//! - `mip_weight`: Weight for MIP Laplacian contribution (default 3.0).
+//! - `mip_weight`: Weight for MIP Laplacian contribution (default 1.5).
 //!   Higher values preserve calcifications better.
 //! - `skip_start`/`skip_end`: Trim noisy edge frames (default 5).
 
@@ -496,6 +496,16 @@ impl HandleVolume for InterpolateVolume {
     }
 }
 
+/// How to compute the central frame for Laplacian pyramid fusion
+#[derive(Debug, Clone, Copy, Default)]
+pub enum ProjectionMode {
+    /// Use the central slice
+    CentralSlice,
+    /// Sum all slices along z-axis (parallel beam approximation)
+    #[default]
+    ParallelBeam,
+}
+
 /// Laplacian Pyramid MIP Fusion - the most sophisticated DBT projection method.
 ///
 /// Based on "Synthesizing Mammogram from DBT" (PMC6438841).
@@ -546,7 +556,7 @@ pub struct LaplacianMip {
     bilateral_sigma_r_frac: f32,
     /// Fusion parameters per level (α, β, p). If fewer than num_levels, last entry is repeated.
     fusion_params: Vec<FusionParams>,
-    /// Weight for MIP Laplacian contribution (default 3.0)
+    /// Weight for MIP Laplacian contribution (default 1.5)
     /// Values > 1.0 amplify MIP features (calcifications), < 1.0 reduce them
     /// Formula becomes: L_central + mip_weight * L_mip
     pub mip_weight: f32,
@@ -554,6 +564,8 @@ pub struct LaplacianMip {
     pub skip_start: u32,
     /// Skip frames at end (default 5 to exclude noisy edge frames)
     pub skip_end: u32,
+    /// How to compute the central frame for fusion
+    pub projection_mode: ProjectionMode,
 }
 
 impl Default for LaplacianMip {
@@ -563,9 +575,10 @@ impl Default for LaplacianMip {
             bilateral_sigma_s: 3.0,
             bilateral_sigma_r_frac: 0.015,
             fusion_params: DEFAULT_FUSION_PARAMS.to_vec(),
-            mip_weight: 3.0, // Benchmarked as best for calcification preservation
+            mip_weight: 1.5,
             skip_start: 5,
             skip_end: 5,
+            projection_mode: ProjectionMode::default(),
         }
     }
 }
@@ -582,9 +595,15 @@ impl LaplacianMip {
 
     /// Set weight for MIP Laplacian contribution
     /// Values > 1.0 amplify MIP features (calcifications), < 1.0 reduce them
-    /// Default is 3.0 (benchmarked as optimal for calcification preservation)
+    /// Default is 1.5
     pub fn with_mip_weight(mut self, weight: f32) -> Self {
         self.mip_weight = weight;
+        self
+    }
+
+    /// Set the projection mode for computing the central frame
+    pub fn with_projection_mode(mut self, mode: ProjectionMode) -> Self {
+        self.projection_mode = mode;
         self
     }
 
@@ -876,6 +895,23 @@ impl LaplacianMip {
         mip
     }
 
+    /// Parallel-beam forward projection: sum all slices along z-axis, then normalize to [0, 1]
+    fn compute_parallel_projection(gray_frames: &[Vec<f32>], w: usize, h: usize) -> Vec<f32> {
+        let mut projection = vec![0.0f32; w * h];
+        for slice in gray_frames {
+            for (p, &s) in projection.iter_mut().zip(slice.iter()) {
+                *p += s;
+            }
+        }
+        let max_val = projection.iter().cloned().fold(0.0f32, f32::max);
+        if max_val > 0.0 {
+            for p in &mut projection {
+                *p /= max_val;
+            }
+        }
+        projection
+    }
+
     /// Main projection algorithm - matches paper's approach:
     /// 1. Compute MIP across all DBT slices
     /// 2. Build Laplacian pyramid for central slice (L_k)
@@ -900,9 +936,18 @@ impl LaplacianMip {
         // Convert all frames to f32 grayscale (normalized 0-1)
         let gray_frames: Vec<Vec<f32>> = frames.iter().map(Self::to_grayscale_f32).collect();
 
-        // Get central frame (projection view - PV)
-        let central_idx = frames.len() / 2;
-        let central_frame = &gray_frames[central_idx];
+        // Get central frame based on projection mode
+        let central_frame_owned: Vec<f32>;
+        let central_frame: &[f32] = match self.projection_mode {
+            ProjectionMode::CentralSlice => {
+                let central_idx = gray_frames.len() / 2;
+                &gray_frames[central_idx]
+            }
+            ProjectionMode::ParallelBeam => {
+                central_frame_owned = Self::compute_parallel_projection(&gray_frames, w, h);
+                &central_frame_owned
+            }
+        };
 
         // Step 1: Compute MIP across all frames
         let mip_frame = Self::compute_mip(&gray_frames, w, h);
@@ -1165,5 +1210,78 @@ mod tests {
                 assert_eq!(pixel[0], 100);
             }
         }
+    }
+
+    // --- Parallel beam projection tests ---
+
+    #[test]
+    fn test_parallel_projection_uniform() {
+        let w = 4;
+        let h = 4;
+        let slice = vec![0.5f32; w * h];
+        let frames = vec![slice.clone(), slice.clone(), slice];
+        let proj = LaplacianMip::compute_parallel_projection(&frames, w, h);
+        for &v in &proj {
+            assert!((v - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_parallel_projection_sum() {
+        let w = 4;
+        let h = 4;
+        let frame_a = vec![0.25f32; w * h];
+        let frame_b = vec![0.75f32; w * h];
+        let frames = vec![frame_a, frame_b];
+        let proj = LaplacianMip::compute_parallel_projection(&frames, w, h);
+        for &v in &proj {
+            assert!((v - 1.0).abs() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_parallel_projection_single_slice() {
+        let w = 4;
+        let h = 4;
+        let mut slice = vec![0.0f32; w * h];
+        slice[0] = 1.0;
+        slice[5] = 0.5;
+        let frames = vec![slice];
+        let proj = LaplacianMip::compute_parallel_projection(&frames, w, h);
+        assert!((proj[0] - 1.0).abs() < 1e-6);
+        assert!((proj[5] - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_parallel_projection_all_zeros() {
+        let w = 4;
+        let h = 4;
+        let frames = vec![vec![0.0f32; w * h]; 3];
+        let proj = LaplacianMip::compute_parallel_projection(&frames, w, h);
+        for &v in &proj {
+            assert_eq!(v, 0.0);
+        }
+    }
+
+    #[rstest]
+    #[case(3)]
+    #[case(10)]
+    #[case(1)]
+    fn test_parallel_projection_normalization(#[case] num_slices: usize) {
+        let w = 8;
+        let h = 8;
+        let frames: Vec<Vec<f32>> = (0..num_slices)
+            .map(|k| vec![(k as f32 + 1.0) / num_slices as f32; w * h])
+            .collect();
+
+        let proj = LaplacianMip::compute_parallel_projection(&frames, w, h);
+        let max_val = proj.iter().cloned().fold(0.0f32, f32::max);
+        let min_val = proj.iter().cloned().fold(f32::MAX, f32::min);
+        assert!(min_val >= 0.0);
+        assert!(max_val <= 1.0 + 1e-6);
+        assert!(
+            (max_val - 1.0).abs() < 1e-6,
+            "Max should be normalized to 1.0"
+        );
     }
 }

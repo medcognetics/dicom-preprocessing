@@ -29,9 +29,8 @@ use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::resize::FilterType;
 use dicom_preprocessing::transform::volume::{
-    AverageIntensity, CentralSlice, DisplayVolumeHandler, GaussianWeighted, InterpolateVolume,
-    KeepVolume, LaplacianMip, MaxIntensity, SoftMip, VolumeHandler,
-    DEFAULT_INTERPOLATE_TARGET_FRAMES,
+    CentralSlice, DisplayVolumeHandler, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity,
+    VolumeHandler, DEFAULT_INTERPOLATE_TARGET_FRAMES,
 };
 
 #[derive(Debug, Snafu)]
@@ -242,88 +241,18 @@ struct Args {
 
     // LaplacianMip-specific options
     #[arg(
-        help = "LaplacianMip: bilateral filter range sigma (lower = sharper, preserves calcifications). Literature recommends 0.005-0.02",
-        long = "laplacian-sigma-r",
-        default_value_t = 0.015
-    )]
-    laplacian_sigma_r: f32,
-
-    #[arg(
-        help = "LaplacianMip: bilateral filter spatial sigma",
-        long = "laplacian-sigma-s",
+        help = "LaplacianMip: weight for MIP Laplacian contribution (default 3.0, higher preserves calcifications better)",
+        long = "mip-weight",
         default_value_t = 3.0
     )]
-    laplacian_sigma_s: f32,
+    mip_weight: f32,
 
     #[arg(
-        help = "LaplacianMip: detail enhancement beta for fine levels 0-2 (higher = more calcification enhancement)",
-        long = "laplacian-beta-fine",
-        default_value_t = 2.0
-    )]
-    laplacian_beta_fine: f32,
-
-    #[arg(
-        help = "LaplacianMip: detail enhancement beta for middle levels 3-4",
-        long = "laplacian-beta-mid",
-        default_value_t = 1.0
-    )]
-    laplacian_beta_mid: f32,
-
-    #[arg(
-        help = "LaplacianMip: number of pyramid levels",
-        long = "laplacian-levels",
-        default_value_t = 7
-    )]
-    laplacian_levels: usize,
-
-    #[arg(
-        help = "LaplacianMip: frames to skip at start of volume",
-        long = "laplacian-skip-start",
+        help = "LaplacianMip: frames to skip at start and end of volume (default 5, trims noisy edge frames)",
+        long = "skip-frames",
         default_value_t = 5
     )]
-    laplacian_skip_start: u32,
-
-    #[arg(
-        help = "LaplacianMip: frames to skip at end of volume",
-        long = "laplacian-skip-end",
-        default_value_t = 5
-    )]
-    laplacian_skip_end: u32,
-
-    #[arg(
-        help = "LaplacianMip: skip bilateral filtering at first N pyramid levels (0=filter all, 3=calc-friendly mode)",
-        long = "laplacian-skip-bilateral-levels",
-        default_value_t = 0
-    )]
-    laplacian_skip_bilateral_levels: usize,
-
-    #[arg(
-        help = "LaplacianMip: first pyramid level to include MIP Laplacian (0=all levels, 3=exclude fine levels 0-2)",
-        long = "laplacian-mip-levels-start",
-        default_value_t = 0
-    )]
-    laplacian_mip_levels_start: usize,
-
-    #[arg(
-        help = "LaplacianMip: weight for MIP Laplacian contribution (1.0=equal, >1=amplify calcifications)",
-        long = "laplacian-mip-weight",
-        default_value_t = 1.0
-    )]
-    laplacian_mip_weight: f32,
-
-    #[arg(
-        help = "LaplacianMip: use MIP Gaussian as reconstruction base at fine levels (preserves calcification centers)",
-        long = "laplacian-use-mip-gaussian",
-        default_value_t = false
-    )]
-    laplacian_use_mip_gaussian: bool,
-
-    #[arg(
-        help = "LaplacianMip: number of fine levels to use MIP Gaussian base (default 3 = levels 0-2)",
-        long = "laplacian-mip-gaussian-levels",
-        default_value_t = 3
-    )]
-    laplacian_mip_gaussian_levels: usize,
+    skip_frames: u32,
 
     #[arg(
         help = "Fail on input paths that are not DICOM files, or if any file processing fails",
@@ -539,28 +468,9 @@ fn run(args: Args) -> Result<(), Error> {
             DisplayVolumeHandler::MaxIntensity => {
                 VolumeHandler::MaxIntensity(MaxIntensity::default())
             }
-            DisplayVolumeHandler::AverageIntensity => {
-                VolumeHandler::AverageIntensity(AverageIntensity::default())
-            }
-            DisplayVolumeHandler::GaussianWeighted => {
-                VolumeHandler::GaussianWeighted(GaussianWeighted::default())
-            }
-            DisplayVolumeHandler::SoftMip => VolumeHandler::SoftMip(SoftMip::default()),
             DisplayVolumeHandler::LaplacianMip => VolumeHandler::LaplacianMip(
-                LaplacianMip::new(
-                    args.laplacian_levels,
-                    args.laplacian_skip_start,
-                    args.laplacian_skip_end,
-                )
-                .with_sigma_r(args.laplacian_sigma_r)
-                .with_sigma_s(args.laplacian_sigma_s)
-                .with_beta_fine(args.laplacian_beta_fine)
-                .with_beta_mid(args.laplacian_beta_mid)
-                .with_skip_bilateral_levels(args.laplacian_skip_bilateral_levels)
-                .with_mip_levels_start(args.laplacian_mip_levels_start)
-                .with_mip_weight(args.laplacian_mip_weight)
-                .with_mip_gaussian_base(args.laplacian_use_mip_gaussian)
-                .with_mip_gaussian_levels(args.laplacian_mip_gaussian_levels),
+                LaplacianMip::new(args.skip_frames, args.skip_frames)
+                    .with_mip_weight(args.mip_weight),
             ),
         },
         use_components: !args.no_components,
@@ -680,18 +590,8 @@ mod tests {
             target_frames: 32,
             window: None,
             // LaplacianMip defaults
-            laplacian_sigma_r: 0.015,
-            laplacian_sigma_s: 3.0,
-            laplacian_beta_fine: 2.0,
-            laplacian_beta_mid: 1.0,
-            laplacian_levels: 7,
-            laplacian_skip_start: 5,
-            laplacian_skip_end: 5,
-            laplacian_skip_bilateral_levels: 0,
-            laplacian_mip_levels_start: 0,
-            laplacian_mip_weight: 1.0,
-            laplacian_use_mip_gaussian: false,
-            laplacian_mip_gaussian_levels: 3,
+            mip_weight: 3.0,
+            skip_frames: 5,
         };
         run(args).unwrap();
 

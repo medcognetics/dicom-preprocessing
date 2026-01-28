@@ -91,13 +91,13 @@ Below are example images demonstrating various volume handling options. Laplacia
 | ![Central Slice Crop](docs/central_slice_crop.png) | ![Maximum Intensity Crop](docs/max_intensity_crop.png) | ![Laplacian MIP Crop](docs/laplacian_mip_crop.png) |
 | ![Central Slice Crop 2](docs/central_slice_crop2.png) | ![Maximum Intensity Crop 2](docs/max_intensity_crop2.png) | ![Laplacian MIP Crop 2](docs/laplacian_mip_crop2.png) |
 
-The Laplacian MIP handler supports different projection modes for computing the central frame used in pyramid fusion. The default (`central-slice`) uses the middle slice directly. `parallel-beam` sums all slices along the z-axis, providing better depth integration at the cost of some sharpness.
+The Laplacian MIP handler supports different projection modes for computing the central frame used in pyramid fusion. The default (`parallel-beam`) sums all slices along the z-axis, providing better depth integration. `central-slice` uses the middle slice directly, preserving single-slice sharpness.
 
-| Central Slice (default) | Parallel Beam |
+| Parallel Beam (default) | Central Slice |
 |-------------------------|---------------|
-| ![Laplacian MIP](docs/laplacian_mip.png) | ![Parallel Beam](docs/laplacian_mip_parallel.png) |
-| ![Central Slice Crop](docs/laplacian_mip_crop.png) | ![Parallel Beam Crop](docs/laplacian_mip_parallel_crop.png) |
-| ![Central Slice Crop 2](docs/laplacian_mip_crop2.png) | ![Parallel Beam Crop 2](docs/laplacian_mip_parallel_crop2.png) |
+| ![Parallel Beam](docs/laplacian_mip.png) | ![Central Slice](docs/laplacian_mip_central.png) |
+| ![Parallel Beam Crop](docs/laplacian_mip_crop.png) | ![Central Slice Crop](docs/laplacian_mip_central_crop.png) |
+| ![Parallel Beam Crop 2](docs/laplacian_mip_crop2.png) | ![Central Slice Crop 2](docs/laplacian_mip_central_crop2.png) |
 
 
 ### Optimization Notes

@@ -71,16 +71,15 @@ endif
 	convert /tmp/central_slice_hires.tiff -crop 256x256+104+612 +repage docs/central_slice_crop2.png
 	convert /tmp/max_intensity_hires.tiff -crop 256x256+104+612 +repage docs/max_intensity_crop2.png
 	convert /tmp/laplacian_mip_hires.tiff -crop 256x256+104+612 +repage docs/laplacian_mip_crop2.png
-	# Parallel beam projection mode
-	# Central slice (default) is already generated above as laplacian_mip
-	cargo run --release --bin dicom-preprocess -- $(SOURCE) /tmp/laplacian_mip_parallel.tiff -s 384,512 -v laplacian-mip --projection-mode parallel-beam -c -m
-	convert /tmp/laplacian_mip_parallel.tiff docs/laplacian_mip_parallel.png
-	cargo run --release --bin dicom-preprocess -- $(SOURCE) /tmp/laplacian_mip_parallel_hires.tiff -s 1536,2048 -v laplacian-mip --projection-mode parallel-beam -c -m
-	convert /tmp/laplacian_mip_parallel_hires.tiff -crop 256x256+0+532 +repage docs/laplacian_mip_parallel_crop.png
-	convert /tmp/laplacian_mip_parallel_hires.tiff -crop 256x256+104+612 +repage docs/laplacian_mip_parallel_crop2.png
+	# Central slice projection mode (for comparison; default parallel-beam is generated above as laplacian_mip)
+	cargo run --release --bin dicom-preprocess -- $(SOURCE) /tmp/laplacian_mip_central.tiff -s 384,512 -v laplacian-mip --projection-mode central-slice -c -m
+	convert /tmp/laplacian_mip_central.tiff docs/laplacian_mip_central.png
+	cargo run --release --bin dicom-preprocess -- $(SOURCE) /tmp/laplacian_mip_central_hires.tiff -s 1536,2048 -v laplacian-mip --projection-mode central-slice -c -m
+	convert /tmp/laplacian_mip_central_hires.tiff -crop 256x256+0+532 +repage docs/laplacian_mip_central_crop.png
+	convert /tmp/laplacian_mip_central_hires.tiff -crop 256x256+104+612 +repage docs/laplacian_mip_central_crop2.png
 	rm -f /tmp/central_slice.tiff /tmp/max_intensity.tiff /tmp/laplacian_mip.tiff
 	rm -f /tmp/central_slice_hires.tiff /tmp/max_intensity_hires.tiff /tmp/laplacian_mip_hires.tiff
-	rm -f /tmp/laplacian_mip_parallel.tiff /tmp/laplacian_mip_parallel_hires.tiff
+	rm -f /tmp/laplacian_mip_central.tiff /tmp/laplacian_mip_central_hires.tiff
 
 # Sweep mip_weight for each projection mode to find optimal defaults.
 # Generates montages of full images and lesion crops at different weights.

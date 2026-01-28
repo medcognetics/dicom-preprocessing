@@ -50,7 +50,13 @@ Options:
   -z, --compressor <COMPRESSOR>
           Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
   -v, --volume-handler <VOLUME_HANDLER>
-          How to handle volumes [default: keep] [possible values: keep, central-slice, max-intensity, interpolate]
+          How to handle volumes [default: keep] [possible values: keep, central-slice, max-intensity, laplacian-mip, interpolate]
+      --mip-weight <MIP_WEIGHT>
+          Weight for MIP component in laplacian-mip fusion [default: 0.5]
+      --skip-frames <SKIP_FRAMES>
+          Number of frames to skip from start and end of volume [default: 0]
+      --spacing <SPACING>
+          Slice spacing in mm (used for aspect ratio correction)
   -t, --target-frames <TARGET_FRAMES>
           Target number of frames when using interpolation [default: 32]
       --strict
@@ -66,7 +72,7 @@ Options:
 
 ### Example Images
 
-Below are example images demonstrating the effects of different cropping options (resized to 512x384):
+Below are example images demonstrating the effects of different cropping options (resized to 384x512):
 
 | Original Image | Cropped (Zero Pixels) | Cropped (Zero + Maximum Pixels) |
 |----------------|----------------|----------------------|
@@ -75,10 +81,13 @@ Below are example images demonstrating the effects of different cropping options
 The maximum pixel cropping option (`-m`, `--crop-max`) prevents certain image watermarks from impacting the cropping calculation. Effective cropping can maximize the information extracted from the image at a given
 resolution budget.
 
-Below are example images demonstrating various volume handling options:
-| Central Slice | Maximum Intensity |
-|----------------|-------------------|
-| ![Central Slice](docs/central_slice.png) | ![Maximum Intensity](docs/max_intensity.png) |
+Below are example images demonstrating various volume handling options. Laplacian MIP uses pyramid-based fusion to combine central slice detail with calcification visibility from MIP [[1]](#references).
+
+| Central Slice | Maximum Intensity | Laplacian MIP |
+|---------------|-------------------|---------------|
+| ![Central Slice](docs/central_slice.png) | ![Maximum Intensity](docs/max_intensity.png) | ![Laplacian MIP](docs/laplacian_mip.png) |
+| ![Central Slice Crop](docs/central_slice_crop.png) | ![Maximum Intensity Crop](docs/max_intensity_crop.png) | ![Laplacian MIP Crop](docs/laplacian_mip_crop.png) |
+| ![Central Slice Crop 2](docs/central_slice_crop2.png) | ![Maximum Intensity Crop 2](docs/max_intensity_crop2.png) | ![Laplacian MIP Crop 2](docs/laplacian_mip_crop2.png) |
 
 
 ### Optimization Notes
@@ -186,3 +195,7 @@ Options:
   -h, --help     Print help
   -V, --version  Print version
 ```
+
+### References
+
+1. Wei J, Chan HP, Helvie MA, Roubidoux MA, Neal CH, Lu Y, Hadjiiski LM, Zhou C. Synthesizing Mammogram from Digital Breast Tomosynthesis. *Phys Med Biol.* 2019;64(4):045011. doi:[10.1088/1361-6560/aafcda](https://doi.org/10.1088/1361-6560/aafcda)

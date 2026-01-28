@@ -29,8 +29,8 @@ use dicom_preprocessing::file::{DicomFileOperations, InodeSort};
 use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::resize::FilterType;
 use dicom_preprocessing::transform::volume::{
-    CentralSlice, DisplayVolumeHandler, InterpolateVolume, KeepVolume, MaxIntensity, VolumeHandler,
-    DEFAULT_INTERPOLATE_TARGET_FRAMES,
+    CentralSlice, DisplayVolumeHandler, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity,
+    VolumeHandler, DEFAULT_INTERPOLATE_TARGET_FRAMES,
 };
 
 #[derive(Debug, Snafu)]
@@ -238,6 +238,21 @@ struct Args {
         requires = "volume_handler",
     )]
     target_frames: u32,
+
+    // LaplacianMip-specific options
+    #[arg(
+        help = "LaplacianMip: weight for MIP Laplacian contribution (default 3.0, higher preserves calcifications better)",
+        long = "mip-weight",
+        default_value_t = 3.0
+    )]
+    mip_weight: f32,
+
+    #[arg(
+        help = "LaplacianMip: frames to skip at start and end of volume (default 5, trims noisy edge frames)",
+        long = "skip-frames",
+        default_value_t = 5
+    )]
+    skip_frames: u32,
 
     #[arg(
         help = "Fail on input paths that are not DICOM files, or if any file processing fails",
@@ -453,6 +468,10 @@ fn run(args: Args) -> Result<(), Error> {
             DisplayVolumeHandler::MaxIntensity => {
                 VolumeHandler::MaxIntensity(MaxIntensity::default())
             }
+            DisplayVolumeHandler::LaplacianMip => VolumeHandler::LaplacianMip(
+                LaplacianMip::new(args.skip_frames, args.skip_frames)
+                    .with_mip_weight(args.mip_weight),
+            ),
         },
         use_components: !args.no_components,
         use_padding: !args.no_padding,
@@ -570,6 +589,9 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             window: None,
+            // LaplacianMip defaults
+            mip_weight: 3.0,
+            skip_frames: 5,
         };
         run(args).unwrap();
 

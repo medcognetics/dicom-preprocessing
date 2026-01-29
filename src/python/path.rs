@@ -1,15 +1,16 @@
 use crate::file::{DicomFileOperations, InodeSort, TiffFileOperations};
-use pyo3::FromPyObject;
 use pyo3::{
     exceptions::{PyFileNotFoundError, PyNotADirectoryError, PyRuntimeError, PyValueError},
     pymodule,
     types::{PyAnyMethods, PyList, PyListMethods, PyModule},
     Bound, IntoPyObject, Py, PyAny, PyResult, Python,
 };
+use pyo3::{Borrowed, FromPyObject};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 
 use pyo3::prelude::*;
+use pyo3::wrap_pyfunction;
 
 /// A wrapper type that provides bidirectional conversion between Python's pathlib.Path
 /// and Rust's PathBuf.
@@ -32,8 +33,10 @@ impl PyPath {
     }
 }
 
-impl FromPyObject<'_> for PyPath {
-    fn extract_bound(ob: &Bound<'_, PyAny>) -> PyResult<Self> {
+impl<'a, 'py> FromPyObject<'a, 'py> for PyPath {
+    type Error = PyErr;
+
+    fn extract(ob: Borrowed<'a, 'py, PyAny>) -> Result<Self, Self::Error> {
         // First try to get the string representation of the path
         match ob.str()?.extract::<String>() {
             Ok(path_str) => Ok(PyPath(PathBuf::from(path_str))),
@@ -73,129 +76,136 @@ impl From<PyPath> for PathBuf {
     }
 }
 
+#[pyfunction]
+#[pyo3(name = "inode_sort", signature = (paths, bar=false))]
+fn inode_sort<'py>(
+    py: Python<'py>,
+    paths: Bound<'py, PyList>,
+    bar: bool,
+) -> PyResult<Bound<'py, PyList>> {
+    let mut iter = paths
+        .iter()
+        .map(|p| p.extract::<PyPath>())
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter();
+    let result: Vec<_> = match bar {
+        true => iter.sorted_by_inode_with_progress().collect(),
+        false => iter.sorted_by_inode().collect(),
+    };
+    let py_list = PyList::new(py, result)?;
+    Ok(py_list)
+}
+
+#[pyfunction]
+#[pyo3(name = "is_dicom_file")]
+fn is_dicom_file(path: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let path = path.extract::<PyPath>()?;
+    path.is_dicom_file()
+        .map_err(|_| PyRuntimeError::new_err("Failed to check if file is DICOM"))
+}
+
+#[pyfunction]
+#[pyo3(name = "is_tiff_file")]
+fn is_tiff_file(path: &Bound<'_, PyAny>) -> PyResult<bool> {
+    let path = path.extract::<PyPath>()?;
+    path.is_tiff_file()
+        .map_err(|_| PyRuntimeError::new_err("Failed to check if file is TIFF"))
+}
+
+#[pyfunction]
+#[pyo3(name = "find_dicom_files", signature = (path, spinner=false))]
+fn find_dicom_files<'py>(
+    py: Python<'py>,
+    path: &Bound<'py, PyAny>,
+    spinner: bool,
+) -> PyResult<Bound<'py, PyList>> {
+    let path = path.extract::<PyPath>()?;
+    if !path.is_dir() {
+        return Err(PyNotADirectoryError::new_err(format!(
+            "Not a directory: {}",
+            path.display()
+        )));
+    }
+    let result: Vec<PyPath> = match spinner {
+        true => path.find_dicoms_with_spinner()?.map(PyPath::new).collect(),
+        false => path.find_dicoms()?.map(PyPath::new).collect(),
+    };
+    PyList::new(py, result)
+}
+
+#[pyfunction]
+#[pyo3(name = "find_tiff_files", signature = (path, spinner=false))]
+fn find_tiff_files<'py>(
+    py: Python<'py>,
+    path: &Bound<'py, PyAny>,
+    spinner: bool,
+) -> PyResult<Bound<'py, PyList>> {
+    let path = path.extract::<PyPath>()?;
+    if !path.is_dir() {
+        return Err(PyNotADirectoryError::new_err(format!(
+            "Not a directory: {}",
+            path.display()
+        )));
+    }
+    let result: Vec<PyPath> = match spinner {
+        true => path.find_tiffs_with_spinner()?.map(PyPath::new).collect(),
+        false => path.find_tiffs()?.map(PyPath::new).collect(),
+    };
+    PyList::new(py, result)
+}
+
+#[pyfunction]
+#[pyo3(name = "read_dicom_paths", signature = (path, bar=false))]
+fn read_dicom_paths<'py>(
+    py: Python<'py>,
+    path: &Bound<'py, PyAny>,
+    bar: bool,
+) -> PyResult<Bound<'py, PyList>> {
+    let path = path.extract::<PyPath>()?;
+    if !path.is_file() {
+        return Err(PyFileNotFoundError::new_err(format!(
+            "File not found: {}",
+            path.display()
+        )));
+    }
+    let result: Vec<PyPath> = match bar {
+        true => path.read_dicom_paths_with_bar()?.map(PyPath::new).collect(),
+        false => path.read_dicom_paths()?.map(PyPath::new).collect(),
+    };
+    PyList::new(py, result)
+}
+
+#[pyfunction]
+#[pyo3(name = "read_tiff_paths", signature = (path, bar=false))]
+fn read_tiff_paths<'py>(
+    py: Python<'py>,
+    path: &Bound<'py, PyAny>,
+    bar: bool,
+) -> PyResult<Bound<'py, PyList>> {
+    let path = path.extract::<PyPath>()?;
+    if !path.is_file() {
+        return Err(PyFileNotFoundError::new_err(format!(
+            "File not found: {}",
+            path.display()
+        )));
+    }
+    let result: Vec<PyPath> = match bar {
+        true => path.read_tiff_paths_with_bar()?.map(PyPath::new).collect(),
+        false => path.read_tiff_paths()?.map(PyPath::new).collect(),
+    };
+    PyList::new(py, result)
+}
+
 #[pymodule]
 #[pyo3(name = "path")]
 pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
-    #[pyfn(m)]
-    #[pyo3(name = "inode_sort", signature = (paths, bar=false))]
-    fn inode_sort<'py>(
-        py: Python<'py>,
-        paths: Bound<'py, PyList>,
-        bar: bool,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let mut iter = paths
-            .iter()
-            .map(|p| p.extract::<PyPath>())
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter();
-        let result: Vec<_> = match bar {
-            true => iter.sorted_by_inode_with_progress().collect(),
-            false => iter.sorted_by_inode().collect(),
-        };
-        let py_list = PyList::new(py, result)?;
-        Ok(py_list)
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "is_dicom_file")]
-    fn is_dicom_file(path: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let path = path.extract::<PyPath>()?;
-        path.is_dicom_file()
-            .map_err(|_| PyRuntimeError::new_err("Failed to check if file is DICOM"))
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "is_tiff_file")]
-    fn is_tiff_file(path: &Bound<'_, PyAny>) -> PyResult<bool> {
-        let path = path.extract::<PyPath>()?;
-        path.is_tiff_file()
-            .map_err(|_| PyRuntimeError::new_err("Failed to check if file is TIFF"))
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "find_dicom_files", signature = (path, spinner=false))]
-    fn find_dicom_files<'py>(
-        py: Python<'py>,
-        path: &Bound<'py, PyAny>,
-        spinner: bool,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let path = path.extract::<PyPath>()?;
-        if !path.is_dir() {
-            return Err(PyNotADirectoryError::new_err(format!(
-                "Not a directory: {}",
-                path.display()
-            )));
-        }
-        let result: Vec<PyPath> = match spinner {
-            true => path.find_dicoms_with_spinner()?.map(PyPath::new).collect(),
-            false => path.find_dicoms()?.map(PyPath::new).collect(),
-        };
-        PyList::new(py, result)
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "find_tiff_files", signature = (path, spinner=false))]
-    fn find_tiff_files<'py>(
-        py: Python<'py>,
-        path: &Bound<'py, PyAny>,
-        spinner: bool,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let path = path.extract::<PyPath>()?;
-        if !path.is_dir() {
-            return Err(PyNotADirectoryError::new_err(format!(
-                "Not a directory: {}",
-                path.display()
-            )));
-        }
-        let result: Vec<PyPath> = match spinner {
-            true => path.find_tiffs_with_spinner()?.map(PyPath::new).collect(),
-            false => path.find_tiffs()?.map(PyPath::new).collect(),
-        };
-        PyList::new(py, result)
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "read_dicom_paths", signature = (path, bar=false))]
-    fn read_dicom_paths<'py>(
-        py: Python<'py>,
-        path: &Bound<'py, PyAny>,
-        bar: bool,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let path = path.extract::<PyPath>()?;
-        if !path.is_file() {
-            return Err(PyFileNotFoundError::new_err(format!(
-                "File not found: {}",
-                path.display()
-            )));
-        }
-        let result: Vec<PyPath> = match bar {
-            true => path.read_dicom_paths_with_bar()?.map(PyPath::new).collect(),
-            false => path.read_dicom_paths()?.map(PyPath::new).collect(),
-        };
-        PyList::new(py, result)
-    }
-
-    #[pyfn(m)]
-    #[pyo3(name = "read_tiff_paths", signature = (path, bar=false))]
-    fn read_tiff_paths<'py>(
-        py: Python<'py>,
-        path: &Bound<'py, PyAny>,
-        bar: bool,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let path = path.extract::<PyPath>()?;
-        if !path.is_file() {
-            return Err(PyFileNotFoundError::new_err(format!(
-                "File not found: {}",
-                path.display()
-            )));
-        }
-        let result: Vec<PyPath> = match bar {
-            true => path.read_tiff_paths_with_bar()?.map(PyPath::new).collect(),
-            false => path.read_tiff_paths()?.map(PyPath::new).collect(),
-        };
-        PyList::new(py, result)
-    }
-
+    m.add_function(wrap_pyfunction!(inode_sort, m)?)?;
+    m.add_function(wrap_pyfunction!(is_dicom_file, m)?)?;
+    m.add_function(wrap_pyfunction!(is_tiff_file, m)?)?;
+    m.add_function(wrap_pyfunction!(find_dicom_files, m)?)?;
+    m.add_function(wrap_pyfunction!(find_tiff_files, m)?)?;
+    m.add_function(wrap_pyfunction!(read_dicom_paths, m)?)?;
+    m.add_function(wrap_pyfunction!(read_tiff_paths, m)?)?;
     Ok(())
 }
 

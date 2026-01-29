@@ -30,7 +30,7 @@ use dicom_preprocessing::save::TiffSaver;
 use dicom_preprocessing::transform::resize::FilterType;
 use dicom_preprocessing::transform::volume::{
     CentralSlice, DisplayVolumeHandler, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity,
-    VolumeHandler, DEFAULT_INTERPOLATE_TARGET_FRAMES,
+    ProjectionMode, VolumeHandler, DEFAULT_INTERPOLATE_TARGET_FRAMES,
 };
 
 #[derive(Debug, Snafu)]
@@ -241,9 +241,9 @@ struct Args {
 
     // LaplacianMip-specific options
     #[arg(
-        help = "LaplacianMip: weight for MIP Laplacian contribution (default 3.0, higher preserves calcifications better)",
+        help = "LaplacianMip: weight for MIP Laplacian contribution (default 1.5, higher preserves calcifications better)",
         long = "mip-weight",
-        default_value_t = 3.0
+        default_value_t = 1.5
     )]
     mip_weight: f32,
 
@@ -253,6 +253,13 @@ struct Args {
         default_value_t = 5
     )]
     skip_frames: u32,
+
+    #[arg(
+        help = "LaplacianMip: projection mode for computing the central frame (central-slice or parallel-beam)",
+        long = "projection-mode",
+        default_value = "parallel-beam"
+    )]
+    projection_mode: String,
 
     #[arg(
         help = "Fail on input paths that are not DICOM files, or if any file processing fails",
@@ -279,6 +286,20 @@ struct Args {
         })
     )]
     window: Option<(f64, f64)>,
+}
+
+fn parse_projection_mode(s: &str) -> ProjectionMode {
+    match s {
+        "central-slice" => ProjectionMode::CentralSlice,
+        "parallel-beam" => ProjectionMode::ParallelBeam,
+        _ => {
+            eprintln!(
+                "Unknown projection mode '{}', using central-slice. Valid options: central-slice, parallel-beam",
+                s
+            );
+            ProjectionMode::CentralSlice
+        }
+    }
 }
 
 fn main() {
@@ -470,7 +491,8 @@ fn run(args: Args) -> Result<(), Error> {
             }
             DisplayVolumeHandler::LaplacianMip => VolumeHandler::LaplacianMip(
                 LaplacianMip::new(args.skip_frames, args.skip_frames)
-                    .with_mip_weight(args.mip_weight),
+                    .with_mip_weight(args.mip_weight)
+                    .with_projection_mode(parse_projection_mode(&args.projection_mode)),
             ),
         },
         use_components: !args.no_components,
@@ -590,8 +612,9 @@ mod tests {
             target_frames: 32,
             window: None,
             // LaplacianMip defaults
-            mip_weight: 3.0,
+            mip_weight: 1.5,
             skip_frames: 5,
+            projection_mode: "parallel-beam".to_string(),
         };
         run(args).unwrap();
 

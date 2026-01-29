@@ -41,6 +41,8 @@ Options:
           Border fraction to exclude from crop calculation and grow final crop by
   -s, --size <SIZE>
           Target size (width,height)
+      --spacing <SPACING>
+          Target pixel/voxel spacing in mm (x,y or x,y,z)
   -f, --filter <FILTER>
           Filter type [default: triangle] [possible values: triangle, nearest, catmull-rom, gaussian, lanczos3, max-pool]
   -p, --padding <PADDING_DIRECTION>
@@ -50,15 +52,15 @@ Options:
   -z, --compressor <COMPRESSOR>
           Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
   -v, --volume-handler <VOLUME_HANDLER>
-          How to handle volumes [default: keep] [possible values: keep, central-slice, max-intensity, laplacian-mip, interpolate]
-      --mip-weight <MIP_WEIGHT>
-          Weight for MIP component in laplacian-mip fusion [default: 0.5]
-      --skip-frames <SKIP_FRAMES>
-          Number of frames to skip from start and end of volume [default: 0]
-      --spacing <SPACING>
-          Slice spacing in mm (used for aspect ratio correction)
+          How to handle volumes [default: keep] [possible values: keep, central-slice, max-intensity, interpolate, laplacian-mip]
   -t, --target-frames <TARGET_FRAMES>
           Target number of frames when using interpolation [default: 32]
+      --mip-weight <MIP_WEIGHT>
+          LaplacianMip: weight for MIP Laplacian contribution (default 1.5, higher preserves calcifications better) [default: 1.5]
+      --skip-frames <SKIP_FRAMES>
+          LaplacianMip: frames to skip at start and end of volume (default 5, trims noisy edge frames) [default: 5]
+      --projection-mode <PROJECTION_MODE>
+          LaplacianMip: projection mode for computing the central frame (central-slice or parallel-beam) [default: parallel-beam]
       --strict
           Fail on input paths that are not DICOM files, or if any file processing fails
   -w, --window <WINDOW>
@@ -88,6 +90,14 @@ Below are example images demonstrating various volume handling options. Laplacia
 | ![Central Slice](docs/central_slice.png) | ![Maximum Intensity](docs/max_intensity.png) | ![Laplacian MIP](docs/laplacian_mip.png) |
 | ![Central Slice Crop](docs/central_slice_crop.png) | ![Maximum Intensity Crop](docs/max_intensity_crop.png) | ![Laplacian MIP Crop](docs/laplacian_mip_crop.png) |
 | ![Central Slice Crop 2](docs/central_slice_crop2.png) | ![Maximum Intensity Crop 2](docs/max_intensity_crop2.png) | ![Laplacian MIP Crop 2](docs/laplacian_mip_crop2.png) |
+
+The Laplacian MIP handler supports different projection modes for computing the central frame used in pyramid fusion. The default (`parallel-beam`) sums all slices along the z-axis, providing better depth integration. `central-slice` uses the middle slice directly, preserving single-slice sharpness.
+
+| Parallel Beam (default) | Central Slice |
+|-------------------------|---------------|
+| ![Parallel Beam](docs/laplacian_mip.png) | ![Central Slice](docs/laplacian_mip_central.png) |
+| ![Parallel Beam Crop](docs/laplacian_mip_crop.png) | ![Central Slice Crop](docs/laplacian_mip_central_crop.png) |
+| ![Parallel Beam Crop 2](docs/laplacian_mip_crop2.png) | ![Central Slice Crop 2](docs/laplacian_mip_central_crop2.png) |
 
 
 ### Optimization Notes

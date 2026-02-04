@@ -93,7 +93,7 @@ struct Args {
     source: PathBuf,
 
     #[arg(help = "Output filepath (extension determines format: .csv or .parquet)")]
-    output: PathBuf,
+    output: Option<PathBuf>,
 }
 
 fn main() {
@@ -251,12 +251,10 @@ fn run(args: Args) -> Result<(), Error> {
             path: args.source.to_path_buf(),
         })
     }?;
-    let dest = if args.output.is_dir() {
-        Err(Error::InvalidOutputPath {
-            path: args.output.to_path_buf(),
-        })
-    } else {
-        Ok(args.output)
+    let dest = match args.output {
+        Some(output) if output.is_dir() => Err(Error::InvalidOutputPath { path: output }),
+        Some(output) => Ok(output),
+        None => Ok(source.join("manifest.parquet")),
     }?;
 
     let format = OutputFormat::from_extension(&dest)?;
@@ -332,7 +330,7 @@ mod tests {
 
         let args = Args {
             source: temp_dir.path().to_path_buf(),
-            output: output_file.clone(),
+            output: Some(output_file.clone()),
         };
 
         run(args)?;
@@ -365,7 +363,7 @@ mod tests {
 
         let args = Args {
             source: temp_dir.path().to_path_buf(),
-            output: output_file.clone(),
+            output: Some(output_file.clone()),
         };
 
         run(args)?;
@@ -409,7 +407,7 @@ mod tests {
 
         let args = Args {
             source: temp_dir.path().to_path_buf(),
-            output: output_file,
+            output: Some(output_file),
         };
 
         let result = run(args);
@@ -424,10 +422,26 @@ mod tests {
 
         let args = Args {
             source: temp_dir.path().to_path_buf(),
-            output: output_dir,
+            output: Some(output_dir),
         };
 
         let result = run(args);
         assert!(matches!(result, Err(Error::InvalidOutputPath { .. })));
+    }
+
+    #[rstest]
+    fn test_default_output_path() -> Result<(), Error> {
+        let (temp_dir, _) = setup_test_dir().unwrap();
+
+        let args = Args {
+            source: temp_dir.path().to_path_buf(),
+            output: None,
+        };
+
+        run(args)?;
+
+        let expected_output = temp_dir.path().join("manifest.parquet");
+        assert!(expected_output.exists());
+        Ok(())
     }
 }

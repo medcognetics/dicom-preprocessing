@@ -19,6 +19,8 @@ use snafu::{Report, ResultExt, Snafu, Whatever};
 use dicom_preprocessing::file::Inode;
 use dicom_preprocessing::manifest::{get_manifest_with_progress, ManifestEntry};
 
+const DEFAULT_OUTPUT_FILENAME: &str = "manifest.parquet";
+
 #[derive(Debug, Snafu)]
 enum Error {
     #[snafu(display("Invalid source path: {}", path.display()))]
@@ -92,7 +94,7 @@ struct Args {
     #[arg(help = "Source directory")]
     source: PathBuf,
 
-    #[arg(help = "Output filepath (extension determines format: .csv or .parquet)")]
+    #[arg(help = format!("Output filepath, extension determines format: .csv or .parquet (default: <source>/{DEFAULT_OUTPUT_FILENAME})"))]
     output: Option<PathBuf>,
 }
 
@@ -254,7 +256,7 @@ fn run(args: Args) -> Result<(), Error> {
     let dest = match args.output {
         Some(output) if output.is_dir() => Err(Error::InvalidOutputPath { path: output }),
         Some(output) => Ok(output),
-        None => Ok(source.join("manifest.parquet")),
+        None => Ok(source.join(DEFAULT_OUTPUT_FILENAME)),
     }?;
 
     let format = OutputFormat::from_extension(&dest)?;
@@ -440,7 +442,7 @@ mod tests {
 
         run(args)?;
 
-        let expected_output = temp_dir.path().join("manifest.parquet");
+        let expected_output = temp_dir.path().join(DEFAULT_OUTPUT_FILENAME);
         assert!(expected_output.exists());
         Ok(())
     }

@@ -4,6 +4,7 @@ use crate::python::path::PyPath;
 use pyo3::exceptions::PyNotADirectoryError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
+use pyo3::wrap_pyfunction;
 use pyo3::{
     pymodule,
     types::{PyAnyMethods, PyDict, PyModule},
@@ -116,42 +117,43 @@ impl From<ManifestEntry> for PyManifestEntry {
     }
 }
 
+#[pyfunction]
+#[pyo3(name = "get_manifest", signature = (root, bar=false))]
+fn get_manifest<'py>(
+    py: Python<'py>,
+    root: Bound<'py, PyAny>,
+    bar: bool,
+) -> PyResult<Bound<'py, PyList>> {
+    let path = root.extract::<PyPath>()?;
+    let path = path.as_path();
+    if !path.is_dir() {
+        return Err(PyNotADirectoryError::new_err(format!(
+            "Not a directory: {}",
+            path.display()
+        )));
+    }
+
+    let result = match bar {
+        true => get_manifest_with_progress(path),
+        false => crate::manifest::get_manifest(path),
+    }?;
+
+    let result = result
+        .into_iter()
+        .map(PyManifestEntry::from)
+        .collect::<Vec<_>>();
+
+    let result = result
+        .into_iter()
+        .map(|e| e.into_pyobject(py))
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = PyList::new(py, result)?;
+    Ok(result)
+}
+
 #[pymodule]
 #[pyo3(name = "manifest")]
 pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>) -> PyResult<()> {
-    #[pyfn(m)]
-    #[pyo3(name = "get_manifest", signature = (root, bar=false))]
-    fn get_manifest<'py>(
-        py: Python<'py>,
-        root: Bound<'py, PyAny>,
-        bar: bool,
-    ) -> PyResult<Bound<'py, PyList>> {
-        let path = root.extract::<PyPath>()?;
-        let path = path.as_path();
-        if !path.is_dir() {
-            return Err(PyNotADirectoryError::new_err(format!(
-                "Not a directory: {}",
-                path.display()
-            )));
-        }
-
-        let result = match bar {
-            true => get_manifest_with_progress(path),
-            false => crate::manifest::get_manifest(path),
-        }?;
-
-        let result = result
-            .into_iter()
-            .map(PyManifestEntry::from)
-            .collect::<Vec<_>>();
-
-        let result = result
-            .into_iter()
-            .map(|e| e.into_pyobject(py))
-            .collect::<Result<Vec<_>, _>>()?;
-        let result = PyList::new(py, result)?;
-        Ok(result)
-    }
-
+    m.add_function(wrap_pyfunction!(get_manifest, m)?)?;
     Ok(())
 }

@@ -912,12 +912,19 @@ impl LaplacianMip {
         projection
     }
 
-    /// Main projection algorithm - matches paper's approach:
-    /// 1. Compute MIP across all DBT slices
+    /// Project a stack of frames into a single 2D image using Laplacian pyramid + MIP fusion.
+    ///
+    /// This method is DICOM-independent and operates purely on in-memory images.
+    /// It implements the algorithm from Garrett et al. (2018):
+    /// 1. Compute MIP across all slices
     /// 2. Build Laplacian pyramid for central slice (L_k)
     /// 3. Build Laplacian pyramid for MIP result (ML_k)
-    /// 4. Fuse: r(k) = α*Expand(g_{k+1}) + β*(Expand(g_{k+1}))^p*(L_k + w*ML_k)
-    fn project_laplacian_mip(&self, frames: &[DynamicImage]) -> DynamicImage {
+    /// 4. Fuse: r(k) = α·Expand(g_{k+1}) + β·(Expand(g_{k+1}))^p·(L_k + w·ML_k)
+    ///
+    /// # Panics
+    ///
+    /// Panics if `frames` is empty.
+    pub fn project_laplacian_mip(&self, frames: &[DynamicImage]) -> DynamicImage {
         if frames.is_empty() {
             panic!("Cannot project empty frames");
         }
@@ -1283,5 +1290,63 @@ mod tests {
             (max_val - 1.0).abs() < 1e-6,
             "Max should be normalized to 1.0"
         );
+    }
+
+    // --- LaplacianMip::project_laplacian_mip standalone tests ---
+
+    #[test]
+    fn test_project_laplacian_mip_synthetic() {
+        let width = 16u32;
+        let height = 16u32;
+        let mip = LaplacianMip::default();
+
+        // Build 4 synthetic Luma16 frames with increasing intensity
+        let frames: Vec<DynamicImage> = (0..4)
+            .map(|i| {
+                let val = (i + 1) * 16000;
+                let buf = ImageBuffer::from_fn(width, height, |_, _| image::Luma([val]));
+                DynamicImage::ImageLuma16(buf)
+            })
+            .collect();
+
+        let result = mip.project_laplacian_mip(&frames);
+        let (rw, rh) = result.dimensions();
+        assert_eq!(rw, width);
+        assert_eq!(rh, height);
+    }
+
+    #[test]
+    fn test_project_laplacian_mip_two_frames() {
+        let width = 16u32;
+        let height = 16u32;
+        let mip = LaplacianMip::default();
+
+        let frames: Vec<DynamicImage> = (0..2)
+            .map(|i| {
+                let val = (i + 1) * 30000;
+                let buf = ImageBuffer::from_fn(width, height, |_, _| image::Luma([val]));
+                DynamicImage::ImageLuma16(buf)
+            })
+            .collect();
+
+        let result = mip.project_laplacian_mip(&frames);
+        let (rw, rh) = result.dimensions();
+        assert_eq!(rw, width);
+        assert_eq!(rh, height);
+    }
+
+    #[test]
+    fn test_project_laplacian_mip_single_frame() {
+        let width = 16u32;
+        let height = 16u32;
+        let mip = LaplacianMip::default();
+
+        let buf = ImageBuffer::from_fn(width, height, |_, _| image::Luma([42000u16]));
+        let frames = vec![DynamicImage::ImageLuma16(buf)];
+
+        let result = mip.project_laplacian_mip(&frames);
+        let (rw, rh) = result.dimensions();
+        assert_eq!(rw, width);
+        assert_eq!(rh, height);
     }
 }

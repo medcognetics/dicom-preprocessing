@@ -1,10 +1,18 @@
 import shutil
 from pathlib import Path
 
-import dicom_preprocessing as dp
 import numpy as np
-import pydicom
 import pytest
+from pydicom.data import get_testdata_file
+
+import dicom_preprocessing as dp
+
+
+def get_testdata_filepath(name: str) -> str:
+    source = get_testdata_file(name)
+    if source is None or not isinstance(source, str):
+        raise FileNotFoundError(f"Unable to locate pydicom test file: {name}")
+    return source
 
 
 def test_preprocessor():
@@ -15,7 +23,7 @@ def test_preprocessor():
 @pytest.fixture(params=[Path, str])
 def dicom_path(request, tmp_path):
     path = tmp_path / "test.dcm"
-    source = pydicom.data.get_testdata_file("CT_small.dcm")
+    source = get_testdata_filepath("CT_small.dcm")
     shutil.copy(source, path)
     if request.param == Path:
         return path
@@ -28,7 +36,7 @@ def dicom_path(request, tmp_path):
 @pytest.fixture
 def dicom_stream(tmp_path):
     path = tmp_path / "test.dcm"
-    source = pydicom.data.get_testdata_file("CT_small.dcm")
+    source = get_testdata_filepath("CT_small.dcm")
     shutil.copy(source, path)
     with open(path, "rb") as f:
         return f.read()
@@ -108,7 +116,7 @@ def test_preprocess_f32_spacing(dicom_stream):
 @pytest.fixture
 def multiple_dicom_paths(tmp_path):
     """Create multiple DICOM files to simulate CT slices."""
-    source = pydicom.data.get_testdata_file("CT_small.dcm")
+    source = get_testdata_filepath("CT_small.dcm")
     paths = [
         (shutil.copy(source, tmp_path / f"slice_{i:03d}.dcm"), tmp_path / f"slice_{i:03d}.dcm")[1] for i in range(3)
     ]
@@ -193,7 +201,7 @@ def test_preprocess_stream_f32_slices_order(multiple_dicom_streams):
 
 def test_preprocess_slices_common_crop_bounds(tmp_path):
     """Test that common crop bounds are used across all slices."""
-    source = pydicom.data.get_testdata_file("CT_small.dcm")
+    source = get_testdata_filepath("CT_small.dcm")
 
     # Create DICOMs with different content that would have different individual crop bounds
     # We'll use the same base file but this demonstrates the concept
@@ -352,7 +360,7 @@ def test_preprocess_stream_slices_combined_volume(multiple_dicom_streams):
 @pytest.fixture
 def multiframe_dicom_path(tmp_path):
     """Create a multi-frame DICOM file for testing."""
-    source = pydicom.data.get_testdata_file("emri_small.dcm")
+    source = get_testdata_filepath("emri_small.dcm")
     path = tmp_path / "multiframe.dcm"
     shutil.copy(source, path)
     return path
@@ -657,7 +665,7 @@ def test_metadata_repr(tmp_path):
     preprocessor = dp.Preprocessor(size=(32, 32), crop=True)
     # Get a real DICOM to test with
     path = tmp_path / "test.dcm"
-    source = pydicom.data.get_testdata_file("CT_small.dcm")
+    source = get_testdata_filepath("CT_small.dcm")
     shutil.copy(source, path)
 
     result, metadata = dp.preprocess_f32_with_metadata(path, preprocessor, parallel=False)

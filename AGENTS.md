@@ -11,8 +11,9 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 ## Build, Test, and Development Commands
 - `make init`: install `uv` if missing and sync all dependency groups.
 - `make develop`: build/install the Python extension locally via `maturin --release`.
-- `make quality`: run format/lint checks (`cargo fmt`, `cargo check`, `clippy`, `black`, `autopep8`).
-- `make style`: apply auto-fixes (`cargo fix`, `clippy --fix`, `rustfmt`, Python formatters).
+- `make quality`: run Rust checks plus Python quality checks (`ruff format --check`, `ruff check`, `basedpyright`).
+- `make quality-python`: run Python quality checks only.
+- `make style`: apply auto-fixes (`cargo fix`, `clippy --fix`, `cargo fmt`, `ruff check --fix`, `ruff format`).
 - `make test`: run Rust tests and Python tests.
 - `make test-python`: run only the Python test suite under `tests/`.
 
@@ -30,13 +31,18 @@ Run binaries with `cargo run --release --bin <name> -- ...`:
 Use Rust 2021 defaults and keep code `rustfmt`/`clippy` clean (`-D warnings` in CI). Prefer snake_case for functions/modules and descriptive CLI flag names.
 
 Python style is formatter-driven:
-- Black line length: 120
-- isort + autoflake + autopep8 configured in `pyproject.toml`
+- Ruff is the formatter/import sorter and is configured in `pyproject.toml` (`line-length = 120`, `target-version = "py313"`).
+- basedpyright type checking is configured in `pyproject.toml` (`pythonVersion = "3.13"`, `typeCheckingMode = "basic"`).
 - Test files use `test_*.py`; test functions use `test_*`.
+
+## CI Quality Pipeline
+- Rust quality gate: `quality` job (`cargo fmt --check`, `cargo check --all-features`, `cargo clippy -- -D warnings`).
+- Python quality gate: `quality_python` job (Python 3.13; runs `make quality-python`).
+- Python runtime tests: `test_python` job (runs `make test-python`).
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.
-- Run: `cargo test` and `make test-python` before opening a PR.
+- Run: `make quality` and `make test` before opening a PR.
 - Keep fixtures lightweight (`tmp_path`, `pydicom` sample data) and assert shape/dtype/value bounds for image outputs.
 - No explicit coverage threshold is enforced; maintain or improve coverage in touched areas.
 

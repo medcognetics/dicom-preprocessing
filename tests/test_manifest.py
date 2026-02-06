@@ -3,8 +3,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from dicom_preprocessing import get_manifest
 from PIL import Image
+
+from dicom_preprocessing import get_manifest
 
 
 @pytest.fixture(params=[Path, str])

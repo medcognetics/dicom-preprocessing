@@ -4,8 +4,9 @@ from functools import partial
 from pathlib import Path
 
 import numpy as np
-from dicom_preprocessing import load_tiff_f32, load_tiff_u16
 from PIL import Image
+
+from dicom_preprocessing import load_tiff_f32, load_tiff_u16
 
 
 def read_pil(filepath: Path, fp32: bool = False):
@@ -39,27 +40,17 @@ def main(args: Namespace):
     if not args.path.is_file():
         raise FileNotFoundError(f"File not found: {args.path}")
 
-    if args.fp32:
-
-        def rust_fn(p):
-            return load_tiff_f32(str(p))
-
-        pil_fn = partial(read_pil, fp32=True)
-    else:
-
-        def rust_fn(p):
-            return load_tiff_u16(str(p))
-
-        pil_fn = partial(read_pil, fp32=False)
+    rust_fn = load_tiff_f32 if args.fp32 else load_tiff_u16
+    pil_fn = partial(read_pil, fp32=args.fp32)
 
     print(f"The test file size is {Path(args.path).stat().st_size / 1024**2:.2f}MB")
-    arr1 = rust_fn(args.path)
+    arr1 = rust_fn(str(args.path))
     arr2 = pil_fn(args.path)
     print(arr1.dtype)
     print(arr2.dtype)
     assert np.allclose(arr1.squeeze(), arr2.squeeze())
 
-    t1 = timeit.timeit(lambda: rust_fn(args.path), number=args.iterations) / args.iterations * 1000
+    t1 = timeit.timeit(lambda: rust_fn(str(args.path)), number=args.iterations) / args.iterations * 1000
     t2 = timeit.timeit(lambda: pil_fn(args.path), number=args.iterations) / args.iterations * 1000
     print(f"rust: {t1:.3f}ms")
     print(f"pil: {t2:.3f}ms")

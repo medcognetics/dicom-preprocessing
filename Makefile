@@ -1,7 +1,8 @@
-PYTHON=uv run python
-PYTHON_DIRS=tests examples dicom_preprocessing.pyi
+UV=uv run
+PYTHON=$(UV) python
+PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
 
-.PHONY: init develop quality style test-python test-python-pdb test
+.PHONY: init develop quality quality-python style test-python test-python-pdb test
 
 init:
 	which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -14,17 +15,19 @@ quality:
 	cargo fmt -- --check
 	cargo check --all-features
 	cargo clippy --all-features -- -D warnings
-	$(PYTHON) -m black --check $(PYTHON_DIRS)
-	$(PYTHON) -m autopep8 -a $(PYTHON_DIRS)
+	$(MAKE) quality-python
+
+quality-python:
+	$(UV) ruff format --check $(PYTHON_QUALITY_TARGETS)
+	$(UV) ruff check $(PYTHON_QUALITY_TARGETS)
+	$(UV) basedpyright
 
 style:
 	cargo fix --allow-dirty --all-features
 	cargo clippy --all-features --fix --allow-dirty
 	cargo fmt
-	$(PYTHON) -m autoflake -r -i $(PYTHON_DIRS)
-	$(PYTHON) -m isort $(PYTHON_DIRS)
-	$(PYTHON) -m autopep8 -a $(PYTHON_DIRS)
-	$(PYTHON) -m black $(PYTHON_DIRS)
+	$(UV) ruff check --fix $(PYTHON_QUALITY_TARGETS)
+	$(UV) ruff format $(PYTHON_QUALITY_TARGETS)
 
 test-python: develop
 	$(PYTHON) -m pytest \

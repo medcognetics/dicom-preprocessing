@@ -921,15 +921,18 @@ impl LaplacianMip {
     /// 3. Build Laplacian pyramid for MIP result (ML_k)
     /// 4. Fuse: r(k) = α·Expand(g_{k+1}) + β·(Expand(g_{k+1}))^p·(L_k + w·ML_k)
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `frames` is empty.
-    pub fn project_laplacian_mip(&self, frames: &[DynamicImage]) -> DynamicImage {
+    /// Returns [`DicomError::LaplacianMipEmptyInput`] if `frames` is empty.
+    pub fn project_laplacian_mip(
+        &self,
+        frames: &[DynamicImage],
+    ) -> Result<DynamicImage, DicomError> {
         if frames.is_empty() {
-            panic!("Cannot project empty frames");
+            return Err(DicomError::LaplacianMipEmptyInput);
         }
         if frames.len() == 1 {
-            return frames[0].clone();
+            return Ok(frames[0].clone());
         }
 
         let (width, height) = frames[0].dimensions();
@@ -991,7 +994,25 @@ impl LaplacianMip {
         );
 
         // Convert back to image
-        Self::from_grayscale_f32(&reconstructed, width, height)
+        Ok(Self::from_grayscale_f32(&reconstructed, width, height))
+    }
+
+    fn validate_trimmed_frame_range(
+        &self,
+        number_of_frames: u32,
+    ) -> Result<(u32, u32), DicomError> {
+        let start = min(number_of_frames, self.skip_start);
+        let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
+
+        if start >= end || start >= number_of_frames {
+            return Err(DicomError::LaplacianMipInsufficientFrames {
+                number_of_frames: number_of_frames as usize,
+                skip_start: self.skip_start as usize,
+                skip_end: self.skip_end as usize,
+            });
+        }
+
+        Ok((start, end))
     }
 }
 
@@ -1002,16 +1023,7 @@ impl HandleVolume for LaplacianMip {
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let start = min(number_of_frames, self.skip_start);
-        let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
-
-        if start >= end || start >= number_of_frames {
-            return Err(DicomError::FrameIndexError {
-                start: start as usize,
-                end: end as usize,
-                number_of_frames: number_of_frames as usize,
-            });
-        }
+        let (start, end) = self.validate_trimmed_frame_range(number_of_frames)?;
 
         let mut frames = Vec::with_capacity((end - start) as usize);
         for frame_number in start..end {
@@ -1025,7 +1037,7 @@ impl HandleVolume for LaplacianMip {
             );
         }
 
-        Ok(vec![self.project_laplacian_mip(&frames)])
+        Ok(vec![self.project_laplacian_mip(&frames)?])
     }
 
     fn par_decode_volume_with_options(
@@ -1034,16 +1046,7 @@ impl HandleVolume for LaplacianMip {
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let start = min(number_of_frames, self.skip_start);
-        let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
-
-        if start >= end || start >= number_of_frames {
-            return Err(DicomError::FrameIndexError {
-                start: start as usize,
-                end: end as usize,
-                number_of_frames: number_of_frames as usize,
-            });
-        }
+        let (start, end) = self.validate_trimmed_frame_range(number_of_frames)?;
 
         // Parallel frame decoding
         let frames = (start..end)
@@ -1059,7 +1062,7 @@ impl HandleVolume for LaplacianMip {
             .collect::<Result<Vec<_>, _>>()?;
 
         // Projection is done serially as it's already computationally intensive
-        Ok(vec![self.project_laplacian_mip(&frames)])
+        Ok(vec![self.project_laplacian_mip(&frames)?])
     }
 }
 
@@ -1309,7 +1312,7 @@ mod tests {
             })
             .collect();
 
-        let result = mip.project_laplacian_mip(&frames);
+        let result = mip.project_laplacian_mip(&frames).unwrap();
         let (rw, rh) = result.dimensions();
         assert_eq!(rw, width);
         assert_eq!(rh, height);
@@ -1329,7 +1332,7 @@ mod tests {
             })
             .collect();
 
-        let result = mip.project_laplacian_mip(&frames);
+        let result = mip.project_laplacian_mip(&frames).unwrap();
         let (rw, rh) = result.dimensions();
         assert_eq!(rw, width);
         assert_eq!(rh, height);
@@ -1344,9 +1347,89 @@ mod tests {
         let buf = ImageBuffer::from_fn(width, height, |_, _| image::Luma([42000u16]));
         let frames = vec![DynamicImage::ImageLuma16(buf)];
 
-        let result = mip.project_laplacian_mip(&frames);
+        let result = mip.project_laplacian_mip(&frames).unwrap();
         let (rw, rh) = result.dimensions();
         assert_eq!(rw, width);
         assert_eq!(rh, height);
+    }
+
+    #[test]
+    fn test_project_laplacian_mip_empty_input_returns_error() {
+        let mip = LaplacianMip::default();
+        let frames: Vec<DynamicImage> = vec![];
+        let err = mip.project_laplacian_mip(&frames).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "cannot project laplacian mip from empty input frames"
+        );
+
+        match err {
+            DicomError::LaplacianMipEmptyInput => {}
+            other => panic!("Expected LaplacianMipEmptyInput, got {other}"),
+        }
+    }
+
+    #[test]
+    fn test_laplacian_mip_insufficient_frames_error_serial() {
+        let dicom = dicom_test_files::path("pydicom/emri_small.dcm").unwrap();
+        let dicom = open_file(&dicom).unwrap();
+        let number_of_frames: u32 = FrameCount::try_from(&dicom).unwrap().into();
+        let skip_start = number_of_frames;
+        let skip_end = 0u32;
+
+        let handler = LaplacianMip::new(skip_start, skip_end);
+        let err = handler
+            .decode_volume_with_options(&dicom, &ConvertOptions::default())
+            .unwrap_err();
+        let expected_message = format!(
+            "number of frames {} is insufficient for laplacian mip with skip {}-{}",
+            number_of_frames, skip_start, skip_end
+        );
+        assert_eq!(err.to_string(), expected_message);
+
+        match err {
+            DicomError::LaplacianMipInsufficientFrames {
+                number_of_frames: actual_number_of_frames,
+                skip_start: actual_skip_start,
+                skip_end: actual_skip_end,
+            } => {
+                assert_eq!(actual_number_of_frames, number_of_frames as usize);
+                assert_eq!(actual_skip_start, skip_start as usize);
+                assert_eq!(actual_skip_end, skip_end as usize);
+            }
+            other => panic!("Expected LaplacianMipInsufficientFrames, got {other}"),
+        }
+    }
+
+    #[test]
+    fn test_laplacian_mip_insufficient_frames_error_parallel() {
+        let dicom = dicom_test_files::path("pydicom/emri_small.dcm").unwrap();
+        let dicom = open_file(&dicom).unwrap();
+        let number_of_frames: u32 = FrameCount::try_from(&dicom).unwrap().into();
+        let skip_start = number_of_frames;
+        let skip_end = 0u32;
+
+        let handler = LaplacianMip::new(skip_start, skip_end);
+        let err = handler
+            .par_decode_volume_with_options(&dicom, &ConvertOptions::default())
+            .unwrap_err();
+        let expected_message = format!(
+            "number of frames {} is insufficient for laplacian mip with skip {}-{}",
+            number_of_frames, skip_start, skip_end
+        );
+        assert_eq!(err.to_string(), expected_message);
+
+        match err {
+            DicomError::LaplacianMipInsufficientFrames {
+                number_of_frames: actual_number_of_frames,
+                skip_start: actual_skip_start,
+                skip_end: actual_skip_end,
+            } => {
+                assert_eq!(actual_number_of_frames, number_of_frames as usize);
+                assert_eq!(actual_skip_start, skip_start as usize);
+                assert_eq!(actual_skip_end, skip_end as usize);
+            }
+            other => panic!("Expected LaplacianMipInsufficientFrames, got {other}"),
+        }
     }
 }

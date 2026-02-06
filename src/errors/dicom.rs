@@ -66,6 +66,21 @@ pub enum DicomError {
         number_of_frames: usize,
     },
 
+    #[snafu(display(
+        "number of frames {} is insufficient for laplacian mip with skip {}-{}",
+        number_of_frames,
+        skip_start,
+        skip_end
+    ))]
+    LaplacianMipInsufficientFrames {
+        number_of_frames: usize,
+        skip_start: usize,
+        skip_end: usize,
+    },
+
+    #[snafu(display("cannot project laplacian mip from empty input frames"))]
+    LaplacianMipEmptyInput,
+
     #[snafu(display("{}", message))]
     Other { message: String },
 }

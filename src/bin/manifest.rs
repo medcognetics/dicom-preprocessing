@@ -325,6 +325,8 @@ fn path_relative_to_manifest(entry_path: &Path, manifest_dir: &Path) -> Result<P
     } else {
         cwd.join(manifest_dir)
     };
+    let entry_path = normalize_absolute_path(&entry_path);
+    let manifest_dir = normalize_absolute_path(&manifest_dir);
 
     if let Ok(path) = entry_path.strip_prefix(&manifest_dir) {
         return Ok(path.to_path_buf());
@@ -363,6 +365,24 @@ fn path_relative_to_manifest(entry_path: &Path, manifest_dir: &Path) -> Result<P
     } else {
         Ok(relative_path)
     }
+}
+
+fn normalize_absolute_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _ = normalized.pop();
+            }
+        }
+    }
+
+    normalized
 }
 
 fn roots_match(entry_root: Option<&Component<'_>>, manifest_root: Option<&Component<'_>>) -> bool {
@@ -514,6 +534,39 @@ mod tests {
 
         let mut contents = String::new();
         File::open(&output_file)
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        let expected_path = format!(
+            "images{}study1{}series1{}image0.tiff",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        );
+        assert!(contents
+            .lines()
+            .skip(1)
+            .all(|line| line.contains(&expected_path)));
+
+        Ok(())
+    }
+
+    #[rstest]
+    fn test_manifest_paths_with_parent_traversal_output_path() -> Result<(), Error> {
+        let temp_dir = TempDir::new().unwrap();
+        let images_dir = temp_dir.path().join("images");
+        let study_series_dir = images_dir.join("study1").join("series1");
+        fs::create_dir_all(&study_series_dir).unwrap();
+        create_test_tiff(&study_series_dir, "image0.tiff").unwrap();
+
+        let output_file_with_parent = images_dir.join("..").join("manifest.csv");
+        run(Args {
+            source: images_dir,
+            output: Some(output_file_with_parent),
+        })?;
+
+        let mut contents = String::new();
+        File::open(temp_dir.path().join("manifest.csv"))
             .unwrap()
             .read_to_string(&mut contents)
             .unwrap();

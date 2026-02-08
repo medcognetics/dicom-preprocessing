@@ -9,6 +9,7 @@ use parquet::file::properties::WriterProperties;
 use std::fs::File;
 use std::io::BufWriter;
 use std::io::Write;
+use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
 use tracing::{error, Level};
@@ -67,6 +68,18 @@ enum Error {
         path: PathBuf,
         supported: Vec<&'static str>,
     },
+
+    #[snafu(display("Could not resolve path {} relative to manifest directory {}", entry_path.display(), manifest_dir.display()))]
+    InvalidPathRelation {
+        entry_path: PathBuf,
+        manifest_dir: PathBuf,
+    },
+
+    #[snafu(display("Could not determine current working directory: {:?}", source))]
+    CurrentDirectory {
+        #[snafu(source(from(std::io::Error, Box::new)))]
+        source: Box<std::io::Error>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -119,7 +132,7 @@ fn main() {
 
 fn write_manifest_csv(
     entries: &[ManifestEntry],
-    source: &Path,
+    manifest_dir: &Path,
     dest: &Path,
     pb: &ProgressBar,
 ) -> Result<(), Error> {
@@ -130,7 +143,7 @@ fn write_manifest_csv(
         )
         .context(WriteManifestSnafu)?;
     for entry in entries {
-        let path = entry.relative_path(source);
+        let path = path_relative_to_manifest(entry.path(), manifest_dir)?;
         let dims = entry.dimensions();
         writeln!(
             csv_file,
@@ -153,7 +166,7 @@ fn write_manifest_csv(
 
 fn write_manifest_parquet(
     entries: &[ManifestEntry],
-    source: &Path,
+    manifest_dir: &Path,
     dest: &Path,
     pb: &ProgressBar,
 ) -> Result<(), Error> {
@@ -162,8 +175,8 @@ fn write_manifest_parquet(
     let sop_uids: Vec<_> = entries.iter().map(|e| e.sop_instance_uid()).collect();
     let paths: Vec<_> = entries
         .iter()
-        .map(|e| e.relative_path(source).display().to_string())
-        .collect();
+        .map(|e| path_relative_to_manifest(e.path(), manifest_dir).map(|p| p.display().to_string()))
+        .collect::<Result<_, Error>>()?;
     let inodes: Vec<i64> = entries
         .iter()
         .map(|e| Ok(i64::try_from(e.inode().context(ReadInodeSnafu)?).unwrap()))
@@ -258,6 +271,9 @@ fn run(args: Args) -> Result<(), Error> {
         Some(output) => Ok(output),
         None => Ok(source.join(DEFAULT_OUTPUT_FILENAME)),
     }?;
+    let manifest_dir = dest
+        .parent()
+        .ok_or_else(|| Error::InvalidOutputPath { path: dest.clone() })?;
 
     let format = OutputFormat::from_extension(&dest)?;
 
@@ -282,15 +298,89 @@ fn run(args: Args) -> Result<(), Error> {
     pb.set_message("Writing manifest");
 
     match format {
-        OutputFormat::Csv => write_manifest_csv(&entries, &source, &dest, &pb),
-        OutputFormat::Parquet => write_manifest_parquet(&entries, &source, &dest, &pb),
+        OutputFormat::Csv => write_manifest_csv(&entries, manifest_dir, &dest, &pb),
+        OutputFormat::Parquet => write_manifest_parquet(&entries, manifest_dir, &dest, &pb),
+    }
+}
+
+fn path_relative_to_manifest(entry_path: &Path, manifest_dir: &Path) -> Result<PathBuf, Error> {
+    let manifest_dir = if manifest_dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        manifest_dir
+    };
+
+    if let Ok(path) = entry_path.strip_prefix(manifest_dir) {
+        return Ok(path.to_path_buf());
+    }
+
+    let cwd = std::env::current_dir().context(CurrentDirectorySnafu)?;
+    let entry_path = if entry_path.is_absolute() {
+        entry_path.to_path_buf()
+    } else {
+        cwd.join(entry_path)
+    };
+    let manifest_dir = if manifest_dir.is_absolute() {
+        manifest_dir.to_path_buf()
+    } else {
+        cwd.join(manifest_dir)
+    };
+
+    if let Ok(path) = entry_path.strip_prefix(&manifest_dir) {
+        return Ok(path.to_path_buf());
+    }
+
+    let entry_components = entry_path.components().collect::<Vec<_>>();
+    let manifest_components = manifest_dir.components().collect::<Vec<_>>();
+
+    let mut shared_prefix_len = 0;
+    while shared_prefix_len < entry_components.len()
+        && shared_prefix_len < manifest_components.len()
+        && entry_components[shared_prefix_len] == manifest_components[shared_prefix_len]
+    {
+        shared_prefix_len += 1;
+    }
+
+    if !roots_match(entry_components.first(), manifest_components.first()) {
+        return Err(Error::InvalidPathRelation {
+            entry_path: entry_path.to_path_buf(),
+            manifest_dir: manifest_dir.to_path_buf(),
+        });
+    }
+
+    let mut relative_path = PathBuf::new();
+    for component in &manifest_components[shared_prefix_len..] {
+        if matches!(component, Component::Normal(_)) {
+            relative_path.push("..");
+        }
+    }
+    for component in &entry_components[shared_prefix_len..] {
+        relative_path.push(component.as_os_str());
+    }
+
+    if relative_path.as_os_str().is_empty() {
+        Ok(PathBuf::from("."))
+    } else {
+        Ok(relative_path)
+    }
+}
+
+fn roots_match(entry_root: Option<&Component<'_>>, manifest_root: Option<&Component<'_>>) -> bool {
+    match (entry_root, manifest_root) {
+        (Some(Component::Prefix(e)), Some(Component::Prefix(m))) => e == m,
+        (Some(Component::RootDir), Some(Component::RootDir)) => true,
+        (Some(Component::CurDir), Some(Component::CurDir)) => true,
+        (Some(Component::Normal(_)), Some(Component::Normal(_))) => true,
+        _ => false,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow::array::StringArray;
     use rstest::rstest;
+    use std::collections::HashSet;
     use std::fs::{self, File};
     use std::io::Read;
     use std::path::Path;
@@ -354,6 +444,12 @@ mod tests {
         // Check we have 3 data rows (one per file)
         let num_lines = contents.lines().count();
         assert_eq!(num_lines, NUM_FILES + 1); // Header + NUM_FILES data rows
+        let expected_path = format!(
+            "study1{}series1{}image0.tiff",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        );
+        assert!(contents.contains(&expected_path));
 
         Ok(())
     }
@@ -398,6 +494,90 @@ mod tests {
 
         // Check we have NUM_FILES rows (one per file)
         assert_eq!(batch.num_rows(), NUM_FILES);
+
+        Ok(())
+    }
+
+    #[rstest]
+    fn test_manifest_paths_relative_to_output_manifest_directory() -> Result<(), Error> {
+        let temp_dir = TempDir::new().unwrap();
+        let images_dir = temp_dir.path().join("images");
+        let study_series_dir = images_dir.join("study1").join("series1");
+        fs::create_dir_all(&study_series_dir).unwrap();
+        create_test_tiff(&study_series_dir, "image0.tiff").unwrap();
+
+        let output_file = temp_dir.path().join("manifest.csv");
+        run(Args {
+            source: images_dir.clone(),
+            output: Some(output_file.clone()),
+        })?;
+
+        let mut contents = String::new();
+        File::open(&output_file)
+            .unwrap()
+            .read_to_string(&mut contents)
+            .unwrap();
+        let expected_path = format!(
+            "images{}study1{}series1{}image0.tiff",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        );
+        assert!(contents
+            .lines()
+            .skip(1)
+            .all(|line| line.contains(&expected_path)));
+
+        Ok(())
+    }
+
+    #[rstest]
+    fn test_manifest_only_uses_source_subtree() -> Result<(), Error> {
+        let temp_dir = TempDir::new().unwrap();
+        let images_dir = temp_dir
+            .path()
+            .join("images")
+            .join("study1")
+            .join("series1");
+        let masks_dir = temp_dir.path().join("masks").join("studyX").join("seriesX");
+        fs::create_dir_all(&images_dir).unwrap();
+        fs::create_dir_all(&masks_dir).unwrap();
+        create_test_tiff(&images_dir, "image0.tiff").unwrap();
+        create_test_tiff(&masks_dir, "mask0.tiff").unwrap();
+
+        let output_file = temp_dir.path().join("manifest.parquet");
+        run(Args {
+            source: temp_dir.path().join("images"),
+            output: Some(output_file.clone()),
+        })?;
+
+        let file = File::open(&output_file).unwrap();
+        let reader =
+            parquet::arrow::arrow_reader::ParquetRecordBatchReader::try_new(file, 1024).unwrap();
+        let paths = reader
+            .into_iter()
+            .flat_map(|batch| {
+                let batch = batch.unwrap();
+                let paths = batch
+                    .column_by_name("path")
+                    .unwrap()
+                    .as_any()
+                    .downcast_ref::<StringArray>()
+                    .unwrap()
+                    .iter()
+                    .map(|p| p.unwrap().to_string())
+                    .collect::<Vec<_>>();
+                paths
+            })
+            .collect::<HashSet<_>>();
+
+        assert_eq!(paths.len(), 1);
+        assert!(paths.contains(&format!(
+            "images{}study1{}series1{}image0.tiff",
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR,
+            std::path::MAIN_SEPARATOR
+        )));
 
         Ok(())
     }

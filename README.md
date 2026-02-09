@@ -150,12 +150,16 @@ Given sufficient network bandwidth and ARC capacity, operations on datasets that
 
 When dealing with large datasets stored on slow drives, it is useful to create a manifest of the dataset.
 This manifest should track the preprocessed file paths that comprise the dataset, as well as the inode of the
-preprocessed file (for optimizing sequential read performance). A binary, `dicom-manifest`, is provided to create a manifest from a directory of preprocessed TIFFs. It is assumed that the preprocessed TIFFs are named in the format of `{study_instance_uid}/{sop_instance_uid}.tiff`. Likewise, it is assumed that `dicom-manifest` will be given a source path at the root of the preprocessed dataset.
+preprocessed file (for optimizing sequential read performance). A binary, `dicom-manifest`, is provided to create a manifest from a directory of preprocessed TIFFs. It is assumed that the preprocessed TIFFs are named in the format of `{study_instance_uid}/{series_instance_uid}/{sop_instance_uid}.tiff`.
+
+`dicom-manifest` can be pointed at any TIFF subtree (for example, a dataset's `images/` directory). The output
+manifest can be written elsewhere (for example, the dataset root), and `path` values are written relative to the
+manifest file location.
 
 The manifest will contain the following columns, sorted by (`study_instance_uid`, `sop_instance_uid`):
 - `study_instance_uid` - the study instance UID of the preprocessed file
 - `sop_instance_uid` - the SOP instance UID of the preprocessed file
-- `path` - the path of the preprocessed file relative to the source path
+- `path` - the path of the preprocessed file relative to the manifest file location
 - `inode` - the inode number of the preprocessed file
 - `width` - the width of the preprocessed file
 - `height` - the height of the preprocessed file
@@ -165,7 +169,7 @@ The manifest will contain the following columns, sorted by (`study_instance_uid`
 Example usage:
 
 ```
-dicom-manifest /path/to/preprocessed/dataset /path/to/manifest.csv
+dicom-manifest /path/to/preprocessed/dataset/images /path/to/preprocessed/dataset/manifest.csv
 ```
 
 ### Python Bindings

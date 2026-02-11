@@ -64,6 +64,9 @@ pub enum Error {
         #[snafu(source(from(TiffError, Box::new)))]
         source: Box<TiffError>,
     },
+
+    #[snafu(display("Failed to build Rayon thread pool: {}", source))]
+    ThreadPool { source: rayon::ThreadPoolBuildError },
 }
 
 #[derive(Debug, Clone, clap::ValueEnum, Default)]
@@ -286,6 +289,26 @@ struct Args {
         })
     )]
     window: Option<(f64, f64)>,
+
+    #[arg(
+        help = "Maximum worker threads for preprocessing",
+        long = "threads",
+        short = 'j',
+        value_parser = clap::builder::ValueParser::new(|s: &str| {
+            let value = s.parse::<usize>().map_err(|_| {
+                clap::Error::raw(ErrorKind::InvalidValue, "Invalid thread count")
+            })?;
+            if value == 0 {
+                Err(clap::Error::raw(
+                    ErrorKind::InvalidValue,
+                    "Thread count must be at least 1",
+                ))
+            } else {
+                Ok(value)
+            }
+        }),
+    )]
+    threads: Option<usize>,
 }
 
 fn parse_projection_mode(s: &str) -> ProjectionMode {
@@ -412,10 +435,10 @@ fn process<P: AsRef<Path>>(
 /// Determines the number of threads to use for parallel processing for multi-frame DICOM files.
 /// Frame parallelism will only be used when the number of inputs is small. Otherwise, it as assumed
 /// that file parallelism is desired and only a single thread is used for a given file.
-fn determine_parallelism(num_inputs: usize) -> bool {
-    let max_parallelism = available_parallelism()
-        .unwrap_or(NonZero::new(1).unwrap())
-        .get();
+fn determine_parallelism(num_inputs: usize, max_parallelism: usize) -> bool {
+    if num_inputs == 0 {
+        return false;
+    }
     (max_parallelism / num_inputs).max(1) > 1
 }
 
@@ -514,8 +537,14 @@ fn run(args: Args) -> Result<(), Error> {
     );
     pb.set_message("Preprocessing DICOM files");
 
+    let max_parallelism = args.threads.unwrap_or_else(|| {
+        available_parallelism()
+            .unwrap_or(NonZero::new(1).expect("1 is non-zero"))
+            .get()
+    });
+
     // Define function to process each file in parallel
-    let parallelism = determine_parallelism(source.len());
+    let parallelism = determine_parallelism(source.len(), max_parallelism);
     let par_func = |file: PathBuf| {
         let result = process(&file, &dest, &preprocessor, compressor.clone(), parallelism);
         pb.inc(1);
@@ -532,21 +561,29 @@ fn run(args: Args) -> Result<(), Error> {
         }
     };
 
+    let thread_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(max_parallelism)
+        .build()
+        .context(ThreadPoolSnafu)?;
+
     // Run processing in parallel
-    if args.strict {
-        // In strict mode, abort on first error
-        source.into_par_iter().try_for_each(par_func)?;
-    } else {
-        // In non-strict mode, only log errors and continue
-        source.into_par_iter().map(par_func).collect::<Vec<_>>();
-    }
+    thread_pool.install(|| -> Result<(), Error> {
+        if args.strict {
+            // In strict mode, abort on first error
+            source.into_par_iter().try_for_each(par_func)?;
+        } else {
+            // In non-strict mode, only log errors and continue
+            source.into_par_iter().map(par_func).collect::<Vec<_>>();
+        }
+        Ok(())
+    })?;
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{run, Args};
+    use super::{determine_parallelism, run, Args};
     use crate::FilterType;
     use crate::PaddingDirection;
     use crate::SupportedCompressor;
@@ -615,6 +652,7 @@ mod tests {
             mip_weight: 1.5,
             skip_frames: 5,
             projection_mode: "parallel-beam".to_string(),
+            threads: None,
         };
         run(args).unwrap();
 
@@ -708,5 +746,13 @@ mod tests {
             .into_u32_vec()
             .unwrap();
         assert_eq!(resolution_y, &[7, 1]);
+    }
+
+    #[test]
+    fn test_determine_parallelism_respects_thread_budget() {
+        assert!(determine_parallelism(1, 4));
+        assert!(determine_parallelism(2, 4));
+        assert!(!determine_parallelism(4, 4));
+        assert!(!determine_parallelism(8, 4));
     }
 }

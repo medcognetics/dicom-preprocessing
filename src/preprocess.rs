@@ -4,6 +4,7 @@ use image::{DynamicImage, GenericImageView};
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::ConvertOptions;
+use rayon::prelude::*;
 
 use crate::errors::DicomError;
 use crate::metadata::{PreprocessingMetadata, Resolution};
@@ -83,6 +84,8 @@ impl Default for Preprocessor {
 }
 
 impl Preprocessor {
+    const PARALLEL_TRANSFORM_MIN_FRAMES: usize = 2;
+
     fn get_crop(&self, images: &[DynamicImage]) -> Option<Crop> {
         match self.crop {
             true => Some(Crop::new_from_images(
@@ -194,6 +197,27 @@ impl Preprocessor {
         InterpolateVolume::interpolate_frames(&images, target_frames)
     }
 
+    fn apply_transform_to_frames<T>(
+        &self,
+        images: Vec<DynamicImage>,
+        config: &Option<T>,
+        parallel: bool,
+    ) -> Vec<DynamicImage>
+    where
+        T: Transform<DynamicImage> + Sync,
+    {
+        match config {
+            Some(config) if parallel && images.len() >= Self::PARALLEL_TRANSFORM_MIN_FRAMES => {
+                images
+                    .into_par_iter()
+                    .map(|image| config.apply(&image))
+                    .collect()
+            }
+            Some(config) => config.apply_iter(images.into_iter()).collect(),
+            None => images,
+        }
+    }
+
     /// Decoding will error if the VOILUT tag is present but empty.
     /// This function removes the tag if it is empty.
     fn sanitize_voi_lut_function(
@@ -254,17 +278,11 @@ impl Preprocessor {
 
         // Determine and apply crop
         let crop_config = self.get_crop(&image_data);
-        let image_data = match &crop_config {
-            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
-            None => image_data,
-        };
+        let image_data = self.apply_transform_to_frames(image_data, &crop_config, parallel);
 
         // Determine and apply resize, ensuring we also update the resolution
         let resize_config = self.get_resize(&image_data, &resolution);
-        let image_data = match &resize_config {
-            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
-            None => image_data,
-        };
+        let image_data = self.apply_transform_to_frames(image_data, &resize_config, parallel);
 
         // Update the resolution if we resized
         if let (Some(res), Some(config)) = (&resolution, &resize_config) {
@@ -273,10 +291,7 @@ impl Preprocessor {
 
         // Determine and apply padding
         let padding_config = self.get_padding(&image_data, &resize_config);
-        let image_data = match &padding_config {
-            Some(config) => config.apply_iter(image_data.into_iter()).collect(),
-            None => image_data,
-        };
+        let image_data = self.apply_transform_to_frames(image_data, &padding_config, parallel);
 
         let num_frames = image_data.len().into();
 
@@ -353,19 +368,15 @@ impl Preprocessor {
         let crop_config = self.get_crop(&all_images_flat);
 
         // Apply crop to the entire volume
-        let cropped_volume = match &crop_config {
-            Some(config) => config.apply_iter(all_images_flat.into_iter()).collect(),
-            None => all_images_flat,
-        };
+        let cropped_volume =
+            self.apply_transform_to_frames(all_images_flat, &crop_config, parallel);
 
         // Determine resize from the first image in the volume
         let resize_config = self.get_resize(&cropped_volume, &resolution);
 
         // Apply resize to the entire volume
-        let resized_volume = match &resize_config {
-            Some(config) => config.apply_iter(cropped_volume.into_iter()).collect(),
-            None => cropped_volume,
-        };
+        let resized_volume =
+            self.apply_transform_to_frames(cropped_volume, &resize_config, parallel);
 
         // Update the resolution if we resized
         if let (Some(res), Some(config)) = (&resolution, &resize_config) {
@@ -376,10 +387,8 @@ impl Preprocessor {
         let padding_config = self.get_padding(&resized_volume, &resize_config);
 
         // Apply padding to the entire volume
-        let padded_volume: Vec<DynamicImage> = match &padding_config {
-            Some(config) => config.apply_iter(resized_volume.into_iter()).collect(),
-            None => resized_volume,
-        };
+        let padded_volume: Vec<DynamicImage> =
+            self.apply_transform_to_frames(resized_volume, &padding_config, parallel);
 
         let num_frames = padded_volume.len().into();
 
@@ -468,6 +477,35 @@ mod tests {
     use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
     use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
+
+    fn assert_images_equal(expected: &[DynamicImage], actual: &[DynamicImage]) {
+        assert_eq!(
+            expected.len(),
+            actual.len(),
+            "Frame count mismatch: expected {}, got {}",
+            expected.len(),
+            actual.len()
+        );
+
+        for (frame_idx, (expected_frame, actual_frame)) in expected.iter().zip(actual).enumerate() {
+            assert_eq!(
+                expected_frame.dimensions(),
+                actual_frame.dimensions(),
+                "Dimensions mismatch on frame {frame_idx}"
+            );
+
+            let (width, height) = expected_frame.dimensions();
+            for y in 0..height {
+                for x in 0..width {
+                    assert_eq!(
+                        expected_frame.get_pixel(x, y),
+                        actual_frame.get_pixel(x, y),
+                        "Pixel mismatch on frame {frame_idx} at ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
 
     #[rstest]
     #[case(
@@ -1114,5 +1152,70 @@ mod tests {
             metadata_frames, target_frames as usize,
             "Metadata should report correct frame count"
         );
+    }
+
+    #[test]
+    fn test_prepare_image_parallel_transforms_match_serial() {
+        let dicom_file =
+            open_file(dicom_test_files::path("pydicom/emri_small.dcm").unwrap()).unwrap();
+        let preprocessor = Preprocessor {
+            crop: true,
+            size: Some((96, 96)),
+            spacing: None,
+            filter: resize::FilterType::CatmullRom,
+            padding_direction: PaddingDirection::Center,
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: true,
+            border_frac: Some(0.05),
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        let (serial_images, serial_metadata) =
+            preprocessor.prepare_image(&dicom_file, false).unwrap();
+        let (parallel_images, parallel_metadata) =
+            preprocessor.prepare_image(&dicom_file, true).unwrap();
+
+        assert_eq!(serial_metadata, parallel_metadata);
+        assert_images_equal(&serial_images, &parallel_images);
+    }
+
+    #[test]
+    fn test_prepare_images_batch_parallel_transforms_match_serial() {
+        let dicom_file_1 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_2 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let dicom_file_3 =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let files = vec![dicom_file_1, dicom_file_2, dicom_file_3];
+
+        let preprocessor = Preprocessor {
+            crop: true,
+            size: Some((96, 96)),
+            spacing: None,
+            filter: resize::FilterType::Triangle,
+            padding_direction: PaddingDirection::Center,
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: true,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        let (serial_batches, serial_metadata) =
+            preprocessor.prepare_images_batch(&files, false).unwrap();
+        let (parallel_batches, parallel_metadata) =
+            preprocessor.prepare_images_batch(&files, true).unwrap();
+
+        let serial_images: Vec<DynamicImage> = serial_batches.into_iter().flatten().collect();
+        let parallel_images: Vec<DynamicImage> = parallel_batches.into_iter().flatten().collect();
+
+        assert_eq!(serial_metadata, parallel_metadata);
+        assert_images_equal(&serial_images, &parallel_images);
     }
 }

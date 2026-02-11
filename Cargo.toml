@@ -84,3 +84,7 @@ harness = false
 [[bench]]
 name = "dicom_file"
 harness = false
+
+[[bench]]
+name = "dbt_parallel"
+harness = false

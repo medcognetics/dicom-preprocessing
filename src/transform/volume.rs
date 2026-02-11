@@ -36,12 +36,15 @@ use dicom::pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
 use image::Pixel;
 use image::{GenericImage, GenericImageView};
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::prelude::*;
 use snafu::ResultExt;
 use std::cmp::{max, min};
 use std::fmt;
 
 pub const DEFAULT_INTERPOLATE_TARGET_FRAMES: u32 = 32;
+const PARALLEL_MIN_PIXEL_COUNT: usize = 4_096;
+const PARALLEL_MIN_FRAME_COUNT: usize = 2;
+const PARALLEL_MIN_TARGET_FRAMES: usize = 2;
 
 #[derive(Debug, Clone)]
 pub enum VolumeHandler {
@@ -409,45 +412,83 @@ impl InterpolateVolume {
         Self { target_frames }
     }
 
-    /// Interpolate between frames using linear interpolation
-    pub fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
-        if frames.len() <= 1 {
-            return frames.to_vec();
-        }
+    fn should_parallelize_interpolation(
+        input_frames: usize,
+        target_frames: usize,
+        pixel_count: usize,
+    ) -> bool {
+        input_frames >= PARALLEL_MIN_FRAME_COUNT
+            && target_frames >= PARALLEL_MIN_TARGET_FRAMES
+            && pixel_count >= PARALLEL_MIN_PIXEL_COUNT
+    }
 
-        let mut result = Vec::with_capacity(target_frames as usize);
+    fn interpolate_single_frame(
+        frames: &[DynamicImage],
+        target_frames: u32,
+        output_frame_idx: u32,
+    ) -> DynamicImage {
+        let t = output_frame_idx as f32 / (target_frames - 1) as f32;
+        let frame_idx = t * (frames.len() - 1) as f32;
+        let frame_idx_floor = frame_idx.floor() as usize;
+        let frame_idx_ceil = frame_idx.ceil() as usize;
+        let alpha = frame_idx - frame_idx_floor as f32;
         let (width, height) = frames[0].dimensions();
 
-        for i in 0..target_frames {
-            let t = i as f32 / (target_frames - 1) as f32;
-            let frame_idx = t * (frames.len() - 1) as f32;
-            let frame_idx_floor = frame_idx.floor() as usize;
-            let frame_idx_ceil = frame_idx.ceil() as usize;
-            let alpha = frame_idx - frame_idx_floor as f32;
-
-            // Create a new image with the same color type as the input
-            let mut interpolated = frames[0].clone();
-
-            for x in 0..width {
-                for y in 0..height {
-                    let pixel1 = frames[frame_idx_floor].get_pixel(x, y);
-                    let pixel2 = frames[frame_idx_ceil].get_pixel(x, y);
-
-                    // Interpolate each channel independently
-                    let interpolated_pixel = pixel1.map2(&pixel2, |p1, p2| {
-                        let p1 = p1 as f32;
-                        let p2 = p2 as f32;
-                        (p1 * (1.0 - alpha) + p2 * alpha) as u8
-                    });
-
-                    interpolated.put_pixel(x, y, interpolated_pixel);
-                }
+        // Create a new image with the same color type as the input.
+        let mut interpolated = frames[0].clone();
+        for x in 0..width {
+            for y in 0..height {
+                let pixel1 = frames[frame_idx_floor].get_pixel(x, y);
+                let pixel2 = frames[frame_idx_ceil].get_pixel(x, y);
+                let interpolated_pixel = pixel1.map2(&pixel2, |p1, p2| {
+                    let p1 = p1 as f32;
+                    let p2 = p2 as f32;
+                    (p1 * (1.0 - alpha) + p2 * alpha) as u8
+                });
+                interpolated.put_pixel(x, y, interpolated_pixel);
             }
+        }
+        interpolated
+    }
 
-            result.push(interpolated);
+    fn interpolate_frames_serial(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
+        let mut result = Vec::with_capacity(target_frames as usize);
+        for i in 0..target_frames {
+            result.push(Self::interpolate_single_frame(frames, target_frames, i));
+        }
+        result
+    }
+
+    fn interpolate_frames_parallel(
+        frames: &[DynamicImage],
+        target_frames: u32,
+    ) -> Vec<DynamicImage> {
+        (0..target_frames)
+            .into_par_iter()
+            .map(|i| Self::interpolate_single_frame(frames, target_frames, i))
+            .collect()
+    }
+
+    /// Interpolate between frames using linear interpolation
+    pub fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
+        if frames.is_empty() {
+            return vec![];
+        }
+        if frames.len() == 1 {
+            return frames.to_vec();
+        }
+        if target_frames <= 1 {
+            return vec![frames[0].clone()];
         }
 
-        result
+        let (width, height) = frames[0].dimensions();
+        let pixel_count = (width as usize).saturating_mul(height as usize);
+        if Self::should_parallelize_interpolation(frames.len(), target_frames as usize, pixel_count)
+        {
+            return Self::interpolate_frames_parallel(frames, target_frames);
+        }
+
+        Self::interpolate_frames_serial(frames, target_frames)
     }
 }
 
@@ -622,6 +663,10 @@ impl LaplacianMip {
         }
     }
 
+    fn should_parallelize_pixels(pixel_count: usize) -> bool {
+        pixel_count >= PARALLEL_MIN_PIXEL_COUNT
+    }
+
     /// Convert DynamicImage to grayscale f32 buffer (normalized to 0-1 range)
     fn to_grayscale_f32(img: &DynamicImage) -> Vec<f32> {
         // Use 16-bit to preserve full dynamic range
@@ -642,30 +687,62 @@ impl LaplacianMip {
     /// Gaussian blur using separable 5x5 kernel [1,4,6,4,1]/16
     fn gaussian_blur(data: &[f32], width: usize, height: usize) -> Vec<f32> {
         let kernel = [1.0 / 16.0, 4.0 / 16.0, 6.0 / 16.0, 4.0 / 16.0, 1.0 / 16.0];
+        let pixel_count = width.saturating_mul(height);
+        let use_parallel = Self::should_parallelize_pixels(pixel_count);
 
         // Horizontal pass
         let mut temp = vec![0.0f32; width * height];
-        for y in 0..height {
-            for x in 0..width {
-                let mut sum = 0.0;
-                for (ki, &kv) in kernel.iter().enumerate() {
-                    let xi = (x as i32 + ki as i32 - 2).clamp(0, width as i32 - 1) as usize;
-                    sum += data[y * width + xi] * kv;
+        if use_parallel {
+            temp.par_chunks_mut(width).enumerate().for_each(|(y, row)| {
+                for (x, out) in row.iter_mut().enumerate() {
+                    let mut sum = 0.0;
+                    for (ki, &kv) in kernel.iter().enumerate() {
+                        let xi = (x as i32 + ki as i32 - 2).clamp(0, width as i32 - 1) as usize;
+                        sum += data[y * width + xi] * kv;
+                    }
+                    *out = sum;
                 }
-                temp[y * width + x] = sum;
+            });
+        } else {
+            for y in 0..height {
+                for x in 0..width {
+                    let mut sum = 0.0;
+                    for (ki, &kv) in kernel.iter().enumerate() {
+                        let xi = (x as i32 + ki as i32 - 2).clamp(0, width as i32 - 1) as usize;
+                        sum += data[y * width + xi] * kv;
+                    }
+                    temp[y * width + x] = sum;
+                }
             }
         }
 
         // Vertical pass
         let mut result = vec![0.0f32; width * height];
-        for y in 0..height {
-            for x in 0..width {
-                let mut sum = 0.0;
-                for (ki, &kv) in kernel.iter().enumerate() {
-                    let yi = (y as i32 + ki as i32 - 2).clamp(0, height as i32 - 1) as usize;
-                    sum += temp[yi * width + x] * kv;
+        if use_parallel {
+            result
+                .par_chunks_mut(width)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    for (x, out) in row.iter_mut().enumerate() {
+                        let mut sum = 0.0;
+                        for (ki, &kv) in kernel.iter().enumerate() {
+                            let yi =
+                                (y as i32 + ki as i32 - 2).clamp(0, height as i32 - 1) as usize;
+                            sum += temp[yi * width + x] * kv;
+                        }
+                        *out = sum;
+                    }
+                });
+        } else {
+            for y in 0..height {
+                for x in 0..width {
+                    let mut sum = 0.0;
+                    for (ki, &kv) in kernel.iter().enumerate() {
+                        let yi = (y as i32 + ki as i32 - 2).clamp(0, height as i32 - 1) as usize;
+                        sum += temp[yi * width + x] * kv;
+                    }
+                    result[y * width + x] = sum;
                 }
-                result[y * width + x] = sum;
             }
         }
 
@@ -677,10 +754,22 @@ impl LaplacianMip {
         let new_width = width.div_ceil(2);
         let new_height = height.div_ceil(2);
         let mut result = vec![0.0f32; new_width * new_height];
+        let use_parallel = Self::should_parallelize_pixels(new_width.saturating_mul(new_height));
 
-        for y in 0..new_height {
-            for x in 0..new_width {
-                result[y * new_width + x] = data[(y * 2) * width + (x * 2)];
+        if use_parallel {
+            result
+                .par_chunks_mut(new_width)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    for (x, out) in row.iter_mut().enumerate() {
+                        *out = data[(y * 2) * width + (x * 2)];
+                    }
+                });
+        } else {
+            for y in 0..new_height {
+                for x in 0..new_width {
+                    result[y * new_width + x] = data[(y * 2) * width + (x * 2)];
+                }
             }
         }
 
@@ -696,30 +785,61 @@ impl LaplacianMip {
         target_h: usize,
     ) -> Vec<f32> {
         let mut result = vec![0.0f32; target_w * target_h];
+        let use_parallel = Self::should_parallelize_pixels(target_w.saturating_mul(target_h));
 
-        for y in 0..target_h {
-            for x in 0..target_w {
-                // Map to source coordinates
-                let src_x = x as f32 * (width - 1) as f32 / (target_w - 1).max(1) as f32;
-                let src_y = y as f32 * (height - 1) as f32 / (target_h - 1).max(1) as f32;
+        if use_parallel {
+            result
+                .par_chunks_mut(target_w)
+                .enumerate()
+                .for_each(|(y, row)| {
+                    for (x, out) in row.iter_mut().enumerate() {
+                        let src_x = x as f32 * (width - 1) as f32 / (target_w - 1).max(1) as f32;
+                        let src_y = y as f32 * (height - 1) as f32 / (target_h - 1).max(1) as f32;
 
-                let x0 = src_x.floor() as usize;
-                let y0 = src_y.floor() as usize;
-                let x1 = (x0 + 1).min(width - 1);
-                let y1 = (y0 + 1).min(height - 1);
+                        let x0 = src_x.floor() as usize;
+                        let y0 = src_y.floor() as usize;
+                        let x1 = (x0 + 1).min(width - 1);
+                        let y1 = (y0 + 1).min(height - 1);
 
-                let fx = src_x - x0 as f32;
-                let fy = src_y - y0 as f32;
+                        let fx = src_x - x0 as f32;
+                        let fy = src_y - y0 as f32;
 
-                let v00 = data[y0 * width + x0];
-                let v10 = data[y0 * width + x1];
-                let v01 = data[y1 * width + x0];
-                let v11 = data[y1 * width + x1];
+                        let v00 = data[y0 * width + x0];
+                        let v10 = data[y0 * width + x1];
+                        let v01 = data[y1 * width + x0];
+                        let v11 = data[y1 * width + x1];
 
-                result[y * target_w + x] = v00 * (1.0 - fx) * (1.0 - fy)
-                    + v10 * fx * (1.0 - fy)
-                    + v01 * (1.0 - fx) * fy
-                    + v11 * fx * fy;
+                        *out = v00 * (1.0 - fx) * (1.0 - fy)
+                            + v10 * fx * (1.0 - fy)
+                            + v01 * (1.0 - fx) * fy
+                            + v11 * fx * fy;
+                    }
+                });
+        } else {
+            for y in 0..target_h {
+                for x in 0..target_w {
+                    // Map to source coordinates
+                    let src_x = x as f32 * (width - 1) as f32 / (target_w - 1).max(1) as f32;
+                    let src_y = y as f32 * (height - 1) as f32 / (target_h - 1).max(1) as f32;
+
+                    let x0 = src_x.floor() as usize;
+                    let y0 = src_y.floor() as usize;
+                    let x1 = (x0 + 1).min(width - 1);
+                    let y1 = (y0 + 1).min(height - 1);
+
+                    let fx = src_x - x0 as f32;
+                    let fy = src_y - y0 as f32;
+
+                    let v00 = data[y0 * width + x0];
+                    let v10 = data[y0 * width + x1];
+                    let v01 = data[y1 * width + x0];
+                    let v11 = data[y1 * width + x1];
+
+                    result[y * target_w + x] = v00 * (1.0 - fx) * (1.0 - fy)
+                        + v10 * fx * (1.0 - fy)
+                        + v01 * (1.0 - fx) * fy
+                        + v11 * fx * fy;
+                }
             }
         }
 
@@ -769,11 +889,16 @@ impl LaplacianMip {
             let expanded = Self::upsample(g_k1, *w_k1, *h_k1, *w_k, *h_k);
 
             // Laplacian = g_k - expanded
-            let lap: Vec<f32> = g_k
-                .iter()
-                .zip(expanded.iter())
-                .map(|(a, b)| a - b)
-                .collect();
+            let mut lap = vec![0.0f32; g_k.len()];
+            if Self::should_parallelize_pixels(g_k.len()) {
+                lap.par_iter_mut()
+                    .enumerate()
+                    .for_each(|(i, out)| *out = g_k[i] - expanded[i]);
+            } else {
+                for i in 0..g_k.len() {
+                    lap[i] = g_k[i] - expanded[i];
+                }
+            }
 
             laplacian.push((lap, *w_k, *h_k));
         }
@@ -795,9 +920,10 @@ impl LaplacianMip {
     ) -> Vec<f32> {
         let radius = (sigma_s * 2.0).ceil() as i32;
         let mut result = vec![0.0f32; width * height];
+        let use_parallel = Self::should_parallelize_pixels(width.saturating_mul(height));
 
-        for y in 0..height {
-            for x in 0..width {
+        let apply_row = |y: usize, row: &mut [f32]| {
+            for (x, out) in row.iter_mut().enumerate() {
                 let center_val = data[y * width + x];
                 let mut sum = 0.0f32;
                 let mut weight_sum = 0.0f32;
@@ -823,11 +949,22 @@ impl LaplacianMip {
                     }
                 }
 
-                result[y * width + x] = if weight_sum > 0.0 {
+                *out = if weight_sum > 0.0 {
                     sum / weight_sum
                 } else {
                     center_val
                 };
+            }
+        };
+
+        if use_parallel {
+            result
+                .par_chunks_mut(width)
+                .enumerate()
+                .for_each(|(y, row)| apply_row(y, row));
+        } else {
+            for (y, row) in result.chunks_mut(width).enumerate() {
+                apply_row(y, row);
             }
         }
 
@@ -860,19 +997,22 @@ impl LaplacianMip {
 
             // Apply fusion formula:
             // r(k) = α * Expand(g_{k+1}) + β * (Expand(g_{k+1}))^p * (L_k + w*ML_k)
-            result = Vec::with_capacity(w_l * h_l);
-            for i in 0..(w_l * h_l) {
-                let g_exp = g_expanded[i];
-                let l_k = l_central[i];
-
-                // Combine central Laplacian with weighted MIP Laplacian
-                // mip_weight > 1.0 amplifies calcifications
-                let combined_lap = l_k + self.mip_weight * l_mip[i];
-
-                // Apply nonlinear fusion (g_exp is always positive for image data)
-                let fused =
-                    params.alpha * g_exp + params.beta * g_exp.powf(params.p) * combined_lap;
-                result.push(fused);
+            result = vec![0.0f32; w_l * h_l];
+            if Self::should_parallelize_pixels(w_l * h_l) {
+                result.par_iter_mut().enumerate().for_each(|(i, out)| {
+                    let g_exp = g_expanded[i];
+                    let l_k = l_central[i];
+                    let combined_lap = l_k + self.mip_weight * l_mip[i];
+                    *out = params.alpha * g_exp + params.beta * g_exp.powf(params.p) * combined_lap;
+                });
+            } else {
+                for i in 0..(w_l * h_l) {
+                    let g_exp = g_expanded[i];
+                    let l_k = l_central[i];
+                    let combined_lap = l_k + self.mip_weight * l_mip[i];
+                    result[i] =
+                        params.alpha * g_exp + params.beta * g_exp.powf(params.p) * combined_lap;
+                }
             }
 
             _w = *w_l;
@@ -883,8 +1023,8 @@ impl LaplacianMip {
     }
 
     /// Compute simple MIP across frames
-    fn compute_mip(frames: &[Vec<f32>], width: usize, height: usize) -> Vec<f32> {
-        let mut mip = vec![f32::MIN; width * height];
+    fn compute_mip_serial(frames: &[Vec<f32>], pixel_count: usize) -> Vec<f32> {
+        let mut mip = vec![f32::MIN; pixel_count];
         for frame in frames {
             for (i, &val) in frame.iter().enumerate() {
                 if val > mip[i] {
@@ -895,14 +1035,77 @@ impl LaplacianMip {
         mip
     }
 
+    fn compute_mip(frames: &[Vec<f32>], width: usize, height: usize) -> Vec<f32> {
+        let pixel_count = width.saturating_mul(height);
+        if !Self::should_parallelize_pixels(pixel_count) {
+            return Self::compute_mip_serial(frames, pixel_count);
+        }
+        let mut mip = vec![f32::MIN; pixel_count];
+        mip.par_iter_mut().enumerate().for_each(|(i, out)| {
+            let mut max_value = f32::MIN;
+            for frame in frames {
+                let value = frame[i];
+                if value > max_value {
+                    max_value = value;
+                }
+            }
+            *out = max_value;
+        });
+        mip
+    }
+
     /// Parallel-beam forward projection: sum all slices along z-axis, then normalize to [0, 1]
-    fn compute_parallel_projection(gray_frames: &[Vec<f32>], w: usize, h: usize) -> Vec<f32> {
-        let mut projection = vec![0.0f32; w * h];
+    fn compute_parallel_projection_serial(
+        gray_frames: &[Vec<f32>],
+        pixel_count: usize,
+    ) -> Vec<f32> {
+        let mut projection = vec![0.0f32; pixel_count];
         for slice in gray_frames {
             for (p, &s) in projection.iter_mut().zip(slice.iter()) {
                 *p += s;
             }
         }
+        projection
+    }
+
+    fn compute_parallel_projection(gray_frames: &[Vec<f32>], w: usize, h: usize) -> Vec<f32> {
+        let pixel_count = w.saturating_mul(h);
+        let mut projection = if Self::should_parallelize_pixels(pixel_count) {
+            let mut output = vec![0.0f32; pixel_count];
+            output.par_iter_mut().enumerate().for_each(|(i, out)| {
+                let mut sum = 0.0f32;
+                for slice in gray_frames {
+                    sum += slice[i];
+                }
+                *out = sum;
+            });
+            output
+        } else {
+            Self::compute_parallel_projection_serial(gray_frames, pixel_count)
+        };
+
+        if Self::should_parallelize_pixels(pixel_count) {
+            let max_val = projection.par_iter().cloned().reduce(|| 0.0f32, f32::max);
+            if max_val > 0.0 {
+                projection.par_iter_mut().for_each(|p| *p /= max_val);
+            }
+        } else {
+            let max_val = projection.iter().cloned().fold(0.0f32, f32::max);
+            if max_val > 0.0 {
+                for p in &mut projection {
+                    *p /= max_val;
+                }
+            }
+        }
+        projection
+    }
+
+    #[cfg(test)]
+    fn compute_parallel_projection_serial_normalized(
+        gray_frames: &[Vec<f32>],
+        pixel_count: usize,
+    ) -> Vec<f32> {
+        let mut projection = Self::compute_parallel_projection_serial(gray_frames, pixel_count);
         let max_val = projection.iter().cloned().fold(0.0f32, f32::max);
         if max_val > 0.0 {
             for p in &mut projection {
@@ -944,7 +1147,12 @@ impl LaplacianMip {
         let num_levels = self.num_levels.min(max_levels);
 
         // Convert all frames to f32 grayscale (normalized 0-1)
-        let gray_frames: Vec<Vec<f32>> = frames.iter().map(Self::to_grayscale_f32).collect();
+        let pixel_count = w.saturating_mul(h);
+        let gray_frames: Vec<Vec<f32>> = if Self::should_parallelize_pixels(pixel_count) {
+            frames.par_iter().map(Self::to_grayscale_f32).collect()
+        } else {
+            frames.iter().map(Self::to_grayscale_f32).collect()
+        };
 
         // Get central frame based on projection mode
         let central_frame_owned: Vec<f32>;
@@ -1222,6 +1430,51 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_interpolate_target_single_frame_returns_first_input_frame() {
+        let width = 4;
+        let height = 4;
+        let mut img1 = ImageBuffer::new(width, height);
+        let mut img2 = ImageBuffer::new(width, height);
+        for x in 0..width {
+            for y in 0..height {
+                img1.put_pixel(x, y, Rgb([50, 50, 50]));
+                img2.put_pixel(x, y, Rgb([200, 200, 200]));
+            }
+        }
+
+        let frames = vec![DynamicImage::ImageRgb8(img1), DynamicImage::ImageRgb8(img2)];
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, 1);
+
+        assert_eq!(interpolated.len(), 1);
+        assert_eq!(
+            interpolated[0].as_rgb8().unwrap(),
+            frames[0].as_rgb8().unwrap()
+        );
+    }
+
+    #[test]
+    fn test_interpolate_parallel_matches_serial() {
+        let width = 64;
+        let height = 64;
+        let target_frames = 6;
+        let source_frames = 5;
+
+        let frames: Vec<DynamicImage> = (0..source_frames)
+            .map(|frame_idx| {
+                let buffer = ImageBuffer::from_fn(width, height, |x, y| {
+                    let value = ((x + y + frame_idx) % 255) as u8;
+                    Rgb([value, value, value])
+                });
+                DynamicImage::ImageRgb8(buffer)
+            })
+            .collect();
+
+        let serial = InterpolateVolume::interpolate_frames_serial(&frames, target_frames);
+        let parallel = InterpolateVolume::interpolate_frames_parallel(&frames, target_frames);
+        assert_eq!(serial, parallel);
+    }
+
     // --- Parallel beam projection tests ---
 
     #[test]
@@ -1293,6 +1546,40 @@ mod tests {
             (max_val - 1.0).abs() < 1e-6,
             "Max should be normalized to 1.0"
         );
+    }
+
+    #[test]
+    fn test_compute_mip_matches_serial_reference() {
+        let w = 80usize;
+        let h = 80usize;
+        let frames: Vec<Vec<f32>> = (0..6usize)
+            .map(|frame_idx| {
+                (0..(w * h))
+                    .map(|pixel_idx| ((pixel_idx + frame_idx) % 257) as f32 / 256.0)
+                    .collect()
+            })
+            .collect();
+
+        let expected = LaplacianMip::compute_mip_serial(&frames, w * h);
+        let actual = LaplacianMip::compute_mip(&frames, w, h);
+        assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn test_parallel_projection_matches_serial_reference() {
+        let w = 80usize;
+        let h = 80usize;
+        let frames: Vec<Vec<f32>> = (0..6usize)
+            .map(|frame_idx| {
+                (0..(w * h))
+                    .map(|pixel_idx| ((pixel_idx + frame_idx) % 103) as f32 / 102.0)
+                    .collect()
+            })
+            .collect();
+
+        let expected = LaplacianMip::compute_parallel_projection_serial_normalized(&frames, w * h);
+        let actual = LaplacianMip::compute_parallel_projection(&frames, w, h);
+        assert_eq!(expected, actual);
     }
 
     // --- LaplacianMip::project_laplacian_mip standalone tests ---

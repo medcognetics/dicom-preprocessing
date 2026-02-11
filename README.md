@@ -18,6 +18,28 @@ To enable mapping coordinates from the original image to the output image, the f
 - `ActiveArea` - coordinates of the non-padded area of the image as `(left, top, right, bottom)`
 - `PageNumber` - tuple of `(0, total)` indicating the total number of frames in the file
 
+### Parallelization Flow
+
+`dicom-preprocess` uses two levels of parallelism:
+- file-level parallelism across input studies
+- frame/pixel-level parallelism inside a single multi-frame volume
+
+To avoid over-parallelizing across both levels, frame-level parallelism is only enabled when the available thread budget per input is greater than 1. Use `--threads` to cap worker threads (for example, memory-constrained hosts).
+
+```mermaid
+flowchart TD
+    A[Collect input files] --> B[Create rayon thread pool (--threads or system default)]
+    B --> C{Threads per input > 1?}
+    C -->|Yes| D[Enable frame-level decode + transform parallelism]
+    C -->|No| E[Use file-level parallelism only]
+    D --> F[Process each file]
+    E --> F[Process each file]
+    F --> G[Decode]
+    G --> H[Volume handler]
+    H --> I[Crop -> Resize -> Pad]
+    I --> J[Write TIFF]
+```
+
 
 ### Command Line Interface
 
@@ -65,6 +87,8 @@ Options:
           Fail on input paths that are not DICOM files, or if any file processing fails
   -w, --window <WINDOW>
           Window center and width
+  -j, --threads <THREADS>
+          Maximum worker threads for preprocessing
   -h, --help
           Print help
   -V, --version

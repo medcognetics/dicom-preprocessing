@@ -10,12 +10,16 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 
 ## Build, Test, and Development Commands
 - `make init`: install `uv` if missing and sync all dependency groups.
+- `make init-no-project`: install `uv` if missing and sync dependency groups without installing the local project package.
 - `make develop`: build/install the Python extension locally via `maturin --release`.
+- `make develop-debug`: build/install the Python extension in debug mode (faster, CI-friendly).
+- `make develop-release`: build/install the Python extension in release mode.
 - `make quality`: run Rust checks plus Python quality checks (`ruff format --check`, `ruff check`, `basedpyright`).
 - `make quality-python`: run Python quality checks only.
 - `make style`: apply auto-fixes (`cargo fix`, `clippy --fix`, `cargo fmt`, `ruff check --fix`, `ruff format`).
 - `make test`: run Rust tests and Python tests.
 - `make test-python`: run only the Python test suite under `tests/`.
+- `make test-python-ci`: run Python tests against a debug extension build (CI target).
 
 ## CLI Binaries
 Run binaries with `cargo run --release --bin <name> -- ...`:
@@ -36,9 +40,11 @@ Python style is formatter-driven:
 - Test files use `test_*.py`; test functions use `test_*`.
 
 ## CI Quality Pipeline
-- Rust quality gate: `quality` job (`cargo fmt --check`, `cargo check --all-features`, `cargo clippy -- -D warnings`).
-- Python quality gate: `quality_python` job (Python 3.13; runs `make quality-python`).
-- Python runtime tests: `test_python` job (runs `make test-python`).
+- Rust quality gate: `rust_quality` job (`cargo fmt --check`, `cargo clippy --all-features -- -D warnings`).
+- Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
+- Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
+- Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
+- Test jobs are gated on both quality jobs passing.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

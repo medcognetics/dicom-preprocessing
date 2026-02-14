@@ -1,4 +1,5 @@
 UV=uv run
+UV_NO_PROJECT=uv run --no-project
 PYTHON=$(UV) python
 PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
 
@@ -27,9 +28,9 @@ quality:
 	$(MAKE) quality-python
 
 quality-python:
-	$(UV) ruff format --check $(PYTHON_QUALITY_TARGETS)
-	$(UV) ruff check $(PYTHON_QUALITY_TARGETS)
-	$(UV) basedpyright
+	$(UV_NO_PROJECT) ruff format --check $(PYTHON_QUALITY_TARGETS)
+	$(UV_NO_PROJECT) ruff check $(PYTHON_QUALITY_TARGETS)
+	$(UV_NO_PROJECT) basedpyright
 
 style:
 	cargo fix --allow-dirty --all-features

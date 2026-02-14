@@ -7,10 +7,10 @@ use dicom::pixeldata::ConvertOptions;
 use rayon::prelude::*;
 
 use crate::errors::DicomError;
-use crate::metadata::{PreprocessingMetadata, Resolution};
+use crate::metadata::{FrameCount, PreprocessingMetadata, Resolution};
 use crate::transform::resize;
 use crate::transform::{
-    Crop, HandleVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
+    Crop, HandleVolume, KeepVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
 };
 
 /// Configuration for spacing-based resizing
@@ -237,6 +237,31 @@ impl Preprocessor {
         Self::sanitize_voi_lut_function(dcm);
     }
 
+    fn decode_with_single_frame_guard(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+        parallel: bool,
+    ) -> Result<Vec<DynamicImage>, DicomError> {
+        let frame_count: u32 = FrameCount::try_from(file)?.into();
+
+        if frame_count == 1 {
+            let keep_handler = KeepVolume;
+            return if parallel {
+                keep_handler.par_decode_volume_with_options(file, &self.convert_options)
+            } else {
+                keep_handler.decode_volume_with_options(file, &self.convert_options)
+            };
+        }
+
+        if parallel {
+            self.volume_handler
+                .par_decode_volume_with_options(file, &self.convert_options)
+        } else {
+            self.volume_handler
+                .decode_volume_with_options(file, &self.convert_options)
+        }
+    }
+
     /// Decodes the pixel data and applies transformations.
     /// When `parallel` is true, the pixel data is decoded in parallel using rayon
     pub fn prepare_image(
@@ -245,14 +270,7 @@ impl Preprocessor {
         parallel: bool,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
-        let mut image_data = match parallel {
-            false => self
-                .volume_handler
-                .decode_volume_with_options(file, &self.convert_options),
-            true => self
-                .volume_handler
-                .par_decode_volume_with_options(file, &self.convert_options),
-        }?;
+        let mut image_data = self.decode_with_single_frame_guard(file, parallel)?;
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
@@ -326,14 +344,7 @@ impl Preprocessor {
         // For CT scans, each file is typically a single 2D slice
         let mut combined_volume: Vec<DynamicImage> = Vec::new();
         for file in files {
-            let images = match parallel {
-                false => self
-                    .volume_handler
-                    .decode_volume_with_options(file, &self.convert_options),
-                true => self
-                    .volume_handler
-                    .par_decode_volume_with_options(file, &self.convert_options),
-            }?;
+            let images = self.decode_with_single_frame_guard(file, parallel)?;
 
             // Add all frames from this file to the combined volume
             combined_volume.extend(images);
@@ -474,7 +485,7 @@ mod tests {
     use dicom::object::open_file;
 
     use crate::metadata::FrameCount;
-    use crate::volume::{CentralSlice, KeepVolume, VolumeHandler};
+    use crate::volume::{CentralSlice, KeepVolume, LaplacianMip, VolumeHandler};
     use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
 
@@ -1016,6 +1027,100 @@ mod tests {
             target_frames as usize,
             "Frame count should match target_frames. Native frames: {native_frame_count}, Target: {target_frames}"
         );
+    }
+
+    fn laplacian_mip_preprocessor() -> Preprocessor {
+        Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::LaplacianMip(LaplacianMip::default()),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        }
+    }
+
+    fn malformed_zero_frame_dicom() -> FileDicomObject<InMemDicomObject> {
+        let mut dicom_file =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        dicom_file.put_element(DataElement::new(
+            tags::NUMBER_OF_FRAMES,
+            VR::IS,
+            PrimitiveValue::from("0"),
+        ));
+        dicom_file
+    }
+
+    #[test]
+    fn test_zero_frame_input_does_not_bypass_laplacian_mip() {
+        let dicom_file = malformed_zero_frame_dicom();
+        let preprocessor = laplacian_mip_preprocessor();
+
+        let err = preprocessor
+            .decode_with_single_frame_guard(&dicom_file, false)
+            .unwrap_err();
+        match err {
+            DicomError::LaplacianMipInsufficientFrames {
+                number_of_frames,
+                skip_start,
+                skip_end,
+            } => {
+                assert_eq!(number_of_frames, 0);
+                assert_eq!(skip_start, 5);
+                assert_eq!(skip_end, 5);
+            }
+            other => panic!("Expected LaplacianMipInsufficientFrames, got {other}"),
+        }
+    }
+
+    #[test]
+    fn test_single_frame_input_bypasses_laplacian_mip_prepare_image() {
+        let dicom_file =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let preprocessor = laplacian_mip_preprocessor();
+
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+
+        assert_eq!(images.len(), 1);
+        let metadata_frames: usize = metadata.num_frames.into();
+        assert_eq!(metadata_frames, 1);
+    }
+
+    #[test]
+    fn test_single_frame_input_bypasses_laplacian_mip_prepare_image_parallel() {
+        let dicom_file =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let preprocessor = laplacian_mip_preprocessor();
+
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, true).unwrap();
+
+        assert_eq!(images.len(), 1);
+        let metadata_frames: usize = metadata.num_frames.into();
+        assert_eq!(metadata_frames, 1);
+    }
+
+    #[test]
+    fn test_single_frame_batch_bypasses_laplacian_mip() {
+        const NUM_INPUT_FILES: usize = 3;
+
+        let files: Vec<FileDicomObject<InMemDicomObject>> = (0..NUM_INPUT_FILES)
+            .map(|_| open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap())
+            .collect();
+        let preprocessor = laplacian_mip_preprocessor();
+
+        let (image_batches, metadata) = preprocessor.prepare_images_batch(&files, false).unwrap();
+
+        assert_eq!(image_batches.len(), NUM_INPUT_FILES);
+        let total_frames: usize = image_batches.iter().map(Vec::len).sum();
+        assert_eq!(total_frames, NUM_INPUT_FILES);
+        let metadata_frames: usize = metadata.num_frames.into();
+        assert_eq!(metadata_frames, NUM_INPUT_FILES);
     }
 
     #[rstest]

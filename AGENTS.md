@@ -42,8 +42,9 @@ Python style is formatter-driven:
 ## CI Quality Pipeline
 - Rust quality gate: `rust_quality` job (`cargo fmt --check`, `cargo clippy --all-features -- -D warnings`).
 - Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
-- Runtime tests: `tests` job (runs `cargo test --all-features` then `make test-python-ci` against a debug extension build).
-- The `tests` job is gated on both quality jobs passing.
+- Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
+- Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
+- Test jobs are gated on both quality jobs passing.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

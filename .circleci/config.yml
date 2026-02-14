@@ -51,7 +51,31 @@ jobs:
                 name: Run Python quality checks
                 command: make quality-python
 
-    tests:
+    rust_tests:
+        docker:
+            - image: rust:latest
+        steps:
+            - checkout
+            - attach_workspace:
+                at: .
+            - restore_cache:
+                keys:
+                  - v3-rust-tests-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  - v3-rust-tests-{{ arch }}-
+            - run:
+                name: Install Python runtime for pyo3 tests
+                command: apt-get update && apt-get install -y python3-dev
+            - run:
+                name: Run Rust tests
+                command: cargo test --all-features
+            - save_cache:
+                key: v3-rust-tests-{{ arch }}-{{ checksum "Cargo.lock" }}
+                paths:
+                  - ~/.cargo
+                  - ~/.rustup
+                  - ./target
+
+    python_tests:
         docker:
             - image: cimg/python:3.13
         steps:
@@ -77,14 +101,6 @@ jobs:
                 name: Version information
                 command: rustc --version; cargo --version; rustup --version; uv --version
             - run:
-                name: Configure Python shared library path
-                command: |
-                    PY_PREFIX="$(dirname "$(dirname "$(readlink -f "$(command -v python3)")")")"
-                    PY_LIBDIR="${PY_PREFIX}/lib"
-                    if ls "${PY_LIBDIR}"/libpython*.so* >/dev/null 2>&1; then
-                        echo "export LD_LIBRARY_PATH=${PY_LIBDIR}:${LD_LIBRARY_PATH:-}" >> "$BASH_ENV"
-                    fi
-            - run:
                 name: Install dependencies
                 command: make init-no-project
             - save_cache:
@@ -92,9 +108,6 @@ jobs:
                 paths:
                   - ~/.cache/pip
                   - ~/.cache/uv
-            - run:
-                name: Run Rust tests
-                command: cargo test --all-features
             - run:
                 name: Run Python tests
                 command: make test-python-ci
@@ -110,7 +123,11 @@ workflows:
         jobs:
             - rust_quality
             - python_quality
-            - tests:
+            - rust_tests:
+                requires:
+                    - rust_quality
+                    - python_quality
+            - python_tests:
                 requires:
                     - rust_quality
                     - python_quality

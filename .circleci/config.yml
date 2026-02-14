@@ -8,8 +8,8 @@ jobs:
             - checkout
             - restore_cache:
                 keys:
-                  - v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v2-rust-{{ arch }}-
+                  - v3-rust-quality-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  - v3-rust-quality-{{ arch }}-
             - run:
                 name: Install dependencies
                 command: rustup component add rustfmt clippy
@@ -20,7 +20,7 @@ jobs:
                 name: Clippy check
                 command: cargo clippy --all-features -- -D warnings
             - save_cache:
-                key: v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                key: v3-rust-quality-{{ arch }}-{{ checksum "Cargo.lock" }}
                 paths:
                   - ~/.cargo
                   - ~/.rustup
@@ -37,13 +37,13 @@ jobs:
             - checkout
             - restore_cache:
                 keys:
-                  - v2-py-{{ checksum "uv.lock" }}
-                  - v2-py-
+                  - v3-py-{{ checksum "uv.lock" }}
+                  - v3-py-
             - run:
                 name: Install dependencies
-                command: make init
+                command: make init-no-project
             - save_cache:
-                key: v2-py-{{ checksum "uv.lock" }}
+                key: v3-py-{{ checksum "uv.lock" }}
                 paths:
                   - ~/.cache/pip
                   - ~/.cache/uv
@@ -51,28 +51,7 @@ jobs:
                 name: Run Python quality checks
                 command: make quality-python
 
-    rust_tests:
-        docker:
-            - image: rust:latest
-        steps:
-            - checkout
-            - attach_workspace:
-                at: .
-            - restore_cache:
-                keys:
-                  - v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v2-rust-{{ arch }}-
-            - run:
-                name: Run Rust tests
-                command: cargo test --all-features
-            - save_cache:
-                key: v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
-                paths:
-                  - ~/.cargo
-                  - ~/.rustup
-                  - ./target
-
-    python_tests:
+    tests:
         docker:
             - image: cimg/python:3.13
         steps:
@@ -81,12 +60,12 @@ jobs:
                 at: .
             - restore_cache:
                 keys:
-                  - v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v2-rust-{{ arch }}-
+                  - v3-rust-tests-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  - v3-rust-tests-{{ arch }}-
             - restore_cache:
                 keys:
-                  - v2-py-{{ checksum "uv.lock" }}
-                  - v2-py-
+                  - v3-py-{{ checksum "uv.lock" }}
+                  - v3-py-
             - run:
                 name: Install Rust
                 command: |
@@ -99,17 +78,20 @@ jobs:
                 command: rustc --version; cargo --version; rustup --version; uv --version
             - run:
                 name: Install dependencies
-                command: make init
+                command: make init-no-project
             - save_cache:
-                key: v2-py-{{ checksum "uv.lock" }}
+                key: v3-py-{{ checksum "uv.lock" }}
                 paths:
                   - ~/.cache/pip
                   - ~/.cache/uv
             - run:
+                name: Run Rust tests
+                command: cargo test --all-features
+            - run:
                 name: Run Python tests
                 command: make test-python-ci
             - save_cache:
-                key: v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                key: v3-rust-tests-{{ arch }}-{{ checksum "Cargo.lock" }}
                 paths:
                   - ~/.cargo
                   - ~/.rustup
@@ -120,11 +102,7 @@ workflows:
         jobs:
             - rust_quality
             - python_quality
-            - rust_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-            - python_tests:
+            - tests:
                 requires:
                     - rust_quality
                     - python_quality

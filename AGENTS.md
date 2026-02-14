@@ -10,6 +10,7 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 
 ## Build, Test, and Development Commands
 - `make init`: install `uv` if missing and sync all dependency groups.
+- `make init-no-project`: install `uv` if missing and sync dependency groups without installing the local project package.
 - `make develop`: build/install the Python extension locally via `maturin --release`.
 - `make develop-debug`: build/install the Python extension in debug mode (faster, CI-friendly).
 - `make develop-release`: build/install the Python extension in release mode.
@@ -40,10 +41,9 @@ Python style is formatter-driven:
 
 ## CI Quality Pipeline
 - Rust quality gate: `rust_quality` job (`cargo fmt --check`, `cargo clippy --all-features -- -D warnings`).
-- Python quality gate: `python_quality` job (Python 3.13; runs `make quality-python`).
-- Rust runtime tests: `rust_tests` job (`cargo test --all-features` in debug mode).
-- Python runtime tests: `python_tests` job (runs `make test-python-ci` against a debug extension build).
-- Test jobs are gated on both quality jobs passing.
+- Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
+- Runtime tests: `tests` job (runs `cargo test --all-features` then `make test-python-ci` against a debug extension build).
+- The `tests` job is gated on both quality jobs passing.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

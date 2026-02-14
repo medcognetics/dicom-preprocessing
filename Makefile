@@ -2,11 +2,15 @@ UV=uv run
 PYTHON=$(UV) python
 PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
 
-.PHONY: init develop develop-debug develop-release quality quality-python style test-python test-python-ci test-python-pdb test
+.PHONY: init init-no-project develop develop-debug develop-release quality quality-python style test-python test-python-ci test-python-pdb test
 
 init:
 	which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 	uv sync --all-groups
+
+init-no-project:
+	which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+	uv sync --all-groups --no-install-project
 
 develop: develop-release
 

@@ -244,7 +244,7 @@ impl Preprocessor {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let frame_count: u32 = FrameCount::try_from(file)?.into();
 
-        if frame_count <= 1 {
+        if frame_count == 1 {
             let keep_handler = KeepVolume;
             return if parallel {
                 keep_handler.par_decode_volume_with_options(file, &self.convert_options)
@@ -1043,6 +1043,39 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+        }
+    }
+
+    fn malformed_zero_frame_dicom() -> FileDicomObject<InMemDicomObject> {
+        let mut dicom_file =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        dicom_file.put_element(DataElement::new(
+            tags::NUMBER_OF_FRAMES,
+            VR::IS,
+            PrimitiveValue::from("0"),
+        ));
+        dicom_file
+    }
+
+    #[test]
+    fn test_zero_frame_input_does_not_bypass_laplacian_mip() {
+        let dicom_file = malformed_zero_frame_dicom();
+        let preprocessor = laplacian_mip_preprocessor();
+
+        let err = preprocessor
+            .decode_with_single_frame_guard(&dicom_file, false)
+            .unwrap_err();
+        match err {
+            DicomError::LaplacianMipInsufficientFrames {
+                number_of_frames,
+                skip_start,
+                skip_end,
+            } => {
+                assert_eq!(number_of_frames, 0);
+                assert_eq!(skip_start, 5);
+                assert_eq!(skip_end, 5);
+            }
+            other => panic!("Expected LaplacianMipInsufficientFrames, got {other}"),
         }
     }
 

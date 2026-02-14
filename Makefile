@@ -16,10 +16,10 @@ init-no-project:
 develop: develop-release
 
 develop-debug:
-	uv run maturin develop --uv -F python
+	uv run maturin develop --uv -F python -F pyo3/extension-module
 
 develop-release:
-	uv run maturin develop --uv -F python --release
+	uv run maturin develop --uv -F python -F pyo3/extension-module --release
 
 quality:
 	cargo fmt -- --check

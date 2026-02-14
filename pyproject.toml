@@ -10,7 +10,7 @@ dynamic = ["version"]
 
 [tool.maturin]
 bindings = "pyo3"  
-features = ["python"]
+features = ["python", "pyo3/extension-module"]
 version = { source = "cargo" }
 module-name = "dicom_preprocessing"
 package-data = ["*.pyi"]

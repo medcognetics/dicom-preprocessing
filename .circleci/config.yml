@@ -77,6 +77,13 @@ jobs:
                 name: Version information
                 command: rustc --version; cargo --version; rustup --version; uv --version
             - run:
+                name: Configure Python shared library path
+                command: |
+                    PY_LIBDIR="$(python3 -c 'import glob, os, sysconfig; c=[sysconfig.get_config_var(\"LIBDIR\"), sysconfig.get_config_var(\"LIBPL\")]; print(next((d for d in c if d and glob.glob(os.path.join(d, \"libpython*.so*\"))), \"\"))')"
+                    if [ -n "${PY_LIBDIR}" ]; then
+                        echo "export LD_LIBRARY_PATH=${PY_LIBDIR}:${LD_LIBRARY_PATH:-}" >> "$BASH_ENV"
+                    fi
+            - run:
                 name: Install dependencies
                 command: make init-no-project
             - save_cache:

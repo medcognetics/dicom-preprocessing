@@ -1,11 +1,15 @@
 version: 2.1
 
 jobs:
-    quality:
+    rust_quality:
         docker:
             - image: rust:latest
         steps:
             - checkout
+            - restore_cache:
+                keys:
+                  - v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  - v2-rust-{{ arch }}-
             - run:
                 name: Install dependencies
                 command: rustup component add rustfmt clippy
@@ -13,72 +17,82 @@ jobs:
                 name: Check formatting
                 command: cargo fmt -- --check
             - run:
-                name: General check
-                command: cargo check --all-features
-            - run:
                 name: Clippy check
                 command: cargo clippy --all-features -- -D warnings
-
-    build:
-        docker:
-            - image: rust:latest
-        steps:
-            - checkout
-            - restore_cache:
-                key: project-cache
-            - run:
-                name: Install dependencies
-                command: rustup component add rustfmt
-            - run:
-                name: Stable Build
-                command: cargo build
-            - run:
-                name: Test
-                command: cargo test
             - save_cache:
-                key: project-cache
+                key: v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
                 paths:
-                - "~/.cargo"
-                - "./target"
+                  - ~/.cargo
+                  - ~/.rustup
+                  - ./target
             - persist_to_workspace:
                 root: .
                 paths:
-                    - target/
+                  - target/
 
-    quality_python:
+    python_quality:
         docker:
             - image: cimg/python:3.13
         steps:
             - checkout
             - restore_cache:
                 keys:
-                  - v1-dependencies-{{ checksum "uv.lock" }}
+                  - v2-py-{{ checksum "uv.lock" }}
+                  - v2-py-
             - run:
                 name: Install dependencies
                 command: make init
             - save_cache:
+                key: v2-py-{{ checksum "uv.lock" }}
                 paths:
                   - ~/.cache/pip
                   - ~/.cache/uv
-                key: v1-dependencies-{{ checksum "uv.lock" }}
             - run:
                 name: Run Python quality checks
                 command: make quality-python
 
-    test_python:
+    rust_tests:
         docker:
-            - image: cimg/python:3.14
+            - image: rust:latest
         steps:
             - checkout
-            - restore_cache:
-                keys:
-                  - v1-dependencies-{{ checksum "uv.lock" }}
             - attach_workspace:
                 at: .
+            - restore_cache:
+                keys:
+                  - v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  - v2-rust-{{ arch }}-
+            - run:
+                name: Run Rust tests
+                command: cargo test --all-features
+            - save_cache:
+                key: v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                paths:
+                  - ~/.cargo
+                  - ~/.rustup
+                  - ./target
+
+    python_tests:
+        docker:
+            - image: cimg/python:3.13
+        steps:
+            - checkout
+            - attach_workspace:
+                at: .
+            - restore_cache:
+                keys:
+                  - v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                  - v2-rust-{{ arch }}-
+            - restore_cache:
+                keys:
+                  - v2-py-{{ checksum "uv.lock" }}
+                  - v2-py-
             - run:
                 name: Install Rust
                 command: |
-                    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    if [ ! -f "$HOME/.cargo/env" ]; then
+                        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    fi
                     echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
             - run:
                 name: Version information
@@ -87,20 +101,30 @@ jobs:
                 name: Install dependencies
                 command: make init
             - save_cache:
+                key: v2-py-{{ checksum "uv.lock" }}
                 paths:
                   - ~/.cache/pip
                   - ~/.cache/uv
-                key: v1-dependencies-{{ checksum "uv.lock" }}
             - run:
-                name: Run tests
-                command: make test-python
+                name: Run Python tests
+                command: make test-python-ci
+            - save_cache:
+                key: v2-rust-{{ arch }}-{{ checksum "Cargo.lock" }}
+                paths:
+                  - ~/.cargo
+                  - ~/.rustup
+                  - ./target
 
 workflows:
     build_and_test:
         jobs:
-            - quality
-            - build
-            - quality_python
-            - test_python:
+            - rust_quality
+            - python_quality
+            - rust_tests:
                 requires:
-                    - build
+                    - rust_quality
+                    - python_quality
+            - python_tests:
+                requires:
+                    - rust_quality
+                    - python_quality

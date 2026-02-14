@@ -26,6 +26,7 @@ select = ["I"]
 include = ["dicom_preprocessing.pyi", "tests", "examples"]
 pythonVersion = "3.13"
 typeCheckingMode = "basic"
+reportMissingModuleSource = "none"
 
 [dependency-groups]
 build = [

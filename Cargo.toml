@@ -50,6 +50,8 @@ criterion = "0.8"
 resolver = "2"
 
 [patch.crates-io]
+# Temporary pin for restart-boundary lossless JPEG decoding fix.
+# Switch back to crates.io once image-rs/jpeg-decoder#287 lands in a stable release.
 jpeg-decoder = { git = "https://github.com/TidalPaladin/jpeg-decoder.git", branch = "fix/lossless-restart-boundary-286" }
 
 [profile.release]

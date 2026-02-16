@@ -1972,8 +1972,7 @@ dependencies = [
 [[package]]
 name = "jpeg-decoder"
 version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+source = "git+https://github.com/TidalPaladin/jpeg-decoder.git?branch=fix%2Flossless-restart-boundary-286#201d4c98f16d1d332912d92d71057310bd5eca8d"
 dependencies = [
  "rayon",
 ]

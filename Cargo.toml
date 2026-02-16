@@ -49,6 +49,9 @@ criterion = "0.8"
 [workspace]
 resolver = "2"
 
+[patch.crates-io]
+jpeg-decoder = { git = "https://github.com/TidalPaladin/jpeg-decoder.git", branch = "fix/lossless-restart-boundary-286" }
+
 [profile.release]
 codegen-units = 1
 lto = "fat"

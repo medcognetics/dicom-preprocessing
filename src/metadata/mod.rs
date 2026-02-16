@@ -13,6 +13,9 @@ pub use preprocessing::*;
 pub mod dimensions;
 pub use dimensions::*;
 
+pub mod bot;
+pub use bot::*;
+
 pub trait WriteTags {
     /// Write tags describing the transform to a TIFF encoder.
     fn write_tags<W, C, K>(&self, tiff: &mut ImageEncoder<W, C, K>) -> Result<(), TiffError>

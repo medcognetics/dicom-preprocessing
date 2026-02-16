@@ -45,6 +45,9 @@ pub const DEFAULT_INTERPOLATE_TARGET_FRAMES: u32 = 32;
 const PARALLEL_MIN_PIXEL_COUNT: usize = 4_096;
 const PARALLEL_MIN_FRAME_COUNT: usize = 2;
 const PARALLEL_MIN_TARGET_FRAMES: usize = 2;
+const BILATERAL_RADIUS_SIGMA_MULTIPLIER: f32 = 2.0;
+const BILATERAL_RANGE_LUT_BINS: usize = 2_048;
+const NORMALIZED_INTENSITY_SQUARED_MAX: f32 = 1.0;
 
 #[derive(Debug, Clone)]
 pub enum VolumeHandler {
@@ -918,7 +921,90 @@ impl LaplacianMip {
         sigma_s: f32,
         sigma_r: f32,
     ) -> Vec<f32> {
-        let radius = (sigma_s * 2.0).ceil() as i32;
+        if width == 0 || height == 0 {
+            return Vec::new();
+        }
+
+        let sigma_s = sigma_s.max(f32::EPSILON);
+        let sigma_r = sigma_r.max(f32::EPSILON);
+        let radius = (sigma_s * BILATERAL_RADIUS_SIGMA_MULTIPLIER).ceil() as i32;
+        let mut result = vec![0.0f32; width * height];
+        let use_parallel = Self::should_parallelize_pixels(width.saturating_mul(height));
+        let width_i32 = width as i32;
+        let height_i32 = height as i32;
+
+        let spatial_divisor = 2.0 * sigma_s * sigma_s;
+        let mut spatial_kernel = Vec::with_capacity(((radius * 2 + 1) as usize).saturating_pow(2));
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let spatial_dist = (dx * dx + dy * dy) as f32;
+                let spatial_weight = (-spatial_dist / spatial_divisor).exp();
+                spatial_kernel.push((dx, dy, spatial_weight));
+            }
+        }
+
+        let range_divisor = 2.0 * sigma_r * sigma_r;
+        let max_lut_index = BILATERAL_RANGE_LUT_BINS - 1;
+        let range_lut_scale = max_lut_index as f32 / NORMALIZED_INTENSITY_SQUARED_MAX;
+        let range_weight_lut: Vec<f32> = (0..BILATERAL_RANGE_LUT_BINS)
+            .map(|index| {
+                let range_dist = index as f32 / range_lut_scale;
+                (-range_dist / range_divisor).exp()
+            })
+            .collect();
+
+        let apply_row = |y: usize, row: &mut [f32]| {
+            let y_offset = y * width;
+            for (x, out) in row.iter_mut().enumerate() {
+                let center_val = data[y_offset + x];
+                let mut sum = 0.0f32;
+                let mut weight_sum = 0.0f32;
+
+                for &(dx, dy, spatial_weight) in &spatial_kernel {
+                    let nx = (x as i32 + dx).clamp(0, width_i32 - 1) as usize;
+                    let ny = (y as i32 + dy).clamp(0, height_i32 - 1) as usize;
+                    let neighbor_val = data[ny * width + nx];
+                    let range_dist = (neighbor_val - center_val)
+                        .powi(2)
+                        .min(NORMALIZED_INTENSITY_SQUARED_MAX);
+                    let lut_index = (range_dist * range_lut_scale).round() as usize;
+                    let range_weight = range_weight_lut[lut_index.min(max_lut_index)];
+                    let weight = spatial_weight * range_weight;
+                    sum += neighbor_val * weight;
+                    weight_sum += weight;
+                }
+
+                *out = if weight_sum > 0.0 {
+                    sum / weight_sum
+                } else {
+                    center_val
+                };
+            }
+        };
+
+        if use_parallel {
+            result
+                .par_chunks_mut(width)
+                .enumerate()
+                .for_each(|(y, row)| apply_row(y, row));
+        } else {
+            for (y, row) in result.chunks_mut(width).enumerate() {
+                apply_row(y, row);
+            }
+        }
+
+        result
+    }
+
+    #[cfg(test)]
+    fn bilateral_filter_reference(
+        data: &[f32],
+        width: usize,
+        height: usize,
+        sigma_s: f32,
+        sigma_r: f32,
+    ) -> Vec<f32> {
+        let radius = (sigma_s * BILATERAL_RADIUS_SIGMA_MULTIPLIER).ceil() as i32;
         let mut result = vec![0.0f32; width * height];
         let use_parallel = Self::should_parallelize_pixels(width.saturating_mul(height));
 
@@ -932,17 +1018,11 @@ impl LaplacianMip {
                     for dx in -radius..=radius {
                         let nx = (x as i32 + dx).clamp(0, width as i32 - 1) as usize;
                         let ny = (y as i32 + dy).clamp(0, height as i32 - 1) as usize;
-
                         let neighbor_val = data[ny * width + nx];
-
-                        // Spatial weight (Gaussian)
                         let spatial_dist = (dx * dx + dy * dy) as f32;
                         let spatial_weight = (-spatial_dist / (2.0 * sigma_s * sigma_s)).exp();
-
-                        // Range weight (Gaussian on intensity difference)
                         let range_dist = (neighbor_val - center_val).powi(2);
                         let range_weight = (-range_dist / (2.0 * sigma_r * sigma_r)).exp();
-
                         let weight = spatial_weight * range_weight;
                         sum += neighbor_val * weight;
                         weight_sum += weight;
@@ -1580,6 +1660,81 @@ mod tests {
         let expected = LaplacianMip::compute_parallel_projection_serial_normalized(&frames, w * h);
         let actual = LaplacianMip::compute_parallel_projection(&frames, w, h);
         assert_eq!(expected, actual);
+    }
+
+    const BILATERAL_TEST_WIDTH: usize = 64;
+    const BILATERAL_TEST_HEIGHT: usize = 64;
+    const BILATERAL_SIGMA_S: f32 = 3.0;
+    const BILATERAL_SIGMA_R: f32 = 0.015;
+    const MAX_NORMALIZED_BILATERAL_MAE: f32 = 0.01;
+
+    fn normalized_mae(expected: &[f32], actual: &[f32]) -> f32 {
+        expected
+            .iter()
+            .zip(actual.iter())
+            .map(|(lhs, rhs)| (lhs - rhs).abs())
+            .sum::<f32>()
+            / expected.len() as f32
+    }
+
+    fn assert_bilateral_matches_reference(input: Vec<f32>, width: usize, height: usize) {
+        let expected = LaplacianMip::bilateral_filter_reference(
+            &input,
+            width,
+            height,
+            BILATERAL_SIGMA_S,
+            BILATERAL_SIGMA_R,
+        );
+        let actual = LaplacianMip::bilateral_filter(
+            &input,
+            width,
+            height,
+            BILATERAL_SIGMA_S,
+            BILATERAL_SIGMA_R,
+        );
+        assert_eq!(expected.len(), actual.len());
+        assert!(actual.iter().all(|value| value.is_finite()));
+        let mae = normalized_mae(&expected, &actual);
+        assert!(
+            mae <= MAX_NORMALIZED_BILATERAL_MAE,
+            "Expected normalized MAE <= {}, got {}",
+            MAX_NORMALIZED_BILATERAL_MAE,
+            mae
+        );
+    }
+
+    #[test]
+    fn test_bilateral_filter_matches_reference_flat_image() {
+        const FLAT_VALUE: f32 = 0.4;
+        let input = vec![FLAT_VALUE; BILATERAL_TEST_WIDTH * BILATERAL_TEST_HEIGHT];
+        assert_bilateral_matches_reference(input, BILATERAL_TEST_WIDTH, BILATERAL_TEST_HEIGHT);
+    }
+
+    #[test]
+    fn test_bilateral_filter_matches_reference_gradient_image() {
+        let denominator = (BILATERAL_TEST_WIDTH * BILATERAL_TEST_HEIGHT - 1) as f32;
+        let input: Vec<f32> = (0..(BILATERAL_TEST_WIDTH * BILATERAL_TEST_HEIGHT))
+            .map(|idx| idx as f32 / denominator)
+            .collect();
+        assert_bilateral_matches_reference(input, BILATERAL_TEST_WIDTH, BILATERAL_TEST_HEIGHT);
+    }
+
+    #[test]
+    fn test_bilateral_filter_matches_reference_high_contrast_edge() {
+        const LEFT_HALF_VALUE: f32 = 0.2;
+        const RIGHT_HALF_VALUE: f32 = 0.9;
+        let input: Vec<f32> = (0..BILATERAL_TEST_HEIGHT)
+            .flat_map(|_| {
+                (0..BILATERAL_TEST_WIDTH).map(|x| {
+                    if x < BILATERAL_TEST_WIDTH / 2 {
+                        LEFT_HALF_VALUE
+                    } else {
+                        RIGHT_HALF_VALUE
+                    }
+                })
+            })
+            .collect();
+        assert_bilateral_matches_reference(input, BILATERAL_TEST_WIDTH, BILATERAL_TEST_HEIGHT);
     }
 
     // --- LaplacianMip::project_laplacian_mip standalone tests ---

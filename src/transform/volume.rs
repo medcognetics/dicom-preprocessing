@@ -31,6 +31,7 @@
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::preprocessing::FrameCount;
+use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
@@ -193,6 +194,76 @@ impl VolumeHandler {
     }
 }
 
+fn has_malformed_basic_offset_table(
+    file: &FileDicomObject<InMemDicomObject>,
+) -> Result<bool, DicomError> {
+    let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+    let Some(pixel_data) = file.get(tags::PIXEL_DATA) else {
+        return Ok(false);
+    };
+    let value = pixel_data.value();
+    let Some(offset_table) = value.offset_table() else {
+        return Ok(false);
+    };
+    let Some(fragments) = value.fragments() else {
+        return Ok(false);
+    };
+
+    if offset_table.is_empty() || number_of_frames <= 1 {
+        return Ok(false);
+    }
+
+    let number_of_frames = number_of_frames as usize;
+    if fragments.len() == 1 || fragments.len() == number_of_frames {
+        // The decoder does not consult BOT when there is one fragment per frame.
+        return Ok(false);
+    }
+
+    let offset_count_matches_frames = offset_table.len() == number_of_frames;
+    let starts_at_zero = offset_table.first().copied() == Some(0);
+    let strictly_increasing = offset_table.windows(2).all(|window| window[0] < window[1]);
+    let encoded_stream_len = fragments.iter().fold(0usize, |acc, fragment| {
+        acc.saturating_add(fragment.len().saturating_add(8))
+    });
+    let offsets_in_bounds = offset_table
+        .iter()
+        .all(|&offset| (offset as usize) < encoded_stream_len);
+
+    Ok(
+        !(offset_count_matches_frames
+            && starts_at_zero
+            && strictly_increasing
+            && offsets_in_bounds),
+    )
+}
+
+fn decode_all_frames_with_options(
+    file: &FileDicomObject<InMemDicomObject>,
+    options: &ConvertOptions,
+) -> Result<Vec<DynamicImage>, DicomError> {
+    let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+    let decoded = file.decode_pixel_data().context(PixelDataSnafu)?;
+    let mut image_data = Vec::with_capacity(number_of_frames as usize);
+    for frame_number in 0..number_of_frames {
+        image_data.push(
+            decoded
+                .to_dynamic_image_with_options(frame_number, options)
+                .context(PixelDataSnafu)?,
+        );
+    }
+    Ok(image_data)
+}
+
+fn maybe_decode_all_frames_with_malformed_bot_fallback(
+    file: &FileDicomObject<InMemDicomObject>,
+    options: &ConvertOptions,
+) -> Result<Option<Vec<DynamicImage>>, DicomError> {
+    if has_malformed_basic_offset_table(file)? {
+        return Ok(Some(decode_all_frames_with_options(file, options)?));
+    }
+    Ok(None)
+}
+
 #[derive(Debug, Clone, Copy)]
 /// Keep all frames
 pub struct KeepVolume;
@@ -203,6 +274,10 @@ impl HandleVolume for KeepVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
+        if let Some(images) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            return Ok(images);
+        }
+
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let mut image_data = Vec::with_capacity(number_of_frames as usize);
         for frame_number in 0..number_of_frames {
@@ -223,6 +298,10 @@ impl HandleVolume for KeepVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
+        if let Some(images) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            return Ok(images);
+        }
+
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let result = (0..number_of_frames)
             .into_par_iter()
@@ -251,6 +330,10 @@ impl HandleVolume for CentralSlice {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let central_frame = number_of_frames / 2;
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            return Ok(vec![frames[central_frame as usize].clone()]);
+        }
+
         let decoded = file
             .decode_pixel_data_frame(central_frame)
             .context(PixelDataSnafu)?;
@@ -329,6 +412,20 @@ impl HandleVolume for MaxIntensity {
             });
         }
 
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            let frame_count = (end - start) as usize;
+            let mut frame_iter = frames.into_iter().skip(start as usize).take(frame_count);
+            let mut image = frame_iter.next().ok_or(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
+            })?;
+            for frame in frame_iter {
+                image = Self::reduce(image, frame);
+            }
+            return Ok(vec![image]);
+        }
+
         let decoded = file
             .decode_pixel_data_frame(start)
             .context(PixelDataSnafu)?;
@@ -364,6 +461,20 @@ impl HandleVolume for MaxIntensity {
                 end: end as usize,
                 number_of_frames: number_of_frames as usize,
             });
+        }
+
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            let frame_count = (end - start) as usize;
+            let mut frame_iter = frames.into_iter().skip(start as usize).take(frame_count);
+            let mut image = frame_iter.next().ok_or(DicomError::FrameIndexError {
+                start: start as usize,
+                end: end as usize,
+                number_of_frames: number_of_frames as usize,
+            })?;
+            for frame in frame_iter {
+                image = Self::reduce(image, frame);
+            }
+            return Ok(vec![image]);
         }
 
         let image = (start..end)
@@ -501,6 +612,10 @@ impl HandleVolume for InterpolateVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            return Ok(Self::interpolate_frames(&frames, self.target_frames));
+        }
+
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let mut frames = Vec::with_capacity(number_of_frames as usize);
 
@@ -523,6 +638,10 @@ impl HandleVolume for InterpolateVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            return Ok(Self::interpolate_frames(&frames, self.target_frames));
+        }
+
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let frames = (0..number_of_frames)
             .into_par_iter()
@@ -1313,6 +1432,11 @@ impl HandleVolume for LaplacianMip {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let (start, end) = self.validate_trimmed_frame_range(number_of_frames)?;
 
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            let trimmed_frames = frames[start as usize..end as usize].to_vec();
+            return Ok(vec![self.project_laplacian_mip(&trimmed_frames)?]);
+        }
+
         let mut frames = Vec::with_capacity((end - start) as usize);
         for frame_number in start..end {
             let decoded = file
@@ -1336,6 +1460,11 @@ impl HandleVolume for LaplacianMip {
         let number_of_frames: u32 = FrameCount::try_from(file)?.into();
         let (start, end) = self.validate_trimmed_frame_range(number_of_frames)?;
 
+        if let Some(frames) = maybe_decode_all_frames_with_malformed_bot_fallback(file, options)? {
+            let trimmed_frames = frames[start as usize..end as usize].to_vec();
+            return Ok(vec![self.project_laplacian_mip(&trimmed_frames)?]);
+        }
+
         // Parallel frame decoding
         let frames = (start..end)
             .into_par_iter()
@@ -1358,6 +1487,8 @@ impl HandleVolume for LaplacianMip {
 mod tests {
     use super::*;
 
+    use dicom::core::{DataElement, PrimitiveValue, VR};
+    use dicom::dictionary_std::tags;
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;
     use image::{ImageBuffer, Rgb};
@@ -1382,6 +1513,72 @@ mod tests {
             volume_handler.decode_volume(&dicom).unwrap()
         };
         assert_eq!(images.len() as u32, expected_number_of_frames);
+    }
+
+    fn split_fragment_even(fragment: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let midpoint = (fragment.len() / 2) & !1;
+        let midpoint = midpoint.clamp(2, fragment.len().saturating_sub(2));
+        (fragment[..midpoint].to_vec(), fragment[midpoint..].to_vec())
+    }
+
+    fn rewrite_to_two_frame_split_fragment_jpeg(
+        mut dicom: FileDicomObject<InMemDicomObject>,
+        offset_table: Vec<u32>,
+    ) -> FileDicomObject<InMemDicomObject> {
+        let pixel_data = dicom.get(tags::PIXEL_DATA).unwrap();
+        let fragments = pixel_data.value().fragments().unwrap();
+
+        // Use the first two source JPEG frame fragments and split each into two fragments
+        // so the decoder is forced to use BOT-derived frame boundaries.
+        let (f0a, f0b) = split_fragment_even(&fragments[0]);
+        let (f1a, f1b) = split_fragment_even(&fragments[1]);
+        let rewritten_fragments = vec![f0a, f0b, f1a, f1b];
+
+        dicom.put_element(DataElement::new(
+            tags::NUMBER_OF_FRAMES,
+            VR::IS,
+            PrimitiveValue::from("2"),
+        ));
+        let updated = dicom.update_value(tags::PIXEL_DATA, move |value| {
+            let offset_table_mut = value.offset_table_mut().expect("pixel sequence BOT");
+            *offset_table_mut = offset_table.clone().into();
+
+            let fragments_mut = value.fragments_mut().expect("pixel sequence fragments");
+            *fragments_mut = rewritten_fragments.clone().into();
+        });
+        assert!(updated, "expected pixel data to be present");
+        dicom
+    }
+
+    #[test]
+    fn test_keep_volume_handles_malformed_bot_without_frame_mixup() {
+        let source = dicom_test_files::path("pydicom/color3d_jpeg_baseline.dcm").unwrap();
+        let base_dicom = open_file(&source).unwrap();
+        let pixel_data = base_dicom.get(tags::PIXEL_DATA).unwrap();
+        let fragments = pixel_data.value().fragments().unwrap();
+        let (f0a, f0b) = split_fragment_even(&fragments[0]);
+        let valid_second_offset = (f0a.len() + 8 + f0b.len() + 8) as u32;
+
+        // Control object with valid BOT.
+        let valid_dicom = rewrite_to_two_frame_split_fragment_jpeg(
+            open_file(&source).unwrap(),
+            vec![0, valid_second_offset],
+        );
+        let valid_images = KeepVolume
+            .decode_volume_with_options(&valid_dicom, &ConvertOptions::default())
+            .unwrap();
+        assert_eq!(valid_images.len(), 2);
+
+        // Malformed BOT object where frame 1 offset incorrectly points to 0.
+        let malformed_dicom =
+            rewrite_to_two_frame_split_fragment_jpeg(open_file(&source).unwrap(), vec![0, 0]);
+        let malformed_images = KeepVolume
+            .decode_volume_with_options(&malformed_dicom, &ConvertOptions::default())
+            .unwrap();
+        assert_eq!(malformed_images.len(), 2);
+
+        assert_eq!(malformed_images[0], valid_images[0]);
+        assert_eq!(malformed_images[1], valid_images[1]);
     }
 
     #[rstest]

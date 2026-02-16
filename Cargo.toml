@@ -77,6 +77,10 @@ path = "src/bin/combine.rs"
 name = "tiff-stats"
 path = "src/bin/tiff_stats.rs"
 
+[[bin]]
+name = "dicom-bot"
+path = "src/bin/bot.rs"
+
 [[bench]]
 name = "inode_sort"
 harness = false

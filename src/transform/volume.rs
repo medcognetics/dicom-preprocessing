@@ -30,8 +30,7 @@
 //! - `skip_start`/`skip_end`: Trim noisy edge frames (default 5).
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
-use crate::metadata::preprocessing::FrameCount;
-use dicom::dictionary_std::tags;
+use crate::metadata::{preprocessing::FrameCount, summarize_basic_offset_table};
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
@@ -197,44 +196,7 @@ impl VolumeHandler {
 fn has_malformed_basic_offset_table(
     file: &FileDicomObject<InMemDicomObject>,
 ) -> Result<bool, DicomError> {
-    let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-    let Some(pixel_data) = file.get(tags::PIXEL_DATA) else {
-        return Ok(false);
-    };
-    let value = pixel_data.value();
-    let Some(offset_table) = value.offset_table() else {
-        return Ok(false);
-    };
-    let Some(fragments) = value.fragments() else {
-        return Ok(false);
-    };
-
-    if offset_table.is_empty() || number_of_frames <= 1 {
-        return Ok(false);
-    }
-
-    let number_of_frames = number_of_frames as usize;
-    if fragments.len() == 1 || fragments.len() == number_of_frames {
-        // The decoder does not consult BOT when there is one fragment per frame.
-        return Ok(false);
-    }
-
-    let offset_count_matches_frames = offset_table.len() == number_of_frames;
-    let starts_at_zero = offset_table.first().copied() == Some(0);
-    let strictly_increasing = offset_table.windows(2).all(|window| window[0] < window[1]);
-    let encoded_stream_len = fragments.iter().fold(0usize, |acc, fragment| {
-        acc.saturating_add(fragment.len().saturating_add(8))
-    });
-    let offsets_in_bounds = offset_table
-        .iter()
-        .all(|&offset| (offset as usize) < encoded_stream_len);
-
-    Ok(
-        !(offset_count_matches_frames
-            && starts_at_zero
-            && strictly_increasing
-            && offsets_in_bounds),
-    )
+    Ok(summarize_basic_offset_table(file)?.needs_correction)
 }
 
 fn decode_all_frames_with_options(

@@ -25,6 +25,7 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 Run binaries with `cargo run --release --bin <name> -- ...`:
 - `dicom-preprocess <SOURCE> <OUTPUT> -s 384,512 -c`: preprocess DICOM to TIFF.
 - `dicom-manifest <SOURCE_DIR> [OUTPUT.{csv|parquet}]`: generate TIFF manifest (default `manifest.parquet` in source).
+- `dicom-bot <DICOM_FILE> [--format text|json]`: summarize Basic Offset Table (BOT) structure and report whether correction is needed.
 - `dicom-voilut <DICOM_FILE>`: print VOI LUT, rescale, and window metadata.
 - `dicom-traces <SOURCE> <TRACES.{csv|parquet}> <OUTPUT> [-p PREVIEW_DIR]`: map traces into preprocessed coordinates.
 - `tiff-combine <SOURCE_DIR> <METADATA.{csv|parquet}> <OUTPUT_DIR>`: combine single-frame TIFF slices into multi-frame TIFFs.

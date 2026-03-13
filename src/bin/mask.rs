@@ -122,6 +122,15 @@ struct ProcessResult {
 }
 
 #[derive(Debug, Clone)]
+struct MaskProcessOptions<'a> {
+    class_map: Option<&'a ClassMap>,
+    output_dtype: OutputDtype,
+    unmapped_fallback_label: Option<u16>,
+    fill_value: Option<Rgba<u8>>,
+    compressor: SupportedCompressor,
+}
+
+#[derive(Debug, Clone)]
 struct RunSummary {
     total_entries: usize,
     processed_masks: usize,
@@ -1120,11 +1129,7 @@ fn process_mask(
     source_dir: &Path,
     mask_dir: &Path,
     output_dir: &Path,
-    class_map: Option<&ClassMap>,
-    output_dtype: OutputDtype,
-    unmapped_fallback_label: Option<u16>,
-    fill_value: Option<Rgba<u8>>,
-    compressor: SupportedCompressor,
+    options: &MaskProcessOptions<'_>,
 ) -> Result<ProcessResult, Error> {
     // Find the corresponding mask
     let mask_path = match find_mask(mask_dir, &entry.sop_instance_uid) {
@@ -1151,7 +1156,7 @@ fn process_mask(
 
     // Load and transform the mask
     let mask = load_mask(&mask_path)?;
-    let transformed = apply_transforms(&mask, &metadata, fill_value);
+    let transformed = apply_transforms(&mask, &metadata, options.fill_value);
 
     // Determine output path (preserve directory structure from manifest path)
     let output_path = output_dir.join(entry.path.with_extension("tiff"));
@@ -1163,16 +1168,16 @@ fn process_mask(
 
     let (transformed, color) = get_output_image_and_color(
         transformed,
-        class_map,
-        output_dtype,
+        options.class_map,
+        options.output_dtype,
         &mask_path,
-        unmapped_fallback_label,
+        options.unmapped_fallback_label,
     )?;
     let class_histogram = collect_class_histogram(&transformed);
     let has_class_histogram = class_histogram.is_some();
 
     // Save the transformed mask
-    let saver = TiffSaver::new(compressor.into(), color);
+    let saver = TiffSaver::new(options.compressor.clone().into(), color);
     let mut encoder = saver.open_tiff(&output_path).context(TiffWriteSnafu)?;
     saver
         .save(&mut encoder, &transformed, &metadata)
@@ -1250,6 +1255,13 @@ fn run(args: Args) -> Result<usize, Error> {
         .parent()
         .unwrap_or(Path::new("."))
         .to_path_buf();
+    let process_options = MaskProcessOptions {
+        class_map: class_map.as_ref(),
+        output_dtype: args.output_dtype,
+        unmapped_fallback_label,
+        fill_value: args.fill,
+        compressor: args.compressor.clone(),
+    };
 
     // Process masks in parallel
     let results: Vec<_> = match args.format {
@@ -1265,11 +1277,7 @@ fn run(args: Args) -> Result<usize, Error> {
                         &source_dir,
                         &args.masks,
                         &args.output,
-                        class_map.as_ref(),
-                        args.output_dtype,
-                        unmapped_fallback_label,
-                        args.fill,
-                        args.compressor.clone(),
+                        &process_options,
                     )
                 })
                 .collect::<Result<Vec<_>, _>>()?
@@ -1282,11 +1290,7 @@ fn run(args: Args) -> Result<usize, Error> {
                     &source_dir,
                     &args.masks,
                     &args.output,
-                    class_map.as_ref(),
-                    args.output_dtype,
-                    unmapped_fallback_label,
-                    args.fill,
-                    args.compressor.clone(),
+                    &process_options,
                 )
             })
             .collect::<Result<Vec<_>, _>>()?,
@@ -1309,6 +1313,21 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
     use tiff::encoder::TiffEncoder;
+
+    fn process_options<'a>(
+        class_map: Option<&'a ClassMap>,
+        output_dtype: OutputDtype,
+        unmapped_fallback_label: Option<u16>,
+        fill_value: Option<Rgba<u8>>,
+    ) -> MaskProcessOptions<'a> {
+        MaskProcessOptions {
+            class_map,
+            output_dtype,
+            unmapped_fallback_label,
+            fill_value,
+            compressor: SupportedCompressor::default(),
+        }
+    }
 
     /// Create a test preprocessed TIFF with metadata
     fn create_preprocessed_tiff(
@@ -1628,11 +1647,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            None,
-            OutputDtype::default(),
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(None, OutputDtype::default(), None, None),
         )
         .unwrap();
         let output_path = result.output_path.expect("expected output path");
@@ -1680,11 +1695,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            None,
-            OutputDtype::default(),
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(None, OutputDtype::default(), None, None),
         )
         .unwrap();
         let output_path = result.output_path.expect("expected output path");
@@ -1731,11 +1742,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            None,
-            OutputDtype::default(),
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(None, OutputDtype::default(), None, None),
         )
         .unwrap();
         assert!(result.output_path.is_some());
@@ -1772,11 +1779,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            None,
-            OutputDtype::default(),
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(None, OutputDtype::default(), None, None),
         )
         .unwrap();
         assert!(result.output_path.is_none());
@@ -2199,11 +2202,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            Some(&class_map),
-            OutputDtype::U8,
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(Some(&class_map), OutputDtype::U8, None, None),
         )
         .unwrap()
         .output_path
@@ -2243,11 +2242,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            Some(&class_map),
-            OutputDtype::U16,
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(Some(&class_map), OutputDtype::U16, None, None),
         )
         .unwrap()
         .output_path
@@ -2292,11 +2287,7 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            Some(&class_map),
-            OutputDtype::U8,
-            None,
-            None,
-            SupportedCompressor::default(),
+            &process_options(Some(&class_map), OutputDtype::U8, None, None),
         )
         .unwrap_err();
 
@@ -2336,11 +2327,12 @@ mod tests {
             &source_dir,
             &mask_dir,
             &output_dir,
-            Some(&class_map),
-            OutputDtype::U8,
-            Some(7),
-            Some(Rgba([255, 0, 0, 255])),
-            SupportedCompressor::default(),
+            &process_options(
+                Some(&class_map),
+                OutputDtype::U8,
+                Some(7),
+                Some(Rgba([255, 0, 0, 255])),
+            ),
         )
         .unwrap()
         .output_path

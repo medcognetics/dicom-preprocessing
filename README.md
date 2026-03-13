@@ -234,6 +234,79 @@ Options:
   -V, --version  Print version
 ```
 
+### Mask Preprocessing
+
+`mask-preprocess` applies preprocessing metadata (crop/resize/padding) from preprocessed image TIFFs to corresponding mask files.
+When class mapping is provided, RGB masks are converted to single-channel label TIFFs.
+
+```
+Apply preprocessing transforms to masks
+
+Usage: mask-preprocess [OPTIONS] <MANIFEST> <MASKS> <OUTPUT>
+
+Arguments:
+  <MANIFEST>  Manifest file (CSV or Parquet) with preprocessed image paths
+  <MASKS>     Directory containing masks (named {sop_instance_uid}.{tiff/png})
+  <OUTPUT>    Output directory for preprocessed masks
+
+Options:
+      --format <FORMAT>              Completion summary output format [default: text] [possible values: text, json]
+      --class-map <CLASS_MAP>        CSV file with class mapping columns r,g,b,label
+      --map <MAP>                    Inline class mapping entry in the format R,G,B=LABEL (repeatable, overrides duplicate --class-map entries)
+      --output-dtype <OUTPUT_DTYPE>  Output dtype for mapped labels [default: u8] [possible values: u8, u16]
+      --map-unmapped-to-fill         When class mapping is enabled, map unmapped RGB values to the mapped label of --fill and emit warnings instead of failing
+  -f, --fill <FILL>                  Padding fill value in source mask space (applied before class mapping)
+  -z, --compressor <COMPRESSOR>      Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
+  -v, --verbose                      Enable verbose logging
+  -h, --help                         Print help
+  -V, --version                      Print version
+```
+
+Class mapping CSV example:
+
+```csv
+r,g,b,label
+255,0,0,1
+0,255,0,2
+0,0,255,3
+```
+
+Example usage:
+
+```bash
+# Map RGB masks to u8 labels using CSV
+mask-preprocess manifest.parquet ./masks ./mapped_masks \
+  --class-map class_map.csv
+
+# Override one class from CSV at runtime
+mask-preprocess manifest.parquet ./masks ./mapped_masks \
+  --class-map class_map.csv \
+  --map 255,0,0=9
+
+# Use u16 output labels (for >255 classes)
+mask-preprocess manifest.parquet ./masks ./mapped_masks \
+  --class-map class_map.csv \
+  --output-dtype u16
+
+# Emit machine-readable completion summary
+mask-preprocess manifest.parquet ./masks ./mapped_masks \
+  --class-map class_map.csv \
+  --format json
+
+# Continue on unmapped RGB values by mapping them to the --fill label
+mask-preprocess manifest.parquet ./masks ./mapped_masks \
+  --class-map class_map.csv \
+  --fill 255,0,0 \
+  --map-unmapped-to-fill
+```
+
+When class mapping is enabled, unmapped RGB values fail fast with an error.
+`--fill` is applied before class mapping, so for RGB mapping runs it should be an original RGB color that is present in the map.
+When `--map-unmapped-to-fill` is set (with `--fill`), unmapped RGB values are mapped to the class label of the fill color and emitted as warnings (same message text as the unmapped-color error).
+Grayscale masks are treated as already-labeled data and passed through to the selected output dtype.
+Completion output includes an observed-class breakdown with pixel counts and percentages.
+With `--format json`, the summary is written as JSON to stdout and progress output is suppressed.
+
 ### References
 
 1. Wei J, Chan HP, Helvie MA, Roubidoux MA, Neal CH, Lu Y, Hadjiiski LM, Zhou C. Synthesizing Mammogram from Digital Breast Tomosynthesis. *Phys Med Biol.* 2019;64(4):045011. doi:[10.1088/1361-6560/aafcda](https://doi.org/10.1088/1361-6560/aafcda)

@@ -1,5 +1,6 @@
 use arrow::array::StringArray;
 use arrow::error::ArrowError;
+use clap::ArgAction;
 use clap::Parser;
 use csv::Reader as CsvReader;
 use dicom_preprocessing::color::DicomColorType;
@@ -14,17 +15,18 @@ use indicatif::ParallelProgressIterator;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReader;
 use parquet::errors::ParquetError;
 use rayon::prelude::*;
+use serde_json::json;
 use snafu::{Report, ResultExt, Snafu, Whatever};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::fmt;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::Path;
 use std::path::PathBuf;
 use tiff::decoder::Decoder;
-use tiff::encoder::colortype::{Gray8, RGB8};
+use tiff::encoder::colortype::{Gray16, Gray8, RGB8};
 use tiff::encoder::compression::Compressor;
 use tracing::{error, Level};
-use std::fmt;
 
 const BATCH_SIZE: usize = 128;
 
@@ -59,6 +61,75 @@ impl fmt::Display for SupportedCompressor {
         };
         write!(f, "{compressor_str}")
     }
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Default, PartialEq, Eq)]
+enum OutputDtype {
+    #[default]
+    U8,
+    U16,
+}
+
+impl OutputDtype {
+    fn max_label(self) -> u16 {
+        match self {
+            OutputDtype::U8 => u8::MAX as u16,
+            OutputDtype::U16 => u16::MAX,
+        }
+    }
+}
+
+impl fmt::Display for OutputDtype {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let dtype = match self {
+            OutputDtype::U8 => "u8",
+            OutputDtype::U16 => "u16",
+        };
+        write!(f, "{dtype}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClassMapEntry {
+    rgb: [u8; 3],
+    label: u16,
+}
+
+type ClassMap = HashMap<[u8; 3], u16>;
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum, Default, PartialEq, Eq)]
+enum ReportFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+impl fmt::Display for ReportFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let format = match self {
+            ReportFormat::Text => "text",
+            ReportFormat::Json => "json",
+        };
+        write!(f, "{format}")
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+struct ProcessResult {
+    output_path: Option<PathBuf>,
+    class_histogram: BTreeMap<u16, u64>,
+    has_class_histogram: bool,
+}
+
+#[derive(Debug, Clone)]
+struct RunSummary {
+    total_entries: usize,
+    processed_masks: usize,
+    missing_masks: usize,
+    outputs_with_class_histogram: usize,
+    outputs_without_class_histogram: usize,
+    class_histogram: BTreeMap<u16, u64>,
+    total_class_pixels: u64,
 }
 
 #[derive(Debug, Snafu)]
@@ -117,6 +188,43 @@ enum Error {
         #[snafu(source(from(image::ImageError, Box::new)))]
         source: Box<image::ImageError>,
     },
+
+    #[snafu(display("Invalid class map path: {}", path.display()))]
+    InvalidClassMapPath { path: PathBuf },
+
+    #[snafu(display("Invalid class map format in {}: {}", path.display(), reason))]
+    InvalidClassMapFormat { path: PathBuf, reason: String },
+
+    #[snafu(display(
+        "Mapped label {} exceeds max {} for output dtype {} ({})",
+        label,
+        max,
+        dtype,
+        context
+    ))]
+    LabelOutOfRange {
+        context: String,
+        label: u16,
+        max: u16,
+        dtype: OutputDtype,
+    },
+
+    #[snafu(display("Encountered unmapped RGB value ({},{},{}) in {}", r, g, b, path.display()))]
+    UnmappedColor { path: PathBuf, r: u8, g: u8, b: u8 },
+
+    #[snafu(display("Grayscale value {} exceeds max {} for output dtype {} in {}", value, max, dtype, path.display()))]
+    GrayscaleValueOutOfRange {
+        path: PathBuf,
+        value: u16,
+        max: u16,
+        dtype: OutputDtype,
+    },
+
+    #[snafu(display("Invalid --map-unmapped-to-fill usage: {}", reason))]
+    InvalidMapUnmappedToFillUsage { reason: String },
+
+    #[snafu(display("Fill value ({},{},{}) is not present in the class map", r, g, b))]
+    FillValueNotMapped { r: u8, g: u8, b: u8 },
 }
 
 /// Entry from the manifest file
@@ -139,7 +247,45 @@ struct Args {
     output: PathBuf,
 
     #[arg(
-        help = "Padding fill value as comma-separated RGB (e.g., '255,0,0' for red) or single grayscale value (e.g., '128')",
+        help = "Completion summary output format",
+        long = "format",
+        value_parser = clap::value_parser!(ReportFormat),
+        default_value_t = ReportFormat::default(),
+    )]
+    format: ReportFormat,
+
+    #[arg(
+        help = "CSV file with class mapping columns r,g,b,label",
+        long = "class-map"
+    )]
+    class_map: Option<PathBuf>,
+
+    #[arg(
+        help = "Inline class mapping entry in the format R,G,B=LABEL (repeatable, overrides duplicate --class-map entries)",
+        long = "map",
+        value_parser = parse_map_entry,
+        action = ArgAction::Append
+    )]
+    map: Vec<ClassMapEntry>,
+
+    #[arg(
+        help = "Output dtype for mapped labels",
+        long = "output-dtype",
+        value_parser = clap::value_parser!(OutputDtype),
+        default_value_t = OutputDtype::default(),
+    )]
+    output_dtype: OutputDtype,
+
+    #[arg(
+        help = "When class mapping is enabled, map unmapped RGB values to the mapped label of --fill and emit warnings instead of failing",
+        long = "map-unmapped-to-fill",
+        requires = "fill",
+        default_value_t = false
+    )]
+    map_unmapped_to_fill: bool,
+
+    #[arg(
+        help = "Padding fill value in source mask space. Applied before class mapping; for mapped RGB masks this should be the original RGB color (e.g., '255,0,0')",
         long = "fill",
         short = 'f',
         value_parser = parse_fill_value,
@@ -200,13 +346,352 @@ fn parse_fill_value(s: &str) -> Result<Rgba<u8>, String> {
     }
 }
 
+fn parse_map_entry(s: &str) -> Result<ClassMapEntry, String> {
+    let (rgb, label) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Mapping must be in format R,G,B=LABEL, got: {s}"))?;
+    let rgb_parts: Vec<&str> = rgb.split(',').collect();
+    if rgb_parts.len() != 3 {
+        return Err(format!(
+            "Mapping must include three RGB components, got: {s}"
+        ));
+    }
+
+    let r = rgb_parts[0]
+        .trim()
+        .parse::<u8>()
+        .map_err(|e| format!("Invalid R value in mapping '{s}': {e}"))?;
+    let g = rgb_parts[1]
+        .trim()
+        .parse::<u8>()
+        .map_err(|e| format!("Invalid G value in mapping '{s}': {e}"))?;
+    let b = rgb_parts[2]
+        .trim()
+        .parse::<u8>()
+        .map_err(|e| format!("Invalid B value in mapping '{s}': {e}"))?;
+    let label = label
+        .trim()
+        .parse::<u16>()
+        .map_err(|e| format!("Invalid label value in mapping '{s}': {e}"))?;
+
+    Ok(ClassMapEntry {
+        rgb: [r, g, b],
+        label,
+    })
+}
+
+fn parse_class_map_csv(path: &Path) -> Result<Vec<ClassMapEntry>, Error> {
+    let mut reader = CsvReader::from_path(path).context(CsvSnafu)?;
+    let headers = reader.headers().context(CsvSnafu)?.clone();
+    let col = |name: &str| -> Result<usize, Error> {
+        headers
+            .iter()
+            .position(|h| h.trim() == name)
+            .ok_or_else(|| Error::InvalidClassMapFormat {
+                path: path.to_path_buf(),
+                reason: format!("missing required '{name}' column"),
+            })
+    };
+
+    let r_idx = col("r")?;
+    let g_idx = col("g")?;
+    let b_idx = col("b")?;
+    let label_idx = col("label")?;
+
+    let mut entries = Vec::new();
+    for (row, record) in reader.records().enumerate() {
+        let record = record.context(CsvSnafu)?;
+        let get = |idx: usize, name: &str| -> Result<&str, Error> {
+            record
+                .get(idx)
+                .map(str::trim)
+                .ok_or_else(|| Error::InvalidClassMapFormat {
+                    path: path.to_path_buf(),
+                    reason: format!("row {} missing '{name}' value", row + 2),
+                })
+        };
+
+        let r = get(r_idx, "r")?
+            .parse::<u8>()
+            .map_err(|e| Error::InvalidClassMapFormat {
+                path: path.to_path_buf(),
+                reason: format!("row {} invalid r value: {}", row + 2, e),
+            })?;
+        let g = get(g_idx, "g")?
+            .parse::<u8>()
+            .map_err(|e| Error::InvalidClassMapFormat {
+                path: path.to_path_buf(),
+                reason: format!("row {} invalid g value: {}", row + 2, e),
+            })?;
+        let b = get(b_idx, "b")?
+            .parse::<u8>()
+            .map_err(|e| Error::InvalidClassMapFormat {
+                path: path.to_path_buf(),
+                reason: format!("row {} invalid b value: {}", row + 2, e),
+            })?;
+        let label =
+            get(label_idx, "label")?
+                .parse::<u16>()
+                .map_err(|e| Error::InvalidClassMapFormat {
+                    path: path.to_path_buf(),
+                    reason: format!("row {} invalid label value: {}", row + 2, e),
+                })?;
+
+        entries.push(ClassMapEntry {
+            rgb: [r, g, b],
+            label,
+        });
+    }
+
+    Ok(entries)
+}
+
+fn validate_label_range(label: u16, output_dtype: OutputDtype, source: &str) -> Result<(), Error> {
+    let max = output_dtype.max_label();
+    if label > max {
+        return Err(Error::LabelOutOfRange {
+            context: source.to_string(),
+            label,
+            max,
+            dtype: output_dtype,
+        });
+    }
+    Ok(())
+}
+
+fn build_class_map(
+    class_map_path: Option<&Path>,
+    inline_map_entries: &[ClassMapEntry],
+    output_dtype: OutputDtype,
+) -> Result<Option<ClassMap>, Error> {
+    if class_map_path.is_none() && inline_map_entries.is_empty() {
+        return Ok(None);
+    }
+
+    let mut class_map = ClassMap::new();
+
+    if let Some(path) = class_map_path {
+        if !path.is_file() {
+            return Err(Error::InvalidClassMapPath {
+                path: path.to_path_buf(),
+            });
+        }
+        for entry in parse_class_map_csv(path)? {
+            validate_label_range(entry.label, output_dtype, &path.display().to_string())?;
+            class_map.insert(entry.rgb, entry.label);
+        }
+    }
+
+    for entry in inline_map_entries {
+        validate_label_range(entry.label, output_dtype, "--map")?;
+        class_map.insert(entry.rgb, entry.label);
+    }
+
+    if class_map.is_empty() {
+        let path = class_map_path
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("--map"));
+        return Err(Error::InvalidClassMapFormat {
+            path,
+            reason: "no class mapping entries were provided".to_string(),
+        });
+    }
+
+    Ok(Some(class_map))
+}
+
+fn class_percent(count: u64, total: u64) -> f64 {
+    if total == 0 {
+        0.0
+    } else {
+        (count as f64 / total as f64) * 100.0
+    }
+}
+
+fn collect_class_histogram(image: &DynamicImage) -> Option<BTreeMap<u16, u64>> {
+    if let Some(gray) = image.as_luma8() {
+        let mut histogram = BTreeMap::new();
+        for &value in gray.as_raw() {
+            *histogram.entry(value as u16).or_insert(0) += 1;
+        }
+        return Some(histogram);
+    }
+
+    if let Some(gray) = image.as_luma16() {
+        let mut histogram = BTreeMap::new();
+        for &value in gray.as_raw() {
+            *histogram.entry(value).or_insert(0) += 1;
+        }
+        return Some(histogram);
+    }
+
+    None
+}
+
+fn merge_class_histograms(target: &mut BTreeMap<u16, u64>, source: &BTreeMap<u16, u64>) {
+    for (&label, &count) in source {
+        *target.entry(label).or_insert(0) += count;
+    }
+}
+
+fn build_run_summary(results: &[ProcessResult], total_entries: usize) -> RunSummary {
+    let processed_masks = results.iter().filter(|r| r.output_path.is_some()).count();
+    let missing_masks = total_entries.saturating_sub(processed_masks);
+    let outputs_with_class_histogram = results
+        .iter()
+        .filter(|r| r.output_path.is_some() && r.has_class_histogram)
+        .count();
+    let outputs_without_class_histogram =
+        processed_masks.saturating_sub(outputs_with_class_histogram);
+
+    let mut class_histogram = BTreeMap::new();
+    for result in results.iter().filter(|r| r.output_path.is_some()) {
+        merge_class_histograms(&mut class_histogram, &result.class_histogram);
+    }
+    let total_class_pixels = class_histogram.values().sum();
+
+    RunSummary {
+        total_entries,
+        processed_masks,
+        missing_masks,
+        outputs_with_class_histogram,
+        outputs_without_class_histogram,
+        class_histogram,
+        total_class_pixels,
+    }
+}
+
+fn format_count(value: u64) -> String {
+    let s = value.to_string();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
+fn render_text_summary(summary: &RunSummary) -> String {
+    let mut lines = vec![
+        "Mask Preprocess Summary".to_string(),
+        "=======================".to_string(),
+        String::new(),
+        format!(
+            "  {:<30} {}",
+            "manifest entries:",
+            format_count(summary.total_entries as u64)
+        ),
+        format!(
+            "  {:<30} {}",
+            "masks processed:",
+            format_count(summary.processed_masks as u64)
+        ),
+        format!(
+            "  {:<30} {}",
+            "masks missing:",
+            format_count(summary.missing_masks as u64)
+        ),
+        format!(
+            "  {:<30} {}",
+            "outputs with class histogram:",
+            format_count(summary.outputs_with_class_histogram as u64)
+        ),
+        format!(
+            "  {:<30} {}",
+            "outputs without class histogram:",
+            format_count(summary.outputs_without_class_histogram as u64)
+        ),
+    ];
+
+    if summary.class_histogram.is_empty() {
+        lines.push(String::new());
+        lines.push("Observed Classes".to_string());
+        lines.push("  no grayscale outputs available for class statistics".to_string());
+        return lines.join("\n");
+    }
+
+    let class_width = summary
+        .class_histogram
+        .keys()
+        .map(|c| c.to_string().len())
+        .max()
+        .unwrap_or(1)
+        .max("class".len());
+    let count_width = summary
+        .class_histogram
+        .values()
+        .map(|v| format_count(*v).len())
+        .max()
+        .unwrap_or(1)
+        .max("pixels".len());
+
+    lines.push(String::new());
+    lines.push("Observed Classes".to_string());
+    lines.push(format!(
+        "  {:>class_width$}  {:>count_width$}  {:>7}",
+        "class",
+        "pixels",
+        "percent",
+        class_width = class_width,
+        count_width = count_width
+    ));
+    for (label, count) in &summary.class_histogram {
+        let percent = class_percent(*count, summary.total_class_pixels);
+        lines.push(format!(
+            "  {:>class_width$}  {:>count_width$}  {:>6.2}%",
+            label,
+            format_count(*count),
+            percent,
+            class_width = class_width,
+            count_width = count_width
+        ));
+    }
+
+    lines.join("\n")
+}
+
+fn render_json_summary(summary: &RunSummary) -> String {
+    let class_breakdown = summary
+        .class_histogram
+        .iter()
+        .map(|(label, count)| {
+            let percent = class_percent(*count, summary.total_class_pixels);
+            json!({
+                "class": *label,
+                "pixels": *count,
+                "percent": percent,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    serde_json::to_string_pretty(&json!({
+        "total_entries": summary.total_entries,
+        "processed_masks": summary.processed_masks,
+        "missing_masks": summary.missing_masks,
+        "outputs_with_class_histogram": summary.outputs_with_class_histogram,
+        "outputs_without_class_histogram": summary.outputs_without_class_histogram,
+        "total_class_pixels": summary.total_class_pixels,
+        "class_breakdown": class_breakdown,
+    }))
+    .expect("summary JSON serialization should always succeed")
+}
+
+fn emit_summary(summary: &RunSummary, format: ReportFormat) {
+    match format {
+        ReportFormat::Text => println!("{}", render_text_summary(summary)),
+        ReportFormat::Json => println!("{}", render_json_summary(summary)),
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
     let level = if args.verbose {
         Level::DEBUG
     } else {
-        Level::ERROR
+        Level::WARN
     };
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
@@ -229,6 +714,13 @@ fn validate_paths(args: &Args) -> Result<(), Error> {
         return Err(Error::InvalidMaskDirectory {
             path: args.masks.clone(),
         });
+    }
+    if let Some(class_map) = &args.class_map {
+        if !class_map.is_file() {
+            return Err(Error::InvalidClassMapPath {
+                path: class_map.clone(),
+            });
+        }
     }
     if !args.output.is_dir() {
         std::fs::create_dir_all(&args.output).with_context(|_| IOSnafu {
@@ -380,7 +872,7 @@ fn apply_padding_with_fill(
     fill_value: Option<Rgba<u8>>,
 ) -> DynamicImage {
     use image::{Luma, Rgb};
-    
+
     let (width, height) = image.dimensions();
     let mut padded_image = DynamicImage::new(
         width + padding.left + padding.right,
@@ -431,15 +923,209 @@ fn apply_padding_with_fill(
     padded_image
 }
 
+fn to_luma16_from_u8(image: image::GrayImage) -> image::ImageBuffer<image::Luma<u16>, Vec<u16>> {
+    let (width, height) = image.dimensions();
+    let data: Vec<u16> = image.into_raw().into_iter().map(u16::from).collect();
+    image::ImageBuffer::from_raw(width, height, data).expect("shape should be valid")
+}
+
+fn to_luma8_checked(
+    image: image::ImageBuffer<image::Luma<u16>, Vec<u16>>,
+    output_dtype: OutputDtype,
+    mask_path: &Path,
+) -> Result<image::GrayImage, Error> {
+    let (width, height) = image.dimensions();
+    let mut data = Vec::with_capacity((width * height) as usize);
+    let max = output_dtype.max_label();
+
+    for value in image.into_raw() {
+        if value > max {
+            return Err(Error::GrayscaleValueOutOfRange {
+                path: mask_path.to_path_buf(),
+                value,
+                max,
+                dtype: output_dtype,
+            });
+        }
+        data.push(value as u8);
+    }
+
+    Ok(image::ImageBuffer::from_raw(width, height, data).expect("shape should be valid"))
+}
+
+fn resolve_rgb_label(
+    class_map: &ClassMap,
+    rgb: [u8; 3],
+    mask_path: &Path,
+    unmapped_fallback_label: Option<u16>,
+    warned_unmapped_values: &mut HashSet<[u8; 3]>,
+) -> Result<u16, Error> {
+    if let Some(label) = class_map.get(&rgb).copied() {
+        return Ok(label);
+    }
+
+    let [r, g, b] = rgb;
+    if let Some(label) = unmapped_fallback_label {
+        if warned_unmapped_values.insert(rgb) {
+            tracing::warn!(
+                "Encountered unmapped RGB value ({},{},{}) in {}",
+                r,
+                g,
+                b,
+                mask_path.display()
+            );
+        }
+        Ok(label)
+    } else {
+        Err(Error::UnmappedColor {
+            path: mask_path.to_path_buf(),
+            r,
+            g,
+            b,
+        })
+    }
+}
+
+fn map_rgb_to_labels(
+    image: DynamicImage,
+    class_map: &ClassMap,
+    output_dtype: OutputDtype,
+    mask_path: &Path,
+    unmapped_fallback_label: Option<u16>,
+) -> Result<DynamicImage, Error> {
+    let rgb = image.into_rgb8();
+    let (width, height) = rgb.dimensions();
+    let mut warned_unmapped_values = HashSet::new();
+    let labels = rgb
+        .pixels()
+        .map(|pixel| {
+            resolve_rgb_label(
+                class_map,
+                pixel.0,
+                mask_path,
+                unmapped_fallback_label,
+                &mut warned_unmapped_values,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    match output_dtype {
+        OutputDtype::U8 => {
+            let max = output_dtype.max_label();
+            let mut labels_u8 = Vec::with_capacity((width * height) as usize);
+            for label in labels {
+                if label > max {
+                    return Err(Error::LabelOutOfRange {
+                        context: mask_path.display().to_string(),
+                        label,
+                        max,
+                        dtype: output_dtype,
+                    });
+                }
+                labels_u8.push(label as u8);
+            }
+            let image = image::ImageBuffer::from_raw(width, height, labels_u8)
+                .expect("shape should be valid");
+            Ok(DynamicImage::ImageLuma8(image))
+        }
+        OutputDtype::U16 => {
+            let image =
+                image::ImageBuffer::from_raw(width, height, labels).expect("shape should be valid");
+            Ok(DynamicImage::ImageLuma16(image))
+        }
+    }
+}
+
+fn convert_grayscale_to_labels(
+    image: DynamicImage,
+    output_dtype: OutputDtype,
+    mask_path: &Path,
+) -> Result<DynamicImage, Error> {
+    match output_dtype {
+        OutputDtype::U8 => match image.color() {
+            image::ColorType::L8 | image::ColorType::La8 => {
+                Ok(DynamicImage::ImageLuma8(image.into_luma8()))
+            }
+            image::ColorType::L16 | image::ColorType::La16 => {
+                let luma16 = image.into_luma16();
+                let luma8 = to_luma8_checked(luma16, output_dtype, mask_path)?;
+                Ok(DynamicImage::ImageLuma8(luma8))
+            }
+            _ => Ok(DynamicImage::ImageLuma8(image.into_luma8())),
+        },
+        OutputDtype::U16 => match image.color() {
+            image::ColorType::L16 | image::ColorType::La16 => {
+                Ok(DynamicImage::ImageLuma16(image.into_luma16()))
+            }
+            image::ColorType::L8 | image::ColorType::La8 => {
+                let luma8 = image.into_luma8();
+                Ok(DynamicImage::ImageLuma16(to_luma16_from_u8(luma8)))
+            }
+            _ => {
+                let luma8 = image.into_luma8();
+                Ok(DynamicImage::ImageLuma16(to_luma16_from_u8(luma8)))
+            }
+        },
+    }
+}
+
+fn get_output_image_and_color(
+    transformed: DynamicImage,
+    class_map: Option<&ClassMap>,
+    output_dtype: OutputDtype,
+    mask_path: &Path,
+    unmapped_fallback_label: Option<u16>,
+) -> Result<(DynamicImage, DicomColorType), Error> {
+    if let Some(class_map) = class_map {
+        let transformed = match transformed.color() {
+            image::ColorType::Rgb8
+            | image::ColorType::Rgba8
+            | image::ColorType::Rgb16
+            | image::ColorType::Rgba16 => map_rgb_to_labels(
+                transformed,
+                class_map,
+                output_dtype,
+                mask_path,
+                unmapped_fallback_label,
+            )?,
+            _ => convert_grayscale_to_labels(transformed, output_dtype, mask_path)?,
+        };
+        let color = match output_dtype {
+            OutputDtype::U8 => DicomColorType::Gray8(Gray8),
+            OutputDtype::U16 => DicomColorType::Gray16(Gray16),
+        };
+        return Ok((transformed, color));
+    }
+
+    // Preserve existing behavior when class mapping is disabled.
+    let color = match transformed.color() {
+        image::ColorType::L8 | image::ColorType::La8 => DicomColorType::Gray8(Gray8),
+        image::ColorType::Rgb8 | image::ColorType::Rgba8 => DicomColorType::RGB8(RGB8),
+        image::ColorType::L16 | image::ColorType::La16 => DicomColorType::Gray8(Gray8),
+        image::ColorType::Rgb16 | image::ColorType::Rgba16 => DicomColorType::RGB8(RGB8),
+        _ => DicomColorType::Gray8(Gray8),
+    };
+
+    let transformed = match &color {
+        DicomColorType::Gray8(_) => DynamicImage::ImageLuma8(transformed.into_luma8()),
+        DicomColorType::RGB8(_) => DynamicImage::ImageRgb8(transformed.into_rgb8()),
+        DicomColorType::Gray16(_) => DynamicImage::ImageLuma8(transformed.into_luma8()),
+    };
+    Ok((transformed, color))
+}
+
 /// Process a single mask file
 fn process_mask(
     entry: &ManifestEntry,
     source_dir: &Path,
     mask_dir: &Path,
     output_dir: &Path,
+    class_map: Option<&ClassMap>,
+    output_dtype: OutputDtype,
+    unmapped_fallback_label: Option<u16>,
     fill_value: Option<Rgba<u8>>,
     compressor: SupportedCompressor,
-) -> Result<Option<PathBuf>, Error> {
+) -> Result<ProcessResult, Error> {
     // Find the corresponding mask
     let mask_path = match find_mask(mask_dir, &entry.sop_instance_uid) {
         Some(path) => path,
@@ -448,7 +1134,7 @@ fn process_mask(
                 "No mask found for SOP Instance UID: {}",
                 entry.sop_instance_uid
             );
-            return Ok(None);
+            return Ok(ProcessResult::default());
         }
     };
 
@@ -475,21 +1161,15 @@ fn process_mask(
         })?;
     }
 
-    // Determine color type based on input mask
-    let color = match transformed.color() {
-        image::ColorType::L8 | image::ColorType::La8 => DicomColorType::Gray8(Gray8),
-        image::ColorType::Rgb8 | image::ColorType::Rgba8 => DicomColorType::RGB8(RGB8),
-        image::ColorType::L16 | image::ColorType::La16 => DicomColorType::Gray8(Gray8),
-        image::ColorType::Rgb16 | image::ColorType::Rgba16 => DicomColorType::RGB8(RGB8),
-        _ => DicomColorType::Gray8(Gray8),
-    };
-
-    // Convert to appropriate format
-    let transformed = match &color {
-        DicomColorType::Gray8(_) => DynamicImage::ImageLuma8(transformed.into_luma8()),
-        DicomColorType::RGB8(_) => DynamicImage::ImageRgb8(transformed.into_rgb8()),
-        DicomColorType::Gray16(_) => DynamicImage::ImageLuma8(transformed.into_luma8()),
-    };
+    let (transformed, color) = get_output_image_and_color(
+        transformed,
+        class_map,
+        output_dtype,
+        &mask_path,
+        unmapped_fallback_label,
+    )?;
+    let class_histogram = collect_class_histogram(&transformed);
+    let has_class_histogram = class_histogram.is_some();
 
     // Save the transformed mask
     let saver = TiffSaver::new(compressor.into(), color);
@@ -504,11 +1184,50 @@ fn process_mask(
         output_path.display()
     );
 
-    Ok(Some(output_path))
+    Ok(ProcessResult {
+        output_path: Some(output_path),
+        class_histogram: class_histogram.unwrap_or_default(),
+        has_class_histogram,
+    })
+}
+
+fn resolve_unmapped_fallback_label(
+    args: &Args,
+    class_map: Option<&ClassMap>,
+) -> Result<Option<u16>, Error> {
+    if !args.map_unmapped_to_fill {
+        return Ok(None);
+    }
+
+    let class_map = class_map.ok_or_else(|| Error::InvalidMapUnmappedToFillUsage {
+        reason: "class mapping is not configured (set --class-map and/or --map)".to_string(),
+    })?;
+    let fill = args
+        .fill
+        .ok_or_else(|| Error::InvalidMapUnmappedToFillUsage {
+            reason: "--fill is required when --map-unmapped-to-fill is set".to_string(),
+        })?;
+    let fill_rgb = [fill[0], fill[1], fill[2]];
+
+    class_map
+        .get(&fill_rgb)
+        .copied()
+        .ok_or_else(|| Error::FillValueNotMapped {
+            r: fill_rgb[0],
+            g: fill_rgb[1],
+            b: fill_rgb[2],
+        })
+        .map(Some)
 }
 
 fn run(args: Args) -> Result<usize, Error> {
     validate_paths(&args)?;
+
+    let class_map = build_class_map(args.class_map.as_deref(), &args.map, args.output_dtype)?;
+    if let Some(class_map) = &class_map {
+        tracing::info!("Loaded {} class mappings", class_map.len());
+    }
+    let unmapped_fallback_label = resolve_unmapped_fallback_label(&args, class_map.as_ref())?;
 
     // Load manifest
     if !args.manifest.is_file() {
@@ -533,23 +1252,50 @@ fn run(args: Args) -> Result<usize, Error> {
         .to_path_buf();
 
     // Process masks in parallel
-    let pb = default_bar(entries.len() as u64);
-    pb.set_message("Processing masks");
+    let results: Vec<_> = match args.format {
+        ReportFormat::Text => {
+            let pb = default_bar(entries.len() as u64);
+            pb.set_message("Processing masks");
+            entries
+                .par_iter()
+                .progress_with(pb)
+                .map(|entry| {
+                    process_mask(
+                        entry,
+                        &source_dir,
+                        &args.masks,
+                        &args.output,
+                        class_map.as_ref(),
+                        args.output_dtype,
+                        unmapped_fallback_label,
+                        args.fill,
+                        args.compressor.clone(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        }
+        ReportFormat::Json => entries
+            .par_iter()
+            .map(|entry| {
+                process_mask(
+                    entry,
+                    &source_dir,
+                    &args.masks,
+                    &args.output,
+                    class_map.as_ref(),
+                    args.output_dtype,
+                    unmapped_fallback_label,
+                    args.fill,
+                    args.compressor.clone(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
 
-    let results: Vec<_> = entries
-        .par_iter()
-        .progress_with(pb)
-        .map(|entry| process_mask(entry, &source_dir, &args.masks, &args.output, args.fill, args.compressor.clone()))
-        .collect::<Result<Vec<_>, _>>()?;
+    let summary = build_run_summary(&results, entries.len());
+    emit_summary(&summary, args.format);
 
-    let processed_count = results.iter().filter(|r| r.is_some()).count();
-    println!(
-        "Processed {} masks out of {} manifest entries",
-        processed_count,
-        entries.len()
-    );
-
-    Ok(processed_count)
+    Ok(summary.processed_masks)
 }
 
 #[cfg(test)]
@@ -877,10 +1623,19 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
-        assert!(result.is_some());
-
-        let output_path = result.unwrap();
+        let result = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            None,
+            OutputDtype::default(),
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap();
+        let output_path = result.output_path.expect("expected output path");
         assert!(output_path.exists());
 
         // Verify output dimensions
@@ -920,10 +1675,19 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
-        assert!(result.is_some());
-
-        let output_path = result.unwrap();
+        let result = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            None,
+            OutputDtype::default(),
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap();
+        let output_path = result.output_path.expect("expected output path");
         let output = ImageReader::open(&output_path).unwrap().decode().unwrap();
         assert_eq!(output.width(), 100);
         assert_eq!(output.height(), 100);
@@ -962,8 +1726,19 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
-        assert!(result.is_some());
+        let result = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            None,
+            OutputDtype::default(),
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap();
+        assert!(result.output_path.is_some());
     }
 
     #[test]
@@ -992,8 +1767,19 @@ mod tests {
             path: PathBuf::from("study1/series1/sop1.tiff"),
         };
 
-        let result = process_mask(&entry, &source_dir, &mask_dir, &output_dir, None, SupportedCompressor::default()).unwrap();
-        assert!(result.is_none());
+        let result = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            None,
+            OutputDtype::default(),
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap();
+        assert!(result.output_path.is_none());
     }
 
     #[test]
@@ -1049,6 +1835,11 @@ mod tests {
             manifest: manifest_path,
             masks: mask_dir,
             output: output_dir.clone(),
+            format: ReportFormat::Text,
+            class_map: None,
+            map: vec![],
+            output_dtype: OutputDtype::default(),
+            map_unmapped_to_fill: false,
             fill: None,
             compressor: SupportedCompressor::default(),
             verbose: true,
@@ -1285,6 +2076,283 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_map_entry() {
+        let entry = parse_map_entry("255,0,7=42").unwrap();
+        assert_eq!(entry.rgb, [255, 0, 7]);
+        assert_eq!(entry.label, 42);
+
+        assert!(parse_map_entry("255,0=1").is_err());
+        assert!(parse_map_entry("x,0,0=1").is_err());
+        assert!(parse_map_entry("1,2,3").is_err());
+    }
+
+    #[test]
+    fn test_build_class_map_cli_overrides_csv() {
+        let tmp_dir = TempDir::new().unwrap();
+        let class_map_path = tmp_dir.path().join("class_map.csv");
+        fs::write(&class_map_path, "r,g,b,label\n255,0,0,1\n0,255,0,2\n").unwrap();
+
+        let inline = vec![ClassMapEntry {
+            rgb: [255, 0, 0],
+            label: 9,
+        }];
+        let class_map = build_class_map(Some(&class_map_path), &inline, OutputDtype::U8)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(class_map.get(&[255, 0, 0]), Some(&9));
+        assert_eq!(class_map.get(&[0, 255, 0]), Some(&2));
+    }
+
+    #[test]
+    fn test_build_class_map_rejects_out_of_range_label_for_u8() {
+        let inline = vec![ClassMapEntry {
+            rgb: [1, 2, 3],
+            label: 300,
+        }];
+        let err = build_class_map(None, &inline, OutputDtype::U8).unwrap_err();
+        assert!(matches!(err, Error::LabelOutOfRange { .. }));
+    }
+
+    #[test]
+    fn test_parse_class_map_csv_requires_columns() {
+        let tmp_dir = TempDir::new().unwrap();
+        let class_map_path = tmp_dir.path().join("class_map.csv");
+        fs::write(&class_map_path, "r,g,b\n255,0,0\n").unwrap();
+
+        let err = parse_class_map_csv(&class_map_path).unwrap_err();
+        assert!(matches!(err, Error::InvalidClassMapFormat { .. }));
+    }
+
+    #[test]
+    fn test_collect_class_histogram_luma8() {
+        let mut img = GrayImage::new(2, 2);
+        img.put_pixel(0, 0, Luma([0]));
+        img.put_pixel(1, 0, Luma([1]));
+        img.put_pixel(0, 1, Luma([1]));
+        img.put_pixel(1, 1, Luma([2]));
+        let image = DynamicImage::ImageLuma8(img);
+
+        let histogram = collect_class_histogram(&image).unwrap();
+        assert_eq!(histogram.get(&0), Some(&1));
+        assert_eq!(histogram.get(&1), Some(&2));
+        assert_eq!(histogram.get(&2), Some(&1));
+    }
+
+    #[test]
+    fn test_render_summaries_with_class_breakdown() {
+        let mut histogram = BTreeMap::new();
+        histogram.insert(0, 90);
+        histogram.insert(1, 10);
+        let summary = RunSummary {
+            total_entries: 3,
+            processed_masks: 2,
+            missing_masks: 1,
+            outputs_with_class_histogram: 2,
+            outputs_without_class_histogram: 0,
+            class_histogram: histogram,
+            total_class_pixels: 100,
+        };
+
+        let text = render_text_summary(&summary);
+        assert!(text.contains("Observed Classes"));
+        assert!(text.contains("0"));
+        assert!(text.contains("90.00%"));
+
+        let json = render_json_summary(&summary);
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["processed_masks"], 2);
+        assert_eq!(parsed["class_breakdown"][0]["class"], 0);
+        assert_eq!(parsed["class_breakdown"][0]["pixels"], 90);
+    }
+
+    #[test]
+    fn test_process_mask_rgb_png_with_class_map_u8() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let source_dir = tmp_dir.path().join("source");
+        let study_series = source_dir.join("study1").join("series1");
+        fs::create_dir_all(&study_series).unwrap();
+        create_preprocessed_tiff(&study_series.join("sop1.tiff"), 100, 100, None, None, None);
+
+        let mask_dir = tmp_dir.path().join("masks");
+        fs::create_dir(&mask_dir).unwrap();
+        create_rgb_mask_png(&mask_dir.join("sop1.png"), 100, 100, |x, _| {
+            if x < 50 {
+                [255, 0, 0]
+            } else {
+                [0, 255, 0]
+            }
+        });
+
+        let output_dir = tmp_dir.path().join("output");
+        fs::create_dir(&output_dir).unwrap();
+
+        let entry = ManifestEntry {
+            sop_instance_uid: "sop1".to_string(),
+            path: PathBuf::from("study1/series1/sop1.tiff"),
+        };
+        let class_map = ClassMap::from([([255, 0, 0], 1), ([0, 255, 0], 2)]);
+
+        let output_path = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            Some(&class_map),
+            OutputDtype::U8,
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap()
+        .output_path
+        .expect("expected output path");
+
+        let output = ImageReader::open(&output_path).unwrap().decode().unwrap();
+        assert!(matches!(output.color(), image::ColorType::L8));
+        let output = output.into_luma8();
+        assert_eq!(output.get_pixel(10, 10)[0], 1);
+        assert_eq!(output.get_pixel(90, 10)[0], 2);
+    }
+
+    #[test]
+    fn test_process_mask_rgb_png_with_class_map_u16() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let source_dir = tmp_dir.path().join("source");
+        let study_series = source_dir.join("study1").join("series1");
+        fs::create_dir_all(&study_series).unwrap();
+        create_preprocessed_tiff(&study_series.join("sop1.tiff"), 100, 100, None, None, None);
+
+        let mask_dir = tmp_dir.path().join("masks");
+        fs::create_dir(&mask_dir).unwrap();
+        create_rgb_mask_png(&mask_dir.join("sop1.png"), 100, 100, |_, _| [255, 0, 0]);
+
+        let output_dir = tmp_dir.path().join("output");
+        fs::create_dir(&output_dir).unwrap();
+
+        let entry = ManifestEntry {
+            sop_instance_uid: "sop1".to_string(),
+            path: PathBuf::from("study1/series1/sop1.tiff"),
+        };
+        let class_map = ClassMap::from([([255, 0, 0], 512)]);
+
+        let output_path = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            Some(&class_map),
+            OutputDtype::U16,
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap()
+        .output_path
+        .expect("expected output path");
+
+        let output = ImageReader::open(&output_path).unwrap().decode().unwrap();
+        assert!(matches!(output.color(), image::ColorType::L16));
+        let output = output.into_luma16();
+        assert_eq!(output.get_pixel(10, 10)[0], 512);
+    }
+
+    #[test]
+    fn test_process_mask_fails_on_unmapped_color() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let source_dir = tmp_dir.path().join("source");
+        let study_series = source_dir.join("study1").join("series1");
+        fs::create_dir_all(&study_series).unwrap();
+        create_preprocessed_tiff(&study_series.join("sop1.tiff"), 100, 100, None, None, None);
+
+        let mask_dir = tmp_dir.path().join("masks");
+        fs::create_dir(&mask_dir).unwrap();
+        create_rgb_mask_png(&mask_dir.join("sop1.png"), 100, 100, |x, _| {
+            if x < 50 {
+                [255, 0, 0]
+            } else {
+                [0, 255, 0]
+            }
+        });
+
+        let output_dir = tmp_dir.path().join("output");
+        fs::create_dir(&output_dir).unwrap();
+
+        let entry = ManifestEntry {
+            sop_instance_uid: "sop1".to_string(),
+            path: PathBuf::from("study1/series1/sop1.tiff"),
+        };
+        let class_map = ClassMap::from([([255, 0, 0], 1)]);
+
+        let err = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            Some(&class_map),
+            OutputDtype::U8,
+            None,
+            None,
+            SupportedCompressor::default(),
+        )
+        .unwrap_err();
+
+        assert!(matches!(err, Error::UnmappedColor { .. }));
+    }
+
+    #[test]
+    fn test_process_mask_maps_unmapped_to_fill_label_when_enabled() {
+        let tmp_dir = TempDir::new().unwrap();
+
+        let source_dir = tmp_dir.path().join("source");
+        let study_series = source_dir.join("study1").join("series1");
+        fs::create_dir_all(&study_series).unwrap();
+        create_preprocessed_tiff(&study_series.join("sop1.tiff"), 100, 100, None, None, None);
+
+        let mask_dir = tmp_dir.path().join("masks");
+        fs::create_dir(&mask_dir).unwrap();
+        create_rgb_mask_png(&mask_dir.join("sop1.png"), 100, 100, |x, _| {
+            if x < 50 {
+                [255, 0, 0]
+            } else {
+                [0, 255, 0]
+            }
+        });
+
+        let output_dir = tmp_dir.path().join("output");
+        fs::create_dir(&output_dir).unwrap();
+
+        let entry = ManifestEntry {
+            sop_instance_uid: "sop1".to_string(),
+            path: PathBuf::from("study1/series1/sop1.tiff"),
+        };
+        let class_map = ClassMap::from([([255, 0, 0], 7)]);
+
+        let output_path = process_mask(
+            &entry,
+            &source_dir,
+            &mask_dir,
+            &output_dir,
+            Some(&class_map),
+            OutputDtype::U8,
+            Some(7),
+            Some(Rgba([255, 0, 0, 255])),
+            SupportedCompressor::default(),
+        )
+        .unwrap()
+        .output_path
+        .expect("expected output path");
+
+        let output = ImageReader::open(&output_path).unwrap().decode().unwrap();
+        let output = output.into_luma8();
+        assert_eq!(output.get_pixel(10, 10)[0], 7);
+        assert_eq!(output.get_pixel(90, 10)[0], 7);
+    }
+
+    #[test]
     fn test_run_skips_missing_masks_gracefully() {
         let tmp_dir = TempDir::new().unwrap();
 
@@ -1332,6 +2400,11 @@ mod tests {
             manifest: manifest_path,
             masks: mask_dir,
             output: output_dir.clone(),
+            format: ReportFormat::Text,
+            class_map: None,
+            map: vec![],
+            output_dtype: OutputDtype::default(),
+            map_unmapped_to_fill: false,
             fill: None,
             compressor: SupportedCompressor::default(),
             verbose: false,

@@ -81,6 +81,9 @@ pub enum DicomError {
     #[snafu(display("cannot project laplacian mip from empty input frames"))]
     LaplacianMipEmptyInput,
 
+    #[snafu(display("unsupported multi-volume DICOM frame organization: {}", reason))]
+    UnsupportedMultiVolume { reason: String },
+
     #[snafu(display("{}", message))]
     Other { message: String },
 }

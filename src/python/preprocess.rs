@@ -447,6 +447,8 @@ where
 
 /*
 Preprocess multiple DICOM files (slices) with common crop bounds.
+Input order is preserved; automatic metadata-based reordering only applies to
+single multi-frame DICOM objects.
 Returns a 5D array with shape (num_slices, num_frames, height, width, channels).
  */
 fn preprocess_slices_with_temp_tiff<'py, T>(

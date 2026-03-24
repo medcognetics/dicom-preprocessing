@@ -117,6 +117,8 @@ Below are example images demonstrating various volume handling options. Laplacia
 
 The Laplacian MIP handler supports different projection modes for computing the central frame used in pyramid fusion. The default (`parallel-beam`) sums all slices along the z-axis, providing better depth integration. `central-slice` uses the middle slice directly, preserving single-slice sharpness.
 
+For single-file multi-frame inputs, preprocessing now resolves frame order from DICOM metadata before applying any volume handler. The precedence is dimension indices, stack ordinals, and then non-sampled patient geometry. Sampled/projection-style frames such as `TOMO_PROJ` are not slice-sorted from geometry alone, and the `*_slices` APIs still preserve caller input order.
+
 | Parallel Beam (default) | Central Slice |
 |-------------------------|---------------|
 | ![Parallel Beam](docs/laplacian_mip.png) | ![Central Slice](docs/laplacian_mip_central.png) |

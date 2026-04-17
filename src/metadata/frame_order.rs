@@ -371,9 +371,9 @@ fn resolve_frame_increment_pointer_order(
     };
 
     Some(FrameOrderPlan {
+        z_spacing_mm: spacing_from_ordered_frame_numbers(&values, &ordered_frame_numbers),
         ordered_frame_numbers,
         strategy: FrameOrderStrategy::FrameIncrementPointer,
-        z_spacing_mm: spacing_from_values(&values),
     })
 }
 
@@ -399,9 +399,9 @@ fn resolve_slice_location_order(frames: &[FrameMetadata]) -> Option<FrameOrderPl
     };
 
     Some(FrameOrderPlan {
+        z_spacing_mm: spacing_from_ordered_frame_numbers(&slice_locations, &ordered_frame_numbers),
         ordered_frame_numbers,
         strategy: FrameOrderStrategy::SliceLocation,
-        z_spacing_mm: spacing_from_values(&slice_locations),
     })
 }
 
@@ -451,6 +451,17 @@ fn spacing_from_geometry(frames: &[FrameMetadata], order: &[u32]) -> Option<f32>
 
 fn derived_spacing_mm(frames: &[FrameMetadata], order: &[u32]) -> Option<f32> {
     spacing_from_geometry(frames, order).or_else(|| pixel_measure_spacing(frames))
+}
+
+fn spacing_from_ordered_frame_numbers(
+    values: &[f64],
+    ordered_frame_numbers: &[u32],
+) -> Option<f32> {
+    let ordered_values: Vec<f64> = ordered_frame_numbers
+        .iter()
+        .map(|frame_number| values.get(*frame_number as usize).copied())
+        .collect::<Option<_>>()?;
+    spacing_from_values(&ordered_values)
 }
 
 fn pixel_measure_spacing(frames: &[FrameMetadata]) -> Option<f32> {
@@ -820,6 +831,29 @@ mod tests {
         )
     }
 
+    fn frame_increment_pointer_test_object(values: [f64; 3]) -> InMemDicomObject {
+        InMemDicomObject::from_element_iter([
+            InMemElement::new(tags::NUMBER_OF_FRAMES, VR::IS, "3"),
+            InMemElement::new(
+                tags::FRAME_INCREMENT_POINTER,
+                VR::AT,
+                dicom_value!(Tags, [tags::FRAME_TIME_VECTOR]),
+            ),
+            InMemElement::new(
+                tags::FRAME_TIME_VECTOR,
+                VR::DS,
+                PrimitiveValue::from(values),
+            ),
+        ])
+    }
+
+    fn slice_location_group(slice_location: f64) -> InMemDicomObject {
+        InMemDicomObject::from_element_iter([
+            InMemElement::new(tags::SLICE_LOCATION, VR::DS, slice_location.to_string()),
+            seq(tags::PIXEL_MEASURES_SEQUENCE, vec![pixel_measures(1.5)]),
+        ])
+    }
+
     #[test]
     fn resolves_dimension_index_values_order() {
         let object = InMemDicomObject::from_element_iter([
@@ -890,6 +924,30 @@ mod tests {
         let plan = resolve_frame_order(&object).unwrap();
         assert_eq!(plan.strategy, FrameOrderStrategy::RawPreserved);
         assert_eq!(plan.ordered_frame_numbers, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn frame_increment_pointer_spacing_uses_sorted_order() {
+        let object = frame_increment_pointer_test_object([10.0, 0.0, 5.0]);
+
+        let plan = resolve_frame_order(&object).unwrap();
+        assert_eq!(plan.strategy, FrameOrderStrategy::FrameIncrementPointer);
+        assert_eq!(plan.ordered_frame_numbers, vec![1, 2, 0]);
+        assert_eq!(plan.z_spacing_mm, Some(5.0));
+    }
+
+    #[test]
+    fn slice_location_spacing_uses_sorted_order() {
+        let object = test_object(vec![
+            slice_location_group(10.0),
+            slice_location_group(0.0),
+            slice_location_group(5.0),
+        ]);
+
+        let plan = resolve_frame_order(&object).unwrap();
+        assert_eq!(plan.strategy, FrameOrderStrategy::SliceLocation);
+        assert_eq!(plan.ordered_frame_numbers, vec![1, 2, 0]);
+        assert_eq!(plan.z_spacing_mm, Some(5.0));
     }
 
     #[test]

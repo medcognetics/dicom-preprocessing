@@ -28,16 +28,16 @@ To avoid over-parallelizing across both levels, frame-level parallelism is only 
 
 ```mermaid
 flowchart TD
-    A[Collect input files] --> B[Create rayon thread pool (--threads or system default)]
-    B --> C{Threads per input > 1?}
-    C -->|Yes| D[Enable frame-level decode + transform parallelism]
-    C -->|No| E[Use file-level parallelism only]
-    D --> F[Process each file]
-    E --> F[Process each file]
-    F --> G[Decode]
-    G --> H[Volume handler]
-    H --> I[Crop -> Resize -> Pad]
-    I --> J[Write TIFF]
+    A["Collect input files"] --> B["Create rayon thread pool: --threads or system default"]
+    B --> C{"More than one thread per input?"}
+    C -->|Yes| D["Enable frame-level decode and transform parallelism"]
+    C -->|No| E["Use file-level parallelism only"]
+    D --> F["Process each file"]
+    E --> F
+    F --> G["Decode"]
+    G --> H["Volume handler"]
+    H --> I["Crop, resize, pad"]
+    I --> J["Write TIFF"]
 ```
 
 

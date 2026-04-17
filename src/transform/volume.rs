@@ -30,7 +30,7 @@
 //! - `skip_start`/`skip_end`: Trim noisy edge frames (default 5).
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
-use crate::metadata::preprocessing::FrameCount;
+use crate::metadata::resolve_frame_order;
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
@@ -193,6 +193,59 @@ impl VolumeHandler {
     }
 }
 
+fn resolve_ordered_frame_numbers(
+    file: &FileDicomObject<InMemDicomObject>,
+) -> Result<Vec<u32>, DicomError> {
+    let plan = resolve_frame_order(file)?;
+    tracing::debug!(
+        strategy = ?plan.strategy,
+        identity = plan.is_identity(),
+        "Resolved multi-frame frame ordering"
+    );
+    Ok(plan.ordered_frame_numbers)
+}
+
+fn decode_frame_numbers_serial(
+    file: &FileDicomObject<InMemDicomObject>,
+    options: &ConvertOptions,
+    frame_numbers: &[u32],
+) -> Result<Vec<DynamicImage>, DicomError> {
+    let mut image_data = Vec::with_capacity(frame_numbers.len());
+    for frame_number in frame_numbers {
+        let decoded = file
+            .decode_pixel_data_frame(*frame_number)
+            .context(PixelDataSnafu)?;
+        image_data.push(
+            decoded
+                .to_dynamic_image_with_options(0, options)
+                .context(PixelDataSnafu)?,
+        );
+    }
+    Ok(image_data)
+}
+
+fn decode_frame_numbers_parallel(
+    file: &FileDicomObject<InMemDicomObject>,
+    options: &ConvertOptions,
+    frame_numbers: &[u32],
+) -> Result<Vec<DynamicImage>, DicomError> {
+    frame_numbers
+        .par_iter()
+        .map(|frame_number| {
+            let result = file
+                .decode_pixel_data_frame(*frame_number)
+                .context(PixelDataSnafu)?
+                .to_dynamic_image_with_options(0, options)
+                .context(PixelDataSnafu)?;
+            Ok::<DynamicImage, DicomError>(result)
+        })
+        .collect()
+}
+
+fn trimmed_frame_numbers(ordered_frame_numbers: &[u32], start: u32, end: u32) -> Vec<u32> {
+    ordered_frame_numbers[start as usize..end as usize].to_vec()
+}
+
 #[derive(Debug, Clone, Copy)]
 /// Keep all frames
 pub struct KeepVolume;
@@ -203,19 +256,8 @@ impl HandleVolume for KeepVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let mut image_data = Vec::with_capacity(number_of_frames as usize);
-        for frame_number in 0..number_of_frames {
-            let decoded = file
-                .decode_pixel_data_frame(frame_number)
-                .context(PixelDataSnafu)?;
-            image_data.push(
-                decoded
-                    .to_dynamic_image_with_options(0, options)
-                    .context(PixelDataSnafu)?,
-            );
-        }
-        Ok(image_data)
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        decode_frame_numbers_serial(file, options, &frame_numbers)
     }
 
     fn par_decode_volume_with_options(
@@ -223,19 +265,8 @@ impl HandleVolume for KeepVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let result = (0..number_of_frames)
-            .into_par_iter()
-            .map(|frame| {
-                let result = file
-                    .decode_pixel_data_frame(frame)
-                    .context(PixelDataSnafu)?
-                    .to_dynamic_image_with_options(0, options)
-                    .context(PixelDataSnafu)?;
-                Ok::<DynamicImage, DicomError>(result)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(result)
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        decode_frame_numbers_parallel(file, options, &frame_numbers)
     }
 }
 
@@ -249,8 +280,8 @@ impl HandleVolume for CentralSlice {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let central_frame = number_of_frames / 2;
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let central_frame = frame_numbers[frame_numbers.len() / 2];
         let decoded = file
             .decode_pixel_data_frame(central_frame)
             .context(PixelDataSnafu)?;
@@ -316,7 +347,8 @@ impl HandleVolume for MaxIntensity {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let number_of_frames = frame_numbers.len() as u32;
         let start = min(number_of_frames, self.skip_start);
         let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
 
@@ -329,16 +361,17 @@ impl HandleVolume for MaxIntensity {
             });
         }
 
+        let trimmed_frame_numbers = trimmed_frame_numbers(&frame_numbers, start, end);
         let decoded = file
-            .decode_pixel_data_frame(start)
+            .decode_pixel_data_frame(trimmed_frame_numbers[0])
             .context(PixelDataSnafu)?;
 
         let mut image = decoded
             .to_dynamic_image_with_options(0, options)
             .context(PixelDataSnafu)?;
-        for frame_number in (start + 1)..end {
+        for frame_number in trimmed_frame_numbers.iter().skip(1) {
             let decoded = file
-                .decode_pixel_data_frame(frame_number)
+                .decode_pixel_data_frame(*frame_number)
                 .context(PixelDataSnafu)?;
             let frame = decoded
                 .to_dynamic_image_with_options(0, options)
@@ -353,7 +386,8 @@ impl HandleVolume for MaxIntensity {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let number_of_frames = frame_numbers.len() as u32;
         let start = min(number_of_frames, self.skip_start);
         let end = max(0, number_of_frames as i64 - self.skip_end as i64) as u32;
 
@@ -366,11 +400,12 @@ impl HandleVolume for MaxIntensity {
             });
         }
 
-        let image = (start..end)
-            .into_par_iter()
+        let trimmed_frame_numbers = trimmed_frame_numbers(&frame_numbers, start, end);
+        let image = trimmed_frame_numbers
+            .par_iter()
             .map(|frame_number| {
                 let frame = file
-                    .decode_pixel_data_frame(frame_number)
+                    .decode_pixel_data_frame(*frame_number)
                     .context(PixelDataSnafu)?
                     .to_dynamic_image_with_options(0, options)
                     .context(PixelDataSnafu)?;
@@ -501,20 +536,8 @@ impl HandleVolume for InterpolateVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let mut frames = Vec::with_capacity(number_of_frames as usize);
-
-        for frame_number in 0..number_of_frames {
-            let decoded = file
-                .decode_pixel_data_frame(frame_number)
-                .context(PixelDataSnafu)?;
-            frames.push(
-                decoded
-                    .to_dynamic_image_with_options(0, options)
-                    .context(PixelDataSnafu)?,
-            );
-        }
-
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let frames = decode_frame_numbers_serial(file, options, &frame_numbers)?;
         Ok(Self::interpolate_frames(&frames, self.target_frames))
     }
 
@@ -523,19 +546,8 @@ impl HandleVolume for InterpolateVolume {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
-        let frames = (0..number_of_frames)
-            .into_par_iter()
-            .map(|frame| {
-                let result = file
-                    .decode_pixel_data_frame(frame)
-                    .context(PixelDataSnafu)?
-                    .to_dynamic_image_with_options(0, options)
-                    .context(PixelDataSnafu)?;
-                Ok::<DynamicImage, DicomError>(result)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let frames = decode_frame_numbers_parallel(file, options, &frame_numbers)?;
         Ok(Self::interpolate_frames(&frames, self.target_frames))
     }
 }
@@ -1310,20 +1322,12 @@ impl HandleVolume for LaplacianMip {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let number_of_frames = frame_numbers.len() as u32;
         let (start, end) = self.validate_trimmed_frame_range(number_of_frames)?;
 
-        let mut frames = Vec::with_capacity((end - start) as usize);
-        for frame_number in start..end {
-            let decoded = file
-                .decode_pixel_data_frame(frame_number)
-                .context(PixelDataSnafu)?;
-            frames.push(
-                decoded
-                    .to_dynamic_image_with_options(0, options)
-                    .context(PixelDataSnafu)?,
-            );
-        }
+        let trimmed_frame_numbers = trimmed_frame_numbers(&frame_numbers, start, end);
+        let frames = decode_frame_numbers_serial(file, options, &trimmed_frame_numbers)?;
 
         Ok(vec![self.project_laplacian_mip(&frames)?])
     }
@@ -1333,21 +1337,12 @@ impl HandleVolume for LaplacianMip {
         file: &FileDicomObject<InMemDicomObject>,
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
-        let number_of_frames: u32 = FrameCount::try_from(file)?.into();
+        let frame_numbers = resolve_ordered_frame_numbers(file)?;
+        let number_of_frames = frame_numbers.len() as u32;
         let (start, end) = self.validate_trimmed_frame_range(number_of_frames)?;
 
-        // Parallel frame decoding
-        let frames = (start..end)
-            .into_par_iter()
-            .map(|frame_number| {
-                let frame = file
-                    .decode_pixel_data_frame(frame_number)
-                    .context(PixelDataSnafu)?
-                    .to_dynamic_image_with_options(0, options)
-                    .context(PixelDataSnafu)?;
-                Ok::<DynamicImage, DicomError>(frame)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let trimmed_frame_numbers = trimmed_frame_numbers(&frame_numbers, start, end);
+        let frames = decode_frame_numbers_parallel(file, options, &trimmed_frame_numbers)?;
 
         // Projection is done serially as it's already computationally intensive
         Ok(vec![self.project_laplacian_mip(&frames)?])
@@ -1357,6 +1352,7 @@ impl HandleVolume for LaplacianMip {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::preprocessing::FrameCount;
 
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;

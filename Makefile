@@ -1,25 +1,36 @@
-UV=uv run
-UV_NO_PROJECT=uv run --no-project
-PYTHON=$(UV) python
+UV=uv
+UV_RUN=$(UV) run
+UV_NO_PROJECT=$(UV) run --no-project
+UV_SYNC_ALL_GROUPS=$(UV) sync --all-groups
+VENV=.venv
+VENV_BIN=$(VENV)/bin
+MATURIN=$(VENV_BIN)/maturin
+MATURIN_FEATURES=-F python -F pyo3/extension-module
+PYTHON=$(UV_RUN) python
 PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
+PYTEST_ARGS=-rs ./tests/
 
-.PHONY: init init-no-project develop develop-debug develop-release quality quality-python style test-python test-python-ci test-python-pdb test
+.PHONY: init init-no-project ensure-uv develop develop-debug develop-release quality quality-python style test-python test-python-ci test-python-pdb test
 
-init:
-	which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
-	uv sync --all-groups
+ensure-uv:
+	which $(UV) || curl -LsSf https://astral.sh/uv/install.sh | sh
 
-init-no-project:
-	which uv || curl -LsSf https://astral.sh/uv/install.sh | sh
-	uv sync --all-groups --no-install-project
+$(MATURIN): pyproject.toml uv.lock | ensure-uv
+	$(UV_SYNC_ALL_GROUPS)
+
+init: ensure-uv
+	$(UV_SYNC_ALL_GROUPS)
+
+init-no-project: ensure-uv
+	$(UV_SYNC_ALL_GROUPS) --no-install-project
 
 develop: develop-release
 
-develop-debug:
-	uv run maturin develop --uv -F python -F pyo3/extension-module
+develop-debug: $(MATURIN)
+	$(MATURIN) develop --uv $(MATURIN_FEATURES)
 
-develop-release:
-	uv run maturin develop --uv -F python -F pyo3/extension-module --release
+develop-release: $(MATURIN)
+	$(MATURIN) develop --uv $(MATURIN_FEATURES) --release
 
 quality:
 	cargo fmt -- --check
@@ -36,24 +47,17 @@ style:
 	cargo fix --allow-dirty --all-features
 	cargo clippy --all-features --fix --allow-dirty
 	cargo fmt
-	$(UV) ruff check --fix $(PYTHON_QUALITY_TARGETS)
-	$(UV) ruff format $(PYTHON_QUALITY_TARGETS)
+	$(UV_RUN) ruff check --fix $(PYTHON_QUALITY_TARGETS)
+	$(UV_RUN) ruff format $(PYTHON_QUALITY_TARGETS)
 
 test-python: develop
-	$(PYTHON) -m pytest \
-		-rs \
-		./tests/
+	$(PYTHON) -m pytest $(PYTEST_ARGS)
 
 test-python-ci: develop-debug
-	$(PYTHON) -m pytest \
-		-rs \
-		./tests/
+	$(PYTHON) -m pytest $(PYTEST_ARGS)
 
 test-python-pdb: develop
-	$(PYTHON) -m pytest \
-		-rs \
-		./tests/ \
-		--pdb
+	$(PYTHON) -m pytest $(PYTEST_ARGS) --pdb
 
 test:
 	cargo test

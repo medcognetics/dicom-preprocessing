@@ -1038,6 +1038,7 @@ dependencies = [
  "rayon",
  "rstest",
  "rust_search",
+ "serde_json",
  "snafu",
  "tempfile",
  "thiserror 2.0.12",

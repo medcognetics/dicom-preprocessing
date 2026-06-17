@@ -34,7 +34,7 @@ use tiff::encoder::TiffEncoder;
 // We guess 64MB as enough for most preprocessed images without being burdensome.
 const SPOOL_SIZE: usize = 1024 * 1024 * 64;
 
-#[pyclass(name = "Preprocessor")]
+#[pyclass(name = "Preprocessor", from_py_object)]
 #[derive(Clone)]
 pub struct PyPreprocessor {
     inner: Preprocessor,
@@ -178,7 +178,7 @@ impl PyPreprocessor {
     }
 }
 
-#[pyclass(name = "Crop")]
+#[pyclass(name = "Crop", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyCrop {
     inner: Crop,
@@ -220,7 +220,7 @@ impl From<Crop> for PyCrop {
     }
 }
 
-#[pyclass(name = "Resize")]
+#[pyclass(name = "Resize", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyResize {
     inner: Resize,
@@ -257,7 +257,7 @@ impl From<Resize> for PyResize {
     }
 }
 
-#[pyclass(name = "Padding")]
+#[pyclass(name = "Padding", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPadding {
     inner: Padding,
@@ -299,7 +299,7 @@ impl From<Padding> for PyPadding {
     }
 }
 
-#[pyclass(name = "Resolution")]
+#[pyclass(name = "Resolution", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyResolution {
     inner: Resolution,
@@ -336,7 +336,7 @@ impl From<Resolution> for PyResolution {
     }
 }
 
-#[pyclass(name = "PreprocessingMetadata")]
+#[pyclass(name = "PreprocessingMetadata", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPreprocessingMetadata {
     inner: PreprocessingMetadata,

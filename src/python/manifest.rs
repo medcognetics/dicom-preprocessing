@@ -14,7 +14,7 @@ use std::clone::Clone;
 
 use crate::manifest::get_manifest_with_progress;
 
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 struct PyManifestEntry(ManifestEntry);
 

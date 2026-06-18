@@ -11,7 +11,7 @@ crate-type = ["lib", "cdylib"]
 
 [dependencies]
 dicom = { version = "0.9.0", features = ["image", "ndarray"]}
-dicom-pixeldata = { version = "0.9.0", features = ["openjp2", "rayon"]}
+dicom-pixeldata = { version = "0.9.0", features = ["openjpeg-sys", "rayon"]}
 indicatif = { version= "0.18.4", features= ["rayon"] }
 clap = { version = "4.6.1", features = ["derive"] }
 rayon = "1.12"

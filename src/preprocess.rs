@@ -10,8 +10,8 @@ use crate::errors::DicomError;
 use crate::metadata::{FrameCount, PreprocessingMetadata, Resolution};
 use crate::transform::resize;
 use crate::transform::{
-    inverse_standard_dbt_rotation, Crop, HandleVolume, KeepVolume, Padding, PaddingDirection,
-    Resize, Transform, VolumeHandler,
+    inverse_standard_dbt_flip, Crop, HandleVolume, KeepVolume, Padding, PaddingDirection, Resize,
+    Transform, VolumeHandler,
 };
 
 /// Configuration for spacing-based resizing
@@ -272,7 +272,7 @@ impl Preprocessor {
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
         let mut image_data = self.decode_with_single_frame_guard(file, parallel)?;
-        let rotation = inverse_standard_dbt_rotation(file, &image_data);
+        let flip = inverse_standard_dbt_flip(file, &image_data);
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
@@ -318,7 +318,7 @@ impl Preprocessor {
         Ok((
             image_data,
             PreprocessingMetadata {
-                rotation,
+                flip,
                 crop: crop_config,
                 resize: resize_config,
                 padding: padding_config,
@@ -352,7 +352,7 @@ impl Preprocessor {
             // Add all frames from this file to the combined volume
             combined_volume.extend(images);
         }
-        let rotation = inverse_standard_dbt_rotation(&files[0], &combined_volume);
+        let flip = inverse_standard_dbt_flip(&files[0], &combined_volume);
 
         // Try to determine the resolution from the first file's pixel spacing attributes
         let mut resolution = Resolution::try_from(&files[0]).ok();
@@ -416,7 +416,7 @@ impl Preprocessor {
         Ok((
             result_batches,
             PreprocessingMetadata {
-                rotation,
+                flip,
                 crop: crop_config,
                 resize: resize_config,
                 padding: padding_config,
@@ -469,7 +469,7 @@ impl Preprocessor {
         Ok((
             image_data,
             PreprocessingMetadata {
-                rotation: None,
+                flip: None,
                 crop: crop_config,
                 resize: resize_config,
                 padding: padding_config,
@@ -483,7 +483,7 @@ impl Preprocessor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transform::{Coord, Rotation180};
+    use crate::transform::{Coord, Flip};
     use crate::volume::InterpolateVolume;
     use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
     use dicom::dictionary_std::{tags, uids};
@@ -560,7 +560,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inverse_standard_dbt_orientation_metadata_records_rotation() {
+    fn test_inverse_standard_dbt_orientation_metadata_records_flip() {
         let dicom_file = dbt_volume("L", "CC", "P\\L");
         let preprocessor = Preprocessor {
             crop: false,
@@ -578,11 +578,11 @@ mod tests {
         };
 
         let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
-        let rotation = Rotation180::from_image(&images[0]);
-        assert_eq!(metadata.rotation, Some(rotation));
+        let flip = Flip::both_from_image(&images[0]);
+        assert_eq!(metadata.flip, Some(flip));
         assert_eq!(
             metadata.apply(&Coord::new(0, 0)),
-            Coord::new(rotation.width - 1, rotation.height - 1)
+            Coord::new(flip.width - 1, flip.height - 1)
         );
     }
 

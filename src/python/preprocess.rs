@@ -6,7 +6,7 @@ use crate::python::path::PyPath;
 use crate::save::TiffSaver;
 use crate::transform::resize::FilterType;
 use crate::transform::volume::{CentralSlice, InterpolateVolume, KeepVolume, VolumeHandler};
-use crate::transform::{Crop, Padding, PaddingDirection, Resize, Rotation180};
+use crate::transform::{Crop, Flip, Padding, PaddingDirection, Resize};
 use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
 use ::tiff::decoder::Decoder;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
@@ -178,14 +178,14 @@ impl PyPreprocessor {
     }
 }
 
-#[pyclass(name = "Rotation180", skip_from_py_object)]
+#[pyclass(name = "Flip", skip_from_py_object)]
 #[derive(Clone)]
-pub struct PyRotation180 {
-    inner: Rotation180,
+pub struct PyFlip {
+    inner: Flip,
 }
 
 #[pymethods]
-impl PyRotation180 {
+impl PyFlip {
     #[getter]
     fn width(&self) -> u32 {
         self.inner.width
@@ -196,17 +196,27 @@ impl PyRotation180 {
         self.inner.height
     }
 
+    #[getter]
+    fn horizontal(&self) -> bool {
+        self.inner.horizontal
+    }
+
+    #[getter]
+    fn vertical(&self) -> bool {
+        self.inner.vertical
+    }
+
     fn __repr__(&self) -> String {
         format!(
-            "Rotation180(width={}, height={})",
-            self.inner.width, self.inner.height
+            "Flip(width={}, height={}, horizontal={}, vertical={})",
+            self.inner.width, self.inner.height, self.inner.horizontal, self.inner.vertical
         )
     }
 }
 
-impl From<Rotation180> for PyRotation180 {
-    fn from(rotation: Rotation180) -> Self {
-        PyRotation180 { inner: rotation }
+impl From<Flip> for PyFlip {
+    fn from(flip: Flip) -> Self {
+        PyFlip { inner: flip }
     }
 }
 
@@ -377,8 +387,8 @@ pub struct PyPreprocessingMetadata {
 #[pymethods]
 impl PyPreprocessingMetadata {
     #[getter]
-    fn rotation(&self) -> Option<PyRotation180> {
-        self.inner.rotation.map(|r| r.into())
+    fn flip(&self) -> Option<PyFlip> {
+        self.inner.flip.map(|f| f.into())
     }
 
     #[getter]
@@ -408,8 +418,8 @@ impl PyPreprocessingMetadata {
 
     fn __repr__(&self) -> String {
         format!(
-            "PreprocessingMetadata(rotation={:?}, crop={:?}, resize={:?}, padding={:?}, resolution={:?}, num_frames={})",
-            self.inner.rotation.is_some(),
+            "PreprocessingMetadata(flip={:?}, crop={:?}, resize={:?}, padding={:?}, resolution={:?}, num_frames={})",
+            self.inner.flip.is_some(),
             self.inner.crop.is_some(),
             self.inner.resize.is_some(),
             self.inner.padding.is_some(),
@@ -537,7 +547,7 @@ where
         // Create metadata for this specific slice with correct frame count
         let slice_num_frames = images.len().into();
         let slice_metadata = PreprocessingMetadata {
-            rotation: metadata.rotation,
+            flip: metadata.flip,
             crop: metadata.crop,
             resize: metadata.resize,
             padding: metadata.padding,
@@ -1196,7 +1206,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         m
     )?)?;
     m.add_class::<PyPreprocessor>()?;
-    m.add_class::<PyRotation180>()?;
+    m.add_class::<PyFlip>()?;
     m.add_class::<PyCrop>()?;
     m.add_class::<PyResize>()?;
     m.add_class::<PyPadding>()?;

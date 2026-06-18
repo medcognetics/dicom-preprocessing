@@ -735,7 +735,7 @@ fn write_traces_parquet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dicom_preprocessing::{FrameCount, Rotation180};
+    use dicom_preprocessing::{Flip, FrameCount};
     use ndarray::Array4;
     use rstest::rstest;
     use std::fs;
@@ -750,7 +750,7 @@ mod tests {
         height: u32,
     ) -> PathBuf {
         let metadata = PreprocessingMetadata {
-            rotation: None,
+            flip: None,
             crop: None,
             resize: None,
             padding: None,
@@ -1031,14 +1031,23 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_trace_processing_normalizes_rotated_metadata() {
+    #[rstest]
+    #[case(Flip::new(100, 80, true, false), "79", "89", "30", "40")]
+    #[case(Flip::new(100, 80, false, true), "10", "20", "39", "49")]
+    #[case(Flip::new(100, 80, true, true), "79", "89", "39", "49")]
+    fn test_trace_processing_normalizes_flipped_metadata(
+        #[case] flip: Flip,
+        #[case] expected_x_min: &str,
+        #[case] expected_x_max: &str,
+        #[case] expected_y_min: &str,
+        #[case] expected_y_max: &str,
+    ) {
         let tmp_dir = TempDir::new().unwrap();
         let source_dir = tmp_dir.path().join("source");
         fs::create_dir(&source_dir).unwrap();
 
         let metadata = PreprocessingMetadata {
-            rotation: Some(Rotation180::new(100, 80)),
+            flip: Some(flip),
             crop: None,
             resize: None,
             padding: None,
@@ -1063,10 +1072,10 @@ mod tests {
         let record = records[0].as_ref().unwrap();
         assert_eq!(record.get(0).unwrap(), "test1");
         assert_eq!(record.get(1).unwrap(), "1");
-        assert_eq!(record.get(2).unwrap(), "79");
-        assert_eq!(record.get(3).unwrap(), "89");
-        assert_eq!(record.get(4).unwrap(), "39");
-        assert_eq!(record.get(5).unwrap(), "49");
+        assert_eq!(record.get(2).unwrap(), expected_x_min);
+        assert_eq!(record.get(3).unwrap(), expected_x_max);
+        assert_eq!(record.get(4).unwrap(), expected_y_min);
+        assert_eq!(record.get(5).unwrap(), expected_y_max);
     }
 
     #[test]

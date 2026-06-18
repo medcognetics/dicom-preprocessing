@@ -31,7 +31,7 @@
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::resolve_frame_order;
-use crate::transform::Rotation180;
+use crate::transform::{Flip, Transform};
 use dicom::core::Tag;
 use dicom::dictionary_std::{tags, uids};
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -315,9 +315,7 @@ fn has_breast_tomosynthesis_sop_class(file: &FileDicomObject<InMemDicomObject>) 
         .is_some_and(|sop_class| sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE)
 }
 
-fn should_rotate_inverse_standard_dbt_orientation(
-    file: &FileDicomObject<InMemDicomObject>,
-) -> bool {
+fn should_flip_inverse_standard_dbt_orientation(file: &FileDicomObject<InMemDicomObject>) -> bool {
     if !has_breast_tomosynthesis_sop_class(file) {
         return false;
     }
@@ -348,12 +346,12 @@ fn should_rotate_inverse_standard_dbt_orientation(
         )
 }
 
-pub(crate) fn inverse_standard_dbt_rotation(
+pub(crate) fn inverse_standard_dbt_flip(
     file: &FileDicomObject<InMemDicomObject>,
     frames: &[DynamicImage],
-) -> Option<Rotation180> {
-    if should_rotate_inverse_standard_dbt_orientation(file) {
-        frames.first().map(Rotation180::from_image)
+) -> Option<Flip> {
+    if should_flip_inverse_standard_dbt_orientation(file) {
+        frames.first().map(Flip::both_from_image)
     } else {
         None
     }
@@ -363,8 +361,8 @@ fn apply_inverse_standard_dbt_orientation(
     file: &FileDicomObject<InMemDicomObject>,
     frames: Vec<DynamicImage>,
 ) -> Vec<DynamicImage> {
-    if inverse_standard_dbt_rotation(file, &frames).is_some() {
-        frames.into_iter().map(|frame| frame.rotate180()).collect()
+    if let Some(flip) = inverse_standard_dbt_flip(file, &frames) {
+        frames.into_iter().map(|frame| flip.apply(&frame)).collect()
     } else {
         frames
     }
@@ -1618,7 +1616,7 @@ mod tests {
     #[case("R", "CC", "P\\R")]
     #[case("L", "MLO", "P\\HL")]
     #[case("R", "MLO", "P\\HR")]
-    fn test_keep_volume_rotates_inverse_standard_dbt_orientation(
+    fn test_keep_volume_flips_inverse_standard_dbt_orientation(
         #[case] laterality: &str,
         #[case] view_position: &str,
         #[case] patient_orientation: &str,
@@ -1627,7 +1625,7 @@ mod tests {
         let dicom = dbt_volume(laterality, view_position, patient_orientation);
         let expected: Vec<DynamicImage> = raw_ordered_frames(&dicom)
             .iter()
-            .map(DynamicImage::rotate180)
+            .map(|frame| Flip::both_from_image(frame).apply(frame))
             .collect();
 
         let actual = if use_parallel {
@@ -1640,15 +1638,15 @@ mod tests {
     }
 
     #[test]
-    fn test_central_slice_rotates_inverse_standard_dbt_orientation() {
+    fn test_central_slice_flips_inverse_standard_dbt_orientation() {
         let dicom = dbt_volume("L", "MLO", "P\\HL");
         let frame_numbers = resolve_ordered_frame_numbers(&dicom).unwrap();
         let central_frame = frame_numbers[frame_numbers.len() / 2];
-        let expected =
+        let frame =
             decode_frame_numbers_serial(&dicom, &ConvertOptions::default(), &[central_frame])
                 .unwrap()
-                .remove(0)
-                .rotate180();
+                .remove(0);
+        let expected = Flip::both_from_image(&frame).apply(&frame);
 
         let actual = CentralSlice.decode_volume(&dicom).unwrap();
 

@@ -31,6 +31,7 @@
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::resolve_frame_order;
+use dicom::dictionary_std::{tags, uids};
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
@@ -242,6 +243,120 @@ fn decode_frame_numbers_parallel(
         .collect()
 }
 
+fn normalized_element_parts(
+    file: &FileDicomObject<InMemDicomObject>,
+    tag: dicom::core::Tag,
+) -> Option<Vec<String>> {
+    let parts: Vec<String> = file
+        .get(tag)?
+        .to_str()
+        .ok()?
+        .split('\\')
+        .map(|part| part.trim_matches(|c: char| c == '\0' || c.is_whitespace()))
+        .filter(|part| !part.is_empty())
+        .map(str::to_ascii_uppercase)
+        .collect();
+
+    (!parts.is_empty()).then_some(parts)
+}
+
+fn normalized_element_value(
+    file: &FileDicomObject<InMemDicomObject>,
+    tag: dicom::core::Tag,
+) -> Option<String> {
+    normalized_element_parts(file, tag).and_then(|parts| parts.into_iter().next())
+}
+
+fn inverse_patient_orientation_component(component: &str) -> Option<String> {
+    component
+        .chars()
+        .map(|direction| match direction {
+            'A' => Some('P'),
+            'P' => Some('A'),
+            'R' => Some('L'),
+            'L' => Some('R'),
+            'F' => Some('H'),
+            'H' => Some('F'),
+            _ => None,
+        })
+        .collect()
+}
+
+fn expected_standard_mammography_orientation(
+    laterality: &str,
+    view_position: &str,
+) -> Option<[&'static str; 2]> {
+    match (laterality, view_position) {
+        ("L", "CC") => Some(["A", "R"]),
+        ("R", "CC") => Some(["A", "L"]),
+        ("L", "MLO") => Some(["A", "FR"]),
+        ("R", "MLO") => Some(["A", "FL"]),
+        _ => None,
+    }
+}
+
+fn has_breast_tomosynthesis_sop_class(file: &FileDicomObject<InMemDicomObject>) -> bool {
+    let meta_sop_class = file
+        .meta()
+        .media_storage_sop_class_uid()
+        .trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    if meta_sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE {
+        return true;
+    }
+
+    normalized_element_value(file, tags::SOP_CLASS_UID)
+        .is_some_and(|sop_class| sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE)
+}
+
+fn should_rotate_inverse_standard_dbt_orientation(
+    file: &FileDicomObject<InMemDicomObject>,
+) -> bool {
+    if !has_breast_tomosynthesis_sop_class(file) {
+        return false;
+    }
+
+    let laterality = normalized_element_value(file, tags::IMAGE_LATERALITY)
+        .or_else(|| normalized_element_value(file, tags::LATERALITY));
+    let view_position = normalized_element_value(file, tags::VIEW_POSITION);
+    let patient_orientation = normalized_element_parts(file, tags::PATIENT_ORIENTATION);
+
+    let Some(laterality) = laterality else {
+        return false;
+    };
+    let Some(view_position) = view_position else {
+        return false;
+    };
+    let Some(patient_orientation) = patient_orientation else {
+        return false;
+    };
+    if patient_orientation.len() != 2 {
+        return false;
+    }
+
+    let Some(expected) = expected_standard_mammography_orientation(&laterality, &view_position)
+    else {
+        return false;
+    };
+
+    let inverse_expected: Option<Vec<String>> = expected
+        .iter()
+        .map(|component| inverse_patient_orientation_component(component))
+        .collect();
+
+    inverse_expected.is_some_and(|inverse_expected| patient_orientation == inverse_expected)
+}
+
+fn apply_inverse_standard_dbt_orientation(
+    file: &FileDicomObject<InMemDicomObject>,
+    frames: Vec<DynamicImage>,
+) -> Vec<DynamicImage> {
+    if should_rotate_inverse_standard_dbt_orientation(file) {
+        frames.into_iter().map(|frame| frame.rotate180()).collect()
+    } else {
+        frames
+    }
+}
+
 fn trimmed_frame_numbers(ordered_frame_numbers: &[u32], start: u32, end: u32) -> Vec<u32> {
     ordered_frame_numbers[start as usize..end as usize].to_vec()
 }
@@ -257,7 +372,8 @@ impl HandleVolume for KeepVolume {
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let frame_numbers = resolve_ordered_frame_numbers(file)?;
-        decode_frame_numbers_serial(file, options, &frame_numbers)
+        let frames = decode_frame_numbers_serial(file, options, &frame_numbers)?;
+        Ok(apply_inverse_standard_dbt_orientation(file, frames))
     }
 
     fn par_decode_volume_with_options(
@@ -266,7 +382,8 @@ impl HandleVolume for KeepVolume {
         options: &ConvertOptions,
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let frame_numbers = resolve_ordered_frame_numbers(file)?;
-        decode_frame_numbers_parallel(file, options, &frame_numbers)
+        let frames = decode_frame_numbers_parallel(file, options, &frame_numbers)?;
+        Ok(apply_inverse_standard_dbt_orientation(file, frames))
     }
 }
 
@@ -288,7 +405,7 @@ impl HandleVolume for CentralSlice {
         let image = decoded
             .to_dynamic_image_with_options(0, options)
             .context(PixelDataSnafu)?;
-        Ok(vec![image])
+        Ok(apply_inverse_standard_dbt_orientation(file, vec![image]))
     }
 
     fn par_decode_volume_with_options(
@@ -378,7 +495,7 @@ impl HandleVolume for MaxIntensity {
                 .context(PixelDataSnafu)?;
             image = Self::reduce(image, frame);
         }
-        Ok(vec![image])
+        Ok(apply_inverse_standard_dbt_orientation(file, vec![image]))
     }
 
     fn par_decode_volume_with_options(
@@ -414,7 +531,7 @@ impl HandleVolume for MaxIntensity {
             .try_reduce_with(|image, frame| Ok(Self::reduce(image, frame)));
 
         if let Some(image) = image {
-            Ok(vec![image?])
+            Ok(apply_inverse_standard_dbt_orientation(file, vec![image?]))
         } else {
             Err(DicomError::FrameIndexError {
                 start: start as usize,
@@ -538,7 +655,8 @@ impl HandleVolume for InterpolateVolume {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let frame_numbers = resolve_ordered_frame_numbers(file)?;
         let frames = decode_frame_numbers_serial(file, options, &frame_numbers)?;
-        Ok(Self::interpolate_frames(&frames, self.target_frames))
+        let frames = Self::interpolate_frames(&frames, self.target_frames);
+        Ok(apply_inverse_standard_dbt_orientation(file, frames))
     }
 
     fn par_decode_volume_with_options(
@@ -548,7 +666,8 @@ impl HandleVolume for InterpolateVolume {
     ) -> Result<Vec<DynamicImage>, DicomError> {
         let frame_numbers = resolve_ordered_frame_numbers(file)?;
         let frames = decode_frame_numbers_parallel(file, options, &frame_numbers)?;
-        Ok(Self::interpolate_frames(&frames, self.target_frames))
+        let frames = Self::interpolate_frames(&frames, self.target_frames);
+        Ok(apply_inverse_standard_dbt_orientation(file, frames))
     }
 }
 
@@ -1329,7 +1448,8 @@ impl HandleVolume for LaplacianMip {
         let trimmed_frame_numbers = trimmed_frame_numbers(&frame_numbers, start, end);
         let frames = decode_frame_numbers_serial(file, options, &trimmed_frame_numbers)?;
 
-        Ok(vec![self.project_laplacian_mip(&frames)?])
+        let frames = vec![self.project_laplacian_mip(&frames)?];
+        Ok(apply_inverse_standard_dbt_orientation(file, frames))
     }
 
     fn par_decode_volume_with_options(
@@ -1345,7 +1465,8 @@ impl HandleVolume for LaplacianMip {
         let frames = decode_frame_numbers_parallel(file, options, &trimmed_frame_numbers)?;
 
         // Projection is done serially as it's already computationally intensive
-        Ok(vec![self.project_laplacian_mip(&frames)?])
+        let frames = vec![self.project_laplacian_mip(&frames)?];
+        Ok(apply_inverse_standard_dbt_orientation(file, frames))
     }
 }
 
@@ -1354,10 +1475,66 @@ mod tests {
     use super::*;
     use crate::metadata::preprocessing::FrameCount;
 
+    use dicom::core::{DataElement, PrimitiveValue, VR};
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;
     use image::{ImageBuffer, Rgb};
     use rstest::rstest;
+
+    const MULTI_FRAME_TEST_DICOM: &str = "pydicom/emri_small.dcm";
+
+    fn dbt_volume(
+        laterality: &str,
+        view_position: &str,
+        patient_orientation: &str,
+    ) -> FileDicomObject<InMemDicomObject> {
+        let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        dicom.put_element(DataElement::new(
+            tags::SOP_CLASS_UID,
+            VR::UI,
+            PrimitiveValue::from(uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE),
+        ));
+        dicom.put_element(DataElement::new(
+            tags::IMAGE_LATERALITY,
+            VR::CS,
+            PrimitiveValue::from(laterality),
+        ));
+        dicom.put_element(DataElement::new(
+            tags::VIEW_POSITION,
+            VR::CS,
+            PrimitiveValue::from(view_position),
+        ));
+        dicom.put_element(DataElement::new(
+            tags::PATIENT_ORIENTATION,
+            VR::CS,
+            PrimitiveValue::from(patient_orientation),
+        ));
+        dicom
+    }
+
+    fn raw_ordered_frames(dicom: &FileDicomObject<InMemDicomObject>) -> Vec<DynamicImage> {
+        let frame_numbers = resolve_ordered_frame_numbers(dicom).unwrap();
+        decode_frame_numbers_serial(dicom, &ConvertOptions::default(), &frame_numbers).unwrap()
+    }
+
+    fn assert_images_match(expected: &[DynamicImage], actual: &[DynamicImage]) {
+        assert_eq!(expected.len(), actual.len());
+        for (frame_index, (expected_frame, actual_frame)) in
+            expected.iter().zip(actual.iter()).enumerate()
+        {
+            assert_eq!(expected_frame.dimensions(), actual_frame.dimensions());
+            let (width, height) = expected_frame.dimensions();
+            for y in 0..height {
+                for x in 0..width {
+                    assert_eq!(
+                        expected_frame.get_pixel(x, y),
+                        actual_frame.get_pixel(x, y),
+                        "pixel mismatch in frame {frame_index} at ({x}, {y})"
+                    );
+                }
+            }
+        }
+    }
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", VolumeHandler::Keep(KeepVolume), 1)]
@@ -1418,6 +1595,58 @@ mod tests {
             .par_decode_volume_with_options(&dicom, &options)
             .unwrap();
         assert_eq!(images.len() as u32, expected_number_of_frames);
+    }
+
+    #[rstest]
+    #[case("L", "CC", "P\\L")]
+    #[case("R", "CC", "P\\R")]
+    #[case("L", "MLO", "P\\HL")]
+    #[case("R", "MLO", "P\\HR")]
+    fn test_keep_volume_rotates_inverse_standard_dbt_orientation(
+        #[case] laterality: &str,
+        #[case] view_position: &str,
+        #[case] patient_orientation: &str,
+        #[values(false, true)] use_parallel: bool,
+    ) {
+        let dicom = dbt_volume(laterality, view_position, patient_orientation);
+        let expected: Vec<DynamicImage> = raw_ordered_frames(&dicom)
+            .iter()
+            .map(DynamicImage::rotate180)
+            .collect();
+
+        let actual = if use_parallel {
+            KeepVolume.par_decode_volume(&dicom).unwrap()
+        } else {
+            KeepVolume.decode_volume(&dicom).unwrap()
+        };
+
+        assert_images_match(&expected, &actual);
+    }
+
+    #[test]
+    fn test_central_slice_rotates_inverse_standard_dbt_orientation() {
+        let dicom = dbt_volume("L", "MLO", "P\\HL");
+        let frame_numbers = resolve_ordered_frame_numbers(&dicom).unwrap();
+        let central_frame = frame_numbers[frame_numbers.len() / 2];
+        let expected =
+            decode_frame_numbers_serial(&dicom, &ConvertOptions::default(), &[central_frame])
+                .unwrap()
+                .remove(0)
+                .rotate180();
+
+        let actual = CentralSlice.decode_volume(&dicom).unwrap();
+
+        assert_images_match(&[expected], &actual);
+    }
+
+    #[test]
+    fn test_keep_volume_preserves_expected_standard_dbt_orientation() {
+        let dicom = dbt_volume("R", "CC", "A\\L");
+        let expected = raw_ordered_frames(&dicom);
+
+        let actual = KeepVolume.decode_volume(&dicom).unwrap();
+
+        assert_images_match(&expected, &actual);
     }
 
     #[test]

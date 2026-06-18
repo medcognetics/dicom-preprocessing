@@ -31,6 +31,7 @@
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::resolve_frame_order;
+use dicom::core::Tag;
 use dicom::dictionary_std::{tags, uids};
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, PixelDecoder};
@@ -243,43 +244,51 @@ fn decode_frame_numbers_parallel(
         .collect()
 }
 
+fn trim_dicom_code(value: &str) -> &str {
+    value.trim_matches(|c: char| c == '\0' || c.is_whitespace())
+}
+
+fn normalized_dicom_code(value: &str) -> Option<String> {
+    let value = trim_dicom_code(value);
+    (!value.is_empty()).then(|| value.to_ascii_uppercase())
+}
+
 fn normalized_element_parts(
     file: &FileDicomObject<InMemDicomObject>,
-    tag: dicom::core::Tag,
+    tag: Tag,
 ) -> Option<Vec<String>> {
     let parts: Vec<String> = file
         .get(tag)?
         .to_str()
         .ok()?
         .split('\\')
-        .map(|part| part.trim_matches(|c: char| c == '\0' || c.is_whitespace()))
-        .filter(|part| !part.is_empty())
-        .map(str::to_ascii_uppercase)
+        .filter_map(normalized_dicom_code)
         .collect();
 
     (!parts.is_empty()).then_some(parts)
 }
 
-fn normalized_element_value(
-    file: &FileDicomObject<InMemDicomObject>,
-    tag: dicom::core::Tag,
-) -> Option<String> {
+fn normalized_element_value(file: &FileDicomObject<InMemDicomObject>, tag: Tag) -> Option<String> {
     normalized_element_parts(file, tag).and_then(|parts| parts.into_iter().next())
 }
 
-fn inverse_patient_orientation_component(component: &str) -> Option<String> {
+fn inverse_patient_orientation_direction(direction: char) -> Option<char> {
+    match direction {
+        'A' => Some('P'),
+        'P' => Some('A'),
+        'R' => Some('L'),
+        'L' => Some('R'),
+        'F' => Some('H'),
+        'H' => Some('F'),
+        _ => None,
+    }
+}
+
+fn is_inverse_patient_orientation_component(component: &str, inverse_component: &str) -> bool {
     component
         .chars()
-        .map(|direction| match direction {
-            'A' => Some('P'),
-            'P' => Some('A'),
-            'R' => Some('L'),
-            'L' => Some('R'),
-            'F' => Some('H'),
-            'H' => Some('F'),
-            _ => None,
-        })
-        .collect()
+        .map(inverse_patient_orientation_direction)
+        .eq(inverse_component.chars().map(Some))
 }
 
 fn expected_standard_mammography_orientation(
@@ -296,10 +305,7 @@ fn expected_standard_mammography_orientation(
 }
 
 fn has_breast_tomosynthesis_sop_class(file: &FileDicomObject<InMemDicomObject>) -> bool {
-    let meta_sop_class = file
-        .meta()
-        .media_storage_sop_class_uid()
-        .trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    let meta_sop_class = trim_dicom_code(file.meta().media_storage_sop_class_uid());
     if meta_sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE {
         return true;
     }
@@ -318,7 +324,7 @@ fn should_rotate_inverse_standard_dbt_orientation(
     let laterality = normalized_element_value(file, tags::IMAGE_LATERALITY)
         .or_else(|| normalized_element_value(file, tags::LATERALITY));
     let view_position = normalized_element_value(file, tags::VIEW_POSITION);
-    let patient_orientation = normalized_element_parts(file, tags::PATIENT_ORIENTATION);
+    let observed_orientation = normalized_element_parts(file, tags::PATIENT_ORIENTATION);
 
     let Some(laterality) = laterality else {
         return false;
@@ -326,24 +332,19 @@ fn should_rotate_inverse_standard_dbt_orientation(
     let Some(view_position) = view_position else {
         return false;
     };
-    let Some(patient_orientation) = patient_orientation else {
+    let Some(observed_orientation) = observed_orientation else {
         return false;
     };
-    if patient_orientation.len() != 2 {
-        return false;
-    }
-
     let Some(expected) = expected_standard_mammography_orientation(&laterality, &view_position)
     else {
         return false;
     };
-
-    let inverse_expected: Option<Vec<String>> = expected
-        .iter()
-        .map(|component| inverse_patient_orientation_component(component))
-        .collect();
-
-    inverse_expected.is_some_and(|inverse_expected| patient_orientation == inverse_expected)
+    observed_orientation.len() == expected.len()
+        && expected.iter().zip(observed_orientation.iter()).all(
+            |(expected_component, observed_component)| {
+                is_inverse_patient_orientation_component(expected_component, observed_component)
+            },
+        )
 }
 
 fn apply_inverse_standard_dbt_orientation(
@@ -1475,7 +1476,7 @@ mod tests {
     use super::*;
     use crate::metadata::preprocessing::FrameCount;
 
-    use dicom::core::{DataElement, PrimitiveValue, VR};
+    use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;
     use image::{ImageBuffer, Rgb};
@@ -1483,32 +1484,35 @@ mod tests {
 
     const MULTI_FRAME_TEST_DICOM: &str = "pydicom/emri_small.dcm";
 
+    fn put_str_element(
+        dicom: &mut FileDicomObject<InMemDicomObject>,
+        tag: Tag,
+        vr: VR,
+        value: &str,
+    ) {
+        dicom.put_element(DataElement::new(tag, vr, PrimitiveValue::from(value)));
+    }
+
     fn dbt_volume(
         laterality: &str,
         view_position: &str,
         patient_orientation: &str,
     ) -> FileDicomObject<InMemDicomObject> {
         let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
-        dicom.put_element(DataElement::new(
+        put_str_element(
+            &mut dicom,
             tags::SOP_CLASS_UID,
             VR::UI,
-            PrimitiveValue::from(uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE),
-        ));
-        dicom.put_element(DataElement::new(
-            tags::IMAGE_LATERALITY,
-            VR::CS,
-            PrimitiveValue::from(laterality),
-        ));
-        dicom.put_element(DataElement::new(
-            tags::VIEW_POSITION,
-            VR::CS,
-            PrimitiveValue::from(view_position),
-        ));
-        dicom.put_element(DataElement::new(
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
+        );
+        put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, laterality);
+        put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, view_position);
+        put_str_element(
+            &mut dicom,
             tags::PATIENT_ORIENTATION,
             VR::CS,
-            PrimitiveValue::from(patient_orientation),
-        ));
+            patient_orientation,
+        );
         dicom
     }
 

@@ -425,6 +425,28 @@ fn load_traces(path: &PathBuf) -> Result<HashMap<String, Vec<Trace>>, Error> {
     }
 }
 
+fn apply_metadata_to_trace(
+    trace: &Trace,
+    metadata: &PreprocessingMetadata,
+    width: u32,
+    height: u32,
+) -> Trace {
+    let (min, max): (Coord, Coord) = trace.into();
+    let min = metadata.apply(&min);
+    let max = metadata.apply(&max);
+    let (x0, y0): (u32, u32) = min.into();
+    let (x1, y1): (u32, u32) = max.into();
+
+    Trace::new(
+        trace.sop_instance_uid().to_string(),
+        trace.hash(),
+        x0.min(x1),
+        x0.max(x1).min(width - 1),
+        y0.min(y1),
+        y0.max(y1).min(height - 1),
+    )
+}
+
 fn process_traces(
     source_files: Vec<PathBuf>,
     trace_metadata: &HashMap<String, Vec<Trace>>,
@@ -526,19 +548,7 @@ fn process(
         .iter()
         .map(|trace| {
             tracing::debug!("Processing trace: {:?}", trace);
-            let (min, max): (Coord, Coord) = trace.into();
-            let min = metadata.apply(&min);
-            let max = metadata.apply(&max);
-            let (x_min, y_min): (u32, u32) = min.into();
-            let (x_max, y_max): (u32, u32) = max.into();
-            let processed_trace = Trace::new(
-                trace.sop_instance_uid().to_string(),
-                trace.hash(),
-                x_min,
-                x_max.min(width - 1),
-                y_min,
-                y_max.min(height - 1),
-            );
+            let processed_trace = apply_metadata_to_trace(trace, &metadata, width, height);
             tracing::debug!("Processed trace: {:?}", processed_trace);
             processed_trace
         })
@@ -725,7 +735,7 @@ fn write_traces_parquet(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dicom_preprocessing::FrameCount;
+    use dicom_preprocessing::{FrameCount, Rotation180};
     use ndarray::Array4;
     use rstest::rstest;
     use std::fs;
@@ -739,14 +749,33 @@ mod tests {
         width: u32,
         height: u32,
     ) -> PathBuf {
-        let array = Array4::<u8>::zeros((1, height as usize, width as usize, 1));
         let metadata = PreprocessingMetadata {
+            rotation: None,
             crop: None,
             resize: None,
             padding: None,
             resolution: None,
             num_frames: FrameCount::from(1_u16),
         };
+        create_test_tiff_with_metadata(
+            tmp_dir,
+            sop_instance_uid,
+            study_instance_uid,
+            width,
+            height,
+            metadata,
+        )
+    }
+
+    fn create_test_tiff_with_metadata(
+        tmp_dir: &Path,
+        sop_instance_uid: &str,
+        study_instance_uid: &str,
+        width: u32,
+        height: u32,
+        metadata: PreprocessingMetadata,
+    ) -> PathBuf {
+        let array = Array4::<u8>::zeros((1, height as usize, width as usize, 1));
         let saver = TiffSaver::new(
             Compressor::Uncompressed(Uncompressed),
             DicomColorType::Gray8(tiff::encoder::colortype::Gray8),
@@ -1000,6 +1029,44 @@ mod tests {
             }
             _ => panic!("Unsupported format"),
         }
+    }
+
+    #[test]
+    fn test_trace_processing_normalizes_rotated_metadata() {
+        let tmp_dir = TempDir::new().unwrap();
+        let source_dir = tmp_dir.path().join("source");
+        fs::create_dir(&source_dir).unwrap();
+
+        let metadata = PreprocessingMetadata {
+            rotation: Some(Rotation180::new(100, 80)),
+            crop: None,
+            resize: None,
+            padding: None,
+            resolution: None,
+            num_frames: FrameCount::from(1_u16),
+        };
+        create_test_tiff_with_metadata(&source_dir, "test1", "study1", 100, 80, metadata);
+
+        let output_path = tmp_dir.path().join("output.csv");
+        let args = Args {
+            source: source_dir,
+            traces: create_test_traces_csv(tmp_dir.path()),
+            output: output_path.clone(),
+            preview: None,
+            verbose: true,
+        };
+        run(args).unwrap();
+
+        let mut reader = csv::Reader::from_path(output_path).unwrap();
+        let records: Vec<_> = reader.records().collect();
+        assert_eq!(records.len(), 1);
+        let record = records[0].as_ref().unwrap();
+        assert_eq!(record.get(0).unwrap(), "test1");
+        assert_eq!(record.get(1).unwrap(), "1");
+        assert_eq!(record.get(2).unwrap(), "79");
+        assert_eq!(record.get(3).unwrap(), "89");
+        assert_eq!(record.get(4).unwrap(), "39");
+        assert_eq!(record.get(5).unwrap(), "49");
     }
 
     #[test]

@@ -31,6 +31,7 @@
 
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::resolve_frame_order;
+use crate::transform::Rotation180;
 use dicom::core::Tag;
 use dicom::dictionary_std::{tags, uids};
 use dicom::object::{FileDicomObject, InMemDicomObject};
@@ -347,11 +348,22 @@ fn should_rotate_inverse_standard_dbt_orientation(
         )
 }
 
+pub(crate) fn inverse_standard_dbt_rotation(
+    file: &FileDicomObject<InMemDicomObject>,
+    frames: &[DynamicImage],
+) -> Option<Rotation180> {
+    if should_rotate_inverse_standard_dbt_orientation(file) {
+        frames.first().map(Rotation180::from_image)
+    } else {
+        None
+    }
+}
+
 fn apply_inverse_standard_dbt_orientation(
     file: &FileDicomObject<InMemDicomObject>,
     frames: Vec<DynamicImage>,
 ) -> Vec<DynamicImage> {
-    if should_rotate_inverse_standard_dbt_orientation(file) {
+    if inverse_standard_dbt_rotation(file, &frames).is_some() {
         frames.into_iter().map(|frame| frame.rotate180()).collect()
     } else {
         frames

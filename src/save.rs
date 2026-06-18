@@ -155,6 +155,7 @@ mod tests {
 
         // Create dummy metadata
         let metadata = PreprocessingMetadata {
+            rotation: None,
             crop: None,
             resize: None,
             padding: None,

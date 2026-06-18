@@ -49,6 +49,17 @@ class Padding:
     right: int
     bottom: int
 
+class Rotation180:
+    """A 180-degree rotation recorded in preprocessing metadata.
+
+    Attributes:
+        width: Width of the rotated image coordinate space
+        height: Height of the rotated image coordinate space
+    """
+
+    width: int
+    height: int
+
 class Resolution:
     """Image resolution metadata.
 
@@ -71,10 +82,12 @@ class PreprocessingMetadata:
         crop: Crop transformation, if applied
         resize: Resize transformation, if applied
         padding: Padding transformation, if applied
+        rotation: 180-degree rotation transform, if applied
         resolution: Image resolution, if available
         num_frames: Number of frames in the output
     """
 
+    rotation: Optional[Rotation180]
     crop: Optional[Crop]
     resize: Optional[Resize]
     padding: Optional[Padding]

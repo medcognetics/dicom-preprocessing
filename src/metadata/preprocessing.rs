@@ -11,7 +11,7 @@ use tiff::tags::Tag;
 use crate::dicom::ConvertValueSnafu;
 use crate::errors::{DicomError, TiffError};
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::{Coord, Crop, InvertibleTransform, Padding, Resize, Transform};
+use crate::transform::{Coord, Crop, InvertibleTransform, Padding, Resize, Rotation180, Transform};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -178,6 +178,7 @@ impl WriteTags for FrameCount {
 /// Tracks all of the preprocessing metadata and augmentations
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct PreprocessingMetadata {
+    pub rotation: Option<Rotation180>,
     pub crop: Option<Crop>,
     pub resize: Option<Resize>,
     pub padding: Option<Padding>,
@@ -187,12 +188,17 @@ pub struct PreprocessingMetadata {
 
 impl Transform<Coord> for PreprocessingMetadata {
     fn apply(&self, coord: &Coord) -> Coord {
-        // Forward application order is crop, resize, padding
+        // Forward application order is rotation, crop, resize, padding
+        let coord = self
+            .rotation
+            .as_ref()
+            .map(|rotation| rotation.apply(coord))
+            .unwrap_or(*coord);
         let coord = self
             .crop
             .as_ref()
-            .map(|crop| crop.apply(coord))
-            .unwrap_or(*coord);
+            .map(|crop| crop.apply(&coord))
+            .unwrap_or(coord);
         let coord = self
             .resize
             .as_ref()
@@ -209,7 +215,7 @@ impl Transform<Coord> for PreprocessingMetadata {
 
 impl InvertibleTransform<Coord> for PreprocessingMetadata {
     fn invert(&self, coord: &Coord) -> Coord {
-        // Invert application order is padding, resize, crop
+        // Invert application order is padding, resize, crop, rotation
         let coord = self
             .padding
             .as_ref()
@@ -225,7 +231,10 @@ impl InvertibleTransform<Coord> for PreprocessingMetadata {
             .as_ref()
             .map(|crop| crop.invert(&coord))
             .unwrap_or(coord);
-        coord
+        self.rotation
+            .as_ref()
+            .map(|rotation| rotation.invert(&coord))
+            .unwrap_or(coord)
     }
 }
 
@@ -247,6 +256,9 @@ impl WriteTags for PreprocessingMetadata {
         self.num_frames.write_tags(tiff)?;
 
         // Write transform related tags
+        if let Some(rotation_config) = &self.rotation {
+            rotation_config.write_tags(tiff)?;
+        }
         if let Some(crop_config) = &self.crop {
             crop_config.write_tags(tiff)?;
         }
@@ -270,6 +282,7 @@ where
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         // NOTE: We don't distinguish between an unexpected error and an expected missing/malformed tag.
         // The TIFF could be using these tags for another purpose, e.g. if it was created by a different software.
+        let rotation = Rotation180::try_from(&mut *decoder).ok();
         let crop = Crop::try_from(&mut *decoder).ok();
         let resize = Resize::try_from(&mut *decoder).ok();
         let padding = Padding::try_from(&mut *decoder).ok();
@@ -279,6 +292,7 @@ where
         let num_frames = FrameCount::try_from(&mut *decoder)?;
 
         Ok(Self {
+            rotation,
             crop,
             resize,
             padding,
@@ -301,6 +315,7 @@ mod tests {
     #[rstest]
     #[case(
         PreprocessingMetadata {
+            rotation: Some(Rotation180::new(100, 80)),
             crop: Some(Crop { left: 0, top: 0, width: 1, height: 1 }),
             resize: Some(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest }),
             padding: Some(Padding { left: 0, top: 0, right: 1, bottom: 1 }),
@@ -361,6 +376,7 @@ mod tests {
         // We crop to the top left quadrant and then scale that by 2x
         // Then we pad the right and bottom by 1 pixel each
         let metadata = PreprocessingMetadata {
+            rotation: None,
             crop: Some(Crop {
                 left: 0,
                 top: 0,
@@ -399,6 +415,7 @@ mod tests {
         // We crop to the bottom right quadrant and then scale that by 2x
         // Then we pad the top and left by 1 pixel each
         let metadata = PreprocessingMetadata {
+            rotation: None,
             crop: Some(Crop {
                 left: 4,
                 top: 4,

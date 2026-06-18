@@ -554,6 +554,7 @@ mod tests {
 
         // Create test data
         let metadata = PreprocessingMetadata {
+            rotation: None,
             crop: None,
             resize: None,
             padding: None,
@@ -600,6 +601,7 @@ mod tests {
         let path = tmpdir.path().join("multi_frame.tiff");
 
         let metadata = PreprocessingMetadata {
+            rotation: None,
             crop: None,
             resize: None,
             padding: None,

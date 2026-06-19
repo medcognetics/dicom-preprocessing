@@ -96,6 +96,23 @@ Options:
 ```
 
 
+### DICOM Validation
+
+`dicom-validate` checks whether a single DICOM file has the metadata needed for the preprocessing path.
+It strictly validates decode and TIFF-output requirements such as `PixelData`, dimensions, pixel format, `BitsAllocated`, `BitsStored`, and `HighBit`.
+Optional display metadata such as windowing, VOI LUT, rescale, and spacing is reported diagnostically without making the file invalid.
+
+Example usage:
+
+```
+dicom-validate /path/to/image.dcm
+dicom-validate --format json /path/to/image.dcm
+dicom-validate --decode none /path/to/image.dcm
+```
+
+Exit code `0` means the file passed validation, `1` means validation completed and found preprocessing blockers, and `2` means the tool hit a runtime error such as an unreadable path.
+
+
 ### Example Images
 
 Below are example images demonstrating the effects of different cropping options (resized to 384x512):

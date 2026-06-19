@@ -23,6 +23,8 @@ image = "0.25"
 tiff = "0.11"
 half = "2.7"
 snafu = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 num = "0.4"
@@ -69,6 +71,10 @@ path = "src/bin/manifest.rs"
 [[bin]]
 name = "dicom-voilut"
 path = "src/voilut/main.rs"
+
+[[bin]]
+name = "dicom-validate"
+path = "src/bin/validate.rs"
 
 [[bin]]
 name = "dicom-traces"

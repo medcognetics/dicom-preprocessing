@@ -180,6 +180,7 @@ fn resize_tiff(
 
     // Create new metadata with updated information
     let mut metadata = PreprocessingMetadata {
+        flip: original_metadata.flip,
         crop: original_metadata.crop,
         resize: original_metadata.resize,
         padding: original_metadata.padding,
@@ -320,6 +321,7 @@ mod tests {
     fn create_test_tiff(path: &Path, width: u32, height: u32, num_frames: usize) -> PathBuf {
         let array = Array4::<u8>::zeros((num_frames, height as usize, width as usize, 1));
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: None,
             resize: None,
             padding: None,
@@ -587,6 +589,7 @@ mod tests {
             filter: FilterType::Nearest,
         };
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: None,
             resize: Some(initial_resize),
             padding: None,
@@ -653,6 +656,7 @@ mod tests {
             bottom: 40,
         };
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: None,
             resize: None,
             padding: Some(initial_padding),

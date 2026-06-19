@@ -561,6 +561,7 @@ mod tests {
             pixel_value,
         );
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: None,
             resize: None,
             padding: None,

@@ -49,6 +49,21 @@ class Padding:
     right: int
     bottom: int
 
+class Flip:
+    """A flip recorded in preprocessing metadata.
+
+    Attributes:
+        width: Width of the flipped image coordinate space
+        height: Height of the flipped image coordinate space
+        horizontal: Whether x coordinates were flipped
+        vertical: Whether y coordinates were flipped
+    """
+
+    width: int
+    height: int
+    horizontal: bool
+    vertical: bool
+
 class Resolution:
     """Image resolution metadata.
 
@@ -68,6 +83,7 @@ class PreprocessingMetadata:
     This metadata can be used to map coordinates between preprocessed and original image spaces.
 
     Attributes:
+        flip: Flip transformation, if applied. Applied before crop, resize, and padding.
         crop: Crop transformation, if applied
         resize: Resize transformation, if applied
         padding: Padding transformation, if applied
@@ -75,6 +91,7 @@ class PreprocessingMetadata:
         num_frames: Number of frames in the output
     """
 
+    flip: Optional[Flip]
     crop: Optional[Crop]
     resize: Optional[Resize]
     padding: Optional[Padding]

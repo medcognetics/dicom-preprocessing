@@ -11,7 +11,7 @@ use tiff::tags::Tag;
 use crate::dicom::ConvertValueSnafu;
 use crate::errors::{DicomError, TiffError};
 use crate::metadata::{Resolution, WriteTags};
-use crate::transform::{Coord, Crop, InvertibleTransform, Padding, Resize, Transform};
+use crate::transform::{Coord, Crop, Flip, InvertibleTransform, Padding, Resize, Transform};
 
 const VERSION: &str = concat!("dicom-preprocessing==", env!("CARGO_PKG_VERSION"), "\0");
 
@@ -175,9 +175,14 @@ impl WriteTags for FrameCount {
     }
 }
 
-/// Tracks all of the preprocessing metadata and augmentations
+/// Tracks all preprocessing metadata and coordinate transforms.
+///
+/// Forward coordinate application follows image preprocessing order:
+/// flip, crop, resize, then padding. Inversion runs the reverse order:
+/// padding, resize, crop, then flip.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct PreprocessingMetadata {
+    pub flip: Option<Flip>,
     pub crop: Option<Crop>,
     pub resize: Option<Resize>,
     pub padding: Option<Padding>,
@@ -187,12 +192,16 @@ pub struct PreprocessingMetadata {
 
 impl Transform<Coord> for PreprocessingMetadata {
     fn apply(&self, coord: &Coord) -> Coord {
-        // Forward application order is crop, resize, padding
+        let coord = self
+            .flip
+            .as_ref()
+            .map(|flip| flip.apply(coord))
+            .unwrap_or(*coord);
         let coord = self
             .crop
             .as_ref()
-            .map(|crop| crop.apply(coord))
-            .unwrap_or(*coord);
+            .map(|crop| crop.apply(&coord))
+            .unwrap_or(coord);
         let coord = self
             .resize
             .as_ref()
@@ -209,7 +218,6 @@ impl Transform<Coord> for PreprocessingMetadata {
 
 impl InvertibleTransform<Coord> for PreprocessingMetadata {
     fn invert(&self, coord: &Coord) -> Coord {
-        // Invert application order is padding, resize, crop
         let coord = self
             .padding
             .as_ref()
@@ -225,7 +233,10 @@ impl InvertibleTransform<Coord> for PreprocessingMetadata {
             .as_ref()
             .map(|crop| crop.invert(&coord))
             .unwrap_or(coord);
-        coord
+        self.flip
+            .as_ref()
+            .map(|flip| flip.invert(&coord))
+            .unwrap_or(coord)
     }
 }
 
@@ -247,6 +258,9 @@ impl WriteTags for PreprocessingMetadata {
         self.num_frames.write_tags(tiff)?;
 
         // Write transform related tags
+        if let Some(flip_config) = &self.flip {
+            flip_config.write_tags(tiff)?;
+        }
         if let Some(crop_config) = &self.crop {
             crop_config.write_tags(tiff)?;
         }
@@ -270,6 +284,7 @@ where
     fn try_from(decoder: &mut Decoder<T>) -> Result<Self, Self::Error> {
         // NOTE: We don't distinguish between an unexpected error and an expected missing/malformed tag.
         // The TIFF could be using these tags for another purpose, e.g. if it was created by a different software.
+        let flip = Flip::try_from(&mut *decoder).ok();
         let crop = Crop::try_from(&mut *decoder).ok();
         let resize = Resize::try_from(&mut *decoder).ok();
         let padding = Padding::try_from(&mut *decoder).ok();
@@ -279,6 +294,7 @@ where
         let num_frames = FrameCount::try_from(&mut *decoder)?;
 
         Ok(Self {
+            flip,
             crop,
             resize,
             padding,
@@ -301,6 +317,7 @@ mod tests {
     #[rstest]
     #[case(
         PreprocessingMetadata {
+            flip: Some(Flip::new(100, 80, true, true)),
             crop: Some(Crop { left: 0, top: 0, width: 1, height: 1 }),
             resize: Some(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest }),
             padding: Some(Padding { left: 0, top: 0, right: 1, bottom: 1 }),
@@ -352,6 +369,37 @@ mod tests {
         assert_eq!(frame_count, FrameCount(3));
     }
 
+    #[test]
+    fn test_apply_coord_uses_documented_transform_order() {
+        let metadata = PreprocessingMetadata {
+            flip: Some(Flip::new(100, 80, true, false)),
+            crop: Some(Crop {
+                left: 70,
+                top: 20,
+                width: 20,
+                height: 20,
+            }),
+            resize: Some(Resize {
+                scale_x: 2.0,
+                scale_y: 2.0,
+                filter: FilterType::Nearest,
+            }),
+            padding: Some(Padding {
+                left: 5,
+                top: 7,
+                right: 0,
+                bottom: 0,
+            }),
+            resolution: None,
+            num_frames: FrameCount(1),
+        };
+
+        let original = Coord::new(10, 30);
+        let preprocessed = Coord::new(43, 27);
+        assert_eq!(metadata.apply(&original), preprocessed);
+        assert_eq!(metadata.invert(&preprocessed), original);
+    }
+
     #[rstest]
     #[case(Coord::new(0, 0), Coord::new(0, 0))] // Unchanged
     #[case(Coord::new(1, 1), Coord::new(2, 2))] // Scaled 2x
@@ -361,6 +409,7 @@ mod tests {
         // We crop to the top left quadrant and then scale that by 2x
         // Then we pad the right and bottom by 1 pixel each
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: Some(Crop {
                 left: 0,
                 top: 0,
@@ -399,6 +448,7 @@ mod tests {
         // We crop to the bottom right quadrant and then scale that by 2x
         // Then we pad the top and left by 1 pixel each
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: Some(Crop {
                 left: 4,
                 top: 4,

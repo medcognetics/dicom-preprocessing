@@ -1,9 +1,11 @@
 pub mod crop;
+pub mod flip;
 pub mod pad;
 pub mod resize;
 pub mod volume;
 
 pub use crop::*;
+pub use flip::*;
 pub use pad::*;
 pub use resize::*;
 pub use volume::*;

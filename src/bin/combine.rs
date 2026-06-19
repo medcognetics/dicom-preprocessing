@@ -515,6 +515,7 @@ mod tests {
     ) -> PathBuf {
         let array = Array4::<u8>::zeros((1, height as usize, width as usize, 1));
         let metadata = PreprocessingMetadata {
+            flip: None,
             crop: None,
             resize: None,
             padding: None,

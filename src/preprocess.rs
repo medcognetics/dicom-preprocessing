@@ -10,7 +10,8 @@ use crate::errors::DicomError;
 use crate::metadata::{FrameCount, PreprocessingMetadata, Resolution};
 use crate::transform::resize;
 use crate::transform::{
-    Crop, HandleVolume, KeepVolume, Padding, PaddingDirection, Resize, Transform, VolumeHandler,
+    inverse_standard_dbt_flip, Crop, HandleVolume, KeepVolume, Padding, PaddingDirection, Resize,
+    Transform, VolumeHandler,
 };
 
 /// Configuration for spacing-based resizing
@@ -271,6 +272,7 @@ impl Preprocessor {
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
         // Run decoding and volume handling
         let mut image_data = self.decode_with_single_frame_guard(file, parallel)?;
+        let flip = inverse_standard_dbt_flip(file, &image_data);
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
@@ -316,6 +318,7 @@ impl Preprocessor {
         Ok((
             image_data,
             PreprocessingMetadata {
+                flip,
                 crop: crop_config,
                 resize: resize_config,
                 padding: padding_config,
@@ -349,6 +352,7 @@ impl Preprocessor {
             // Add all frames from this file to the combined volume
             combined_volume.extend(images);
         }
+        let flip = inverse_standard_dbt_flip(&files[0], &combined_volume);
 
         // Try to determine the resolution from the first file's pixel spacing attributes
         let mut resolution = Resolution::try_from(&files[0]).ok();
@@ -412,6 +416,7 @@ impl Preprocessor {
         Ok((
             result_batches,
             PreprocessingMetadata {
+                flip,
                 crop: crop_config,
                 resize: resize_config,
                 padding: padding_config,
@@ -464,6 +469,7 @@ impl Preprocessor {
         Ok((
             image_data,
             PreprocessingMetadata {
+                flip: None,
                 crop: crop_config,
                 resize: resize_config,
                 padding: padding_config,
@@ -477,9 +483,10 @@ impl Preprocessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::transform::{Coord, Flip};
     use crate::volume::InterpolateVolume;
-    use dicom::core::{DataElement, PrimitiveValue, VR};
-    use dicom::dictionary_std::tags;
+    use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
+    use dicom::dictionary_std::{tags, uids};
     use dicom::pixeldata::WindowLevel;
 
     use dicom::object::open_file;
@@ -488,6 +495,40 @@ mod tests {
     use crate::volume::{CentralSlice, KeepVolume, LaplacianMip, VolumeHandler};
     use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
+
+    const MULTI_FRAME_TEST_DICOM: &str = "pydicom/emri_small.dcm";
+
+    fn put_str_element(
+        dicom: &mut FileDicomObject<InMemDicomObject>,
+        tag: Tag,
+        vr: VR,
+        value: &str,
+    ) {
+        dicom.put_element(DataElement::new(tag, vr, PrimitiveValue::from(value)));
+    }
+
+    fn dbt_volume(
+        laterality: &str,
+        view_position: &str,
+        patient_orientation: &str,
+    ) -> FileDicomObject<InMemDicomObject> {
+        let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        put_str_element(
+            &mut dicom,
+            tags::SOP_CLASS_UID,
+            VR::UI,
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
+        );
+        put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, laterality);
+        put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, view_position);
+        put_str_element(
+            &mut dicom,
+            tags::PATIENT_ORIENTATION,
+            VR::CS,
+            patient_orientation,
+        );
+        dicom
+    }
 
     fn assert_images_equal(expected: &[DynamicImage], actual: &[DynamicImage]) {
         assert_eq!(
@@ -516,6 +557,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn test_inverse_standard_dbt_orientation_metadata_records_flip() {
+        let dicom_file = dbt_volume("L", "CC", "P\\L");
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+        let flip = Flip::both_from_image(&images[0]);
+        assert_eq!(metadata.flip, Some(flip));
+        assert_eq!(
+            metadata.apply(&Coord::new(0, 0)),
+            Coord::new(flip.width - 1, flip.height - 1)
+        );
     }
 
     #[rstest]

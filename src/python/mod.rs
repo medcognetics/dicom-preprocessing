@@ -2,6 +2,7 @@ pub mod manifest;
 pub mod path;
 pub mod preprocess;
 pub mod tiff;
+pub mod validation;
 
 use pyo3::prelude::*;
 
@@ -12,5 +13,6 @@ pub fn dicom_preprocessing<'py>(py: Python<'py>, m: &Bound<'py, PyModule>) -> Py
     path::register_submodule(py, m)?;
     manifest::register_submodule(py, m)?;
     preprocess::register_submodule(py, m)?;
+    validation::register_submodule(py, m)?;
     Ok(())
 }

@@ -221,11 +221,24 @@ Python bindings are provided via the `pyo3` crate. The following features are su
  - Loading preprocessed TIFFs into Numpy arrays
  - Iterating, sorting, and discovering DICOM or TIFF files from various sources
  - Direct preprocessing of a DICOM file or buffer into a Numpy array
+ - Validating whether a DICOM file is ready for preprocessing
 
 Direct preprocessing of a DICOM file or buffer into a Numpy array is achieved using a temporary TIFF file.
 This temporary file is spooled, having an in-memory capacity of 64MB with additional space allocated on disk as needed.
 This spool size was chosen to accommodate most preprocessed 2D images without being overly burdensome.
 In the future we will support a direct conversion, avoiding the need for an intermediate TIFF file.
+
+The validator API returns the same report schema as `dicom-validate --format json`.
+Validation blockers are reported in the returned dictionary rather than raised as Python exceptions.
+Runtime errors such as a missing source path still raise exceptions.
+
+```python
+import dicom_preprocessing as dp
+
+report = dp.validate_dicom("/path/to/image.dcm", decode="frame")
+if not report["summary"]["valid"]:
+    print(report["errors"])
+```
 
 
 ### CT Scan Stacking

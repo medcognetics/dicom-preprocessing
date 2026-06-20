@@ -976,40 +976,58 @@ fn collect_optional_diagnostics(
     report.preprocessing.window_width = optional_float_values(file, tags::WINDOW_WIDTH);
     report.preprocessing.voi_lut_function = optional_string_values(file, tags::VOILUT_FUNCTION);
 
+    let rescale_slope = report
+        .preprocessing
+        .rescale_slope
+        .as_ref()
+        .map(|values| format!("{values:?}"));
+    let rescale_intercept = report
+        .preprocessing
+        .rescale_intercept
+        .as_ref()
+        .map(|values| format!("{values:?}"));
+    let window_center = report
+        .preprocessing
+        .window_center
+        .as_ref()
+        .map(|values| format!("{values:?}"));
+    let window_width = report
+        .preprocessing
+        .window_width
+        .as_ref()
+        .map(|values| format!("{values:?}"));
+    let voi_lut_function = report
+        .preprocessing
+        .voi_lut_function
+        .as_ref()
+        .map(|values| format!("{values:?}"));
+
     diagnostic_for_optional_values(
         report,
         "RescaleSlope",
         tags::RESCALE_SLOPE,
-        report
-            .preprocessing
-            .rescale_slope
-            .as_ref()
-            .map(|values| format!("{values:?}")),
+        rescale_slope,
         "RescaleSlope is absent; dicom-pixeldata defaults to slope 1.0",
     );
     diagnostic_for_optional_values(
         report,
         "RescaleIntercept",
         tags::RESCALE_INTERCEPT,
-        report
-            .preprocessing
-            .rescale_intercept
-            .as_ref()
-            .map(|values| format!("{values:?}")),
+        rescale_intercept,
         "RescaleIntercept is absent; dicom-pixeldata defaults to intercept 0.0",
     );
     diagnostic_for_optional_values(
         report,
         "WindowCenter",
         tags::WINDOW_CENTER,
-        report.preprocessing.window_center.as_ref().map(|values| format!("{values:?}")),
+        window_center,
         "WindowCenter is absent; display normalization will use other VOI data or pixel range normalization",
     );
     diagnostic_for_optional_values(
         report,
         "WindowWidth",
         tags::WINDOW_WIDTH,
-        report.preprocessing.window_width.as_ref().map(|values| format!("{values:?}")),
+        window_width,
         "WindowWidth is absent; display normalization will use other VOI data or pixel range normalization",
     );
 
@@ -1027,11 +1045,7 @@ fn collect_optional_diagnostics(
             "VOILUTFunction",
             "VOILUTFunction is present".to_string(),
             Some(tags::VOILUT_FUNCTION),
-            report
-                .preprocessing
-                .voi_lut_function
-                .as_ref()
-                .map(|values| format!("{values:?}")),
+            voi_lut_function,
         ),
         None => report.record_info(
             "voi_lut_function_absent",

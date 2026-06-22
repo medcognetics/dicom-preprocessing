@@ -96,6 +96,23 @@ Options:
 ```
 
 
+### DICOM Validation
+
+`dicom-validate` checks whether a single DICOM file has the metadata needed for the preprocessing path.
+It strictly validates decode and TIFF-output requirements such as `PixelData`, dimensions, pixel format, `BitsAllocated`, `BitsStored`, and `HighBit`.
+Optional display metadata such as windowing, VOI LUT, rescale, and spacing is reported diagnostically without making the file invalid.
+
+Example usage:
+
+```
+dicom-validate /path/to/image.dcm
+dicom-validate --format json /path/to/image.dcm
+dicom-validate --decode none /path/to/image.dcm
+```
+
+Exit code `0` means the file passed validation, `1` means validation completed and found preprocessing blockers, and `2` means the tool hit a runtime error such as an unreadable path.
+
+
 ### Example Images
 
 Below are example images demonstrating the effects of different cropping options (resized to 384x512):
@@ -204,11 +221,24 @@ Python bindings are provided via the `pyo3` crate. The following features are su
  - Loading preprocessed TIFFs into Numpy arrays
  - Iterating, sorting, and discovering DICOM or TIFF files from various sources
  - Direct preprocessing of a DICOM file or buffer into a Numpy array
+ - Validating whether a DICOM file is ready for preprocessing
 
 Direct preprocessing of a DICOM file or buffer into a Numpy array is achieved using a temporary TIFF file.
 This temporary file is spooled, having an in-memory capacity of 64MB with additional space allocated on disk as needed.
 This spool size was chosen to accommodate most preprocessed 2D images without being overly burdensome.
 In the future we will support a direct conversion, avoiding the need for an intermediate TIFF file.
+
+The validator API returns the same report schema as `dicom-validate --format json`.
+Validation blockers are reported in the returned dictionary rather than raised as Python exceptions.
+Runtime errors such as a missing source path still raise exceptions.
+
+```python
+import dicom_preprocessing as dp
+
+report = dp.validate_dicom("/path/to/image.dcm", decode="frame")
+if not report["summary"]["valid"]:
+    print(report["errors"])
+```
 
 
 ### CT Scan Stacking

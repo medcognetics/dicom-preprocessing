@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -151,6 +151,25 @@ class Preprocessor:
         target_frames: int = 32,
         convert_options: str = "default",
     ) -> None: ...
+
+def validate_dicom(path: Union[str, Path], decode: Literal["frame", "none"] = "frame") -> Dict[str, Any]:
+    """Validate whether a DICOM file is ready for preprocessing.
+
+    Args:
+        path: Path to the DICOM file
+        decode: Validation depth. ``"frame"`` runs a frame-0 decode/image-conversion smoke test;
+            ``"none"`` validates metadata only.
+
+    Returns:
+        Nested report dictionary matching the ``dicom-validate --format json`` schema. Validation failures
+        are returned in the report rather than raised.
+
+    Raises:
+        FileNotFoundError: If the source path does not exist or is not a file
+        ValueError: If ``decode`` is not ``"frame"`` or ``"none"``
+        RuntimeError: If the DICOM file cannot be read or the report cannot be serialized
+    """
+    ...
 
 def get_frame_count(path: Union[str, Path]) -> int:
     """Get the number of frames in a TIFF file.

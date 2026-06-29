@@ -2,7 +2,6 @@ use image::imageops::FilterType;
 use image::{DynamicImage, GenericImageView, Luma, Pixel};
 use imageproc::contrast::{threshold, ThresholdType};
 use imageproc::region_labelling::{connected_components, Connectivity};
-use itertools::Itertools;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
 use tiff::encoder::colortype::ColorType;
@@ -19,6 +18,42 @@ pub const DEFAULT_CROP_SIZE: u16 = 50720;
 const DEFAULT_CHECK_MAX: bool = false;
 const DEFAULT_RESIZE_SIZE: u32 = 512;
 const NONZERO_THRESHOLD: u8 = 1;
+
+#[derive(Clone, Copy, Debug)]
+struct ComponentBounds {
+    count: usize,
+    left: u32,
+    right: u32,
+    top: u32,
+    bottom: u32,
+}
+
+impl ComponentBounds {
+    fn empty() -> Self {
+        Self {
+            count: 0,
+            left: u32::MAX,
+            right: 0,
+            top: u32::MAX,
+            bottom: 0,
+        }
+    }
+
+    fn include(&mut self, x: u32, y: u32) {
+        if self.count == 0 {
+            self.left = x;
+            self.right = x;
+            self.top = y;
+            self.bottom = y;
+        } else {
+            self.left = self.left.min(x);
+            self.right = self.right.max(x);
+            self.top = self.top.min(y);
+            self.bottom = self.bottom.max(y);
+        }
+        self.count += 1;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Crop {
@@ -93,8 +128,7 @@ impl Crop {
         border_frac: Option<f32>,
     ) -> Self {
         // First generate a baseline crop
-        let image = image.clone();
-        let crop = Crop::new(&image, check_max, border_frac);
+        let crop = Crop::new(image, check_max, border_frac);
         let thumbnail = image.crop_imm(crop.left, crop.top, crop.width, crop.height);
 
         // Resize the image to smaller size for fast computation of crop boundaries
@@ -119,25 +153,34 @@ impl Crop {
         let bg = Luma([0]);
         let components = connected_components(&thumbnail, Connectivity::Four, bg);
 
-        // Find the largest connected component
-        let (max_component, _) = components
-            .iter()
-            .filter(|&&c| c > 0)
-            .counts()
-            .into_iter()
-            .max_by_key(|&(_, count)| count)
-            .unwrap_or((&0, 0));
+        let mut component_bounds = Vec::<ComponentBounds>::new();
+        for (x, y, component) in components.enumerate_pixels() {
+            let label = component[0] as usize;
+            if label == 0 {
+                continue;
+            }
+            if component_bounds.len() <= label {
+                component_bounds.resize_with(label + 1, ComponentBounds::empty);
+            }
+            component_bounds[label].include(x, y);
+        }
 
-        // Compute crop bounds from the largest connected component
-        let (left, right, top, bottom) = components
-            .enumerate_pixels()
-            .filter(|&(_, _, c)| c[0] == *max_component)
-            .fold(
-                (thumbnail.width() - 1, 0, thumbnail.height() - 1, 0),
-                |(min_x, max_x, min_y, max_y), (x, y, _)| {
-                    (min_x.min(x), max_x.max(x), min_y.min(y), max_y.max(y))
-                },
-            );
+        let largest_component = component_bounds
+            .iter()
+            .copied()
+            .filter(|component| component.count > 0)
+            .max_by_key(|component| component.count);
+
+        let (left, right, top, bottom) = largest_component
+            .map(|component| {
+                (
+                    component.left,
+                    component.right,
+                    component.top,
+                    component.bottom,
+                )
+            })
+            .unwrap_or((0, thumbnail.width() - 1, 0, thumbnail.height() - 1));
 
         // Determine scale factor between resized and original cropped image
         let orig_width = crop.width;
@@ -390,6 +433,18 @@ mod tests {
     use tiff::decoder::Decoder as TiffDecoder;
     use tiff::encoder::TiffEncoder;
 
+    fn rgba_image_from_rows<R: AsRef<[u8]>>(rows: &[R]) -> DynamicImage {
+        let width = rows[0].as_ref().len() as u32;
+        let height = rows.len() as u32;
+        let mut img = RgbaImage::new(width, height);
+        for (y, row) in rows.iter().enumerate() {
+            for (x, &value) in row.as_ref().iter().enumerate() {
+                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
+            }
+        }
+        DynamicImage::ImageRgba8(img)
+    }
+
     #[rstest]
     #[case(
         vec![
@@ -436,24 +491,10 @@ mod tests {
         #[case] crop_max: bool,
         #[case] expected_crop: (u32, u32, u32, u32),
     ) {
-        // Create a new image from the pixel data
-        let width = pixels[0].len() as u32;
-        let height = pixels.len() as u32;
-        let mut img = RgbaImage::new(width, height);
-        for (y, row) in pixels.iter().enumerate() {
-            for (x, &value) in row.iter().enumerate() {
-                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
-            }
-        }
-        let dynamic_image = DynamicImage::ImageRgba8(img);
+        let dynamic_image = rgba_image_from_rows(&pixels);
 
         let crop = Crop::new(&dynamic_image, crop_max, None);
-        let expected_crop = Crop {
-            left: expected_crop.0,
-            top: expected_crop.1,
-            width: expected_crop.2,
-            height: expected_crop.3,
-        };
+        let expected_crop = expected_crop.into();
         assert_eq!(crop, expected_crop);
     }
 
@@ -503,25 +544,38 @@ mod tests {
         #[case] check_max: bool,
         #[case] expected_crop: (u32, u32, u32, u32),
     ) {
-        // Create a new image from the pixel data
-        let width = pixels[0].len() as u32;
-        let height = pixels.len() as u32;
-        let mut img = RgbaImage::new(width, height);
-        for (y, row) in pixels.iter().enumerate() {
-            for (x, &value) in row.iter().enumerate() {
-                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
-            }
-        }
-        let dynamic_image = DynamicImage::ImageRgba8(img);
+        let dynamic_image = rgba_image_from_rows(&pixels);
 
         let crop = Crop::new_from_components(&dynamic_image, check_max, None);
-        let expected_crop = Crop {
-            left: expected_crop.0,
-            top: expected_crop.1,
-            width: expected_crop.2,
-            height: expected_crop.3,
-        };
+        let expected_crop = expected_crop.into();
         assert_eq!(crop, expected_crop);
+    }
+
+    #[test]
+    fn test_new_from_components_selects_largest_foreground_component() {
+        let pixels = [
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 7, 7, 0, 0, 0, 0, 0],
+            [0, 7, 7, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 9, 9, 9, 0],
+            [0, 0, 0, 0, 9, 9, 9, 0],
+            [0, 0, 0, 0, 9, 9, 9, 0],
+            [0, 0, 0, 0, 9, 9, 9, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0],
+        ];
+        let dynamic_image = rgba_image_from_rows(&pixels);
+
+        let crop = Crop::new_from_components(&dynamic_image, false, None);
+
+        assert_eq!(
+            crop,
+            Crop {
+                left: 4,
+                top: 3,
+                width: 3,
+                height: 4,
+            }
+        );
     }
 
     #[rstest]
@@ -653,24 +707,10 @@ mod tests {
         #[case] check_max: bool,
         #[case] expected_crop: (u32, u32, u32, u32),
     ) {
-        // Create a new image from the pixel data
-        let width = pixels[0].len() as u32;
-        let height = pixels.len() as u32;
-        let mut img = RgbaImage::new(width, height);
-        for (y, row) in pixels.iter().enumerate() {
-            for (x, &value) in row.iter().enumerate() {
-                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
-            }
-        }
-        let dynamic_image = DynamicImage::ImageRgba8(img);
+        let dynamic_image = rgba_image_from_rows(&pixels);
 
         let crop = Crop::new(&dynamic_image, check_max, Some(border_frac));
-        let expected_crop = Crop {
-            left: expected_crop.0,
-            top: expected_crop.1,
-            width: expected_crop.2,
-            height: expected_crop.3,
-        };
+        let expected_crop = expected_crop.into();
         assert_eq!(crop, expected_crop);
     }
 
@@ -728,24 +768,10 @@ mod tests {
         #[case] check_max: bool,
         #[case] expected_crop: (u32, u32, u32, u32),
     ) {
-        // Create a new image from the pixel data
-        let width = pixels[0].len() as u32;
-        let height = pixels.len() as u32;
-        let mut img = RgbaImage::new(width, height);
-        for (y, row) in pixels.iter().enumerate() {
-            for (x, &value) in row.iter().enumerate() {
-                img.put_pixel(x as u32, y as u32, image::Rgba([value, value, value, 255]));
-            }
-        }
-        let dynamic_image = DynamicImage::ImageRgba8(img);
+        let dynamic_image = rgba_image_from_rows(&pixels);
 
         let crop = Crop::new_from_images(&[&dynamic_image], check_max, true, border_frac);
-        let expected_crop = Crop {
-            left: expected_crop.0,
-            top: expected_crop.1,
-            width: expected_crop.2,
-            height: expected_crop.3,
-        };
+        let expected_crop = expected_crop.into();
         assert_eq!(crop, expected_crop);
     }
 }

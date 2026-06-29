@@ -215,6 +215,35 @@ Example usage:
 dicom-manifest /path/to/preprocessed/dataset/images /path/to/preprocessed/dataset/manifest.csv
 ```
 
+### Rust Viewer API
+
+Rust callers can use `ViewerDicom` and `VolumeHandler` when they need display-frame planning without committing to the TIFF preprocessing output path.
+The viewer path uses the same frame ordering, volume handling, and DICOM sanitation logic as preprocessing, including empty `VOILUTFunction` cleanup.
+
+```rust
+use dicom_preprocessing::{ViewerDicom, VolumeFrameSource, VolumeHandler};
+
+fn main() -> Result<(), dicom_preprocessing::DicomError> {
+    let viewer = ViewerDicom::open("/path/to/image.dcm", VolumeHandler::keep())?;
+    for (display_index, source) in viewer.frame_plan().display_frames.iter().enumerate() {
+        match source {
+            VolumeFrameSource::StoredFrame { stored_frame_index } => {
+                println!("display {display_index} maps to stored frame {stored_frame_index}");
+                let raw = viewer.decode_raw_display_frame(display_index)?;
+                println!("raw bytes: {}", raw.data.len());
+            }
+            VolumeFrameSource::Derived => {
+                println!("display {display_index} is synthesized");
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+`StoredFrame` entries are safe to use for frame-specific overlays such as GSPS, SR, or Parametric Map references.
+`Derived` entries identify synthesized outputs such as interpolation, MIP, or Laplacian MIP where exact stored-frame overlays should not be drawn directly.
+
 ### Python Bindings
 
 Python bindings are provided via the `pyo3` crate. The following features are supported:

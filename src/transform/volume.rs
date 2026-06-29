@@ -337,16 +337,20 @@ fn decode_frame_numbers_serial(
 ) -> Result<Vec<DynamicImage>, DicomError> {
     let mut image_data = Vec::with_capacity(frame_numbers.len());
     for frame_number in frame_numbers {
-        let decoded = file
-            .decode_pixel_data_frame(*frame_number)
-            .context(PixelDataSnafu)?;
-        image_data.push(
-            decoded
-                .to_dynamic_image_with_options(0, options)
-                .context(PixelDataSnafu)?,
-        );
+        image_data.push(decode_frame_number(file, options, *frame_number)?);
     }
     Ok(image_data)
+}
+
+fn decode_frame_number(
+    file: &FileDicomObject<InMemDicomObject>,
+    options: &ConvertOptions,
+    frame_number: u32,
+) -> Result<DynamicImage, DicomError> {
+    file.decode_pixel_data_frame(frame_number)
+        .context(PixelDataSnafu)?
+        .to_dynamic_image_with_options(0, options)
+        .context(PixelDataSnafu)
 }
 
 fn decode_frame_numbers_parallel(
@@ -356,14 +360,7 @@ fn decode_frame_numbers_parallel(
 ) -> Result<Vec<DynamicImage>, DicomError> {
     frame_numbers
         .par_iter()
-        .map(|frame_number| {
-            let result = file
-                .decode_pixel_data_frame(*frame_number)
-                .context(PixelDataSnafu)?
-                .to_dynamic_image_with_options(0, options)
-                .context(PixelDataSnafu)?;
-            Ok::<DynamicImage, DicomError>(result)
-        })
+        .map(|frame_number| decode_frame_number(file, options, *frame_number))
         .collect()
 }
 
@@ -722,11 +719,21 @@ impl MaxIntensity {
     ) -> Result<PreparedVolume, DicomError> {
         let frame_plan = self.frame_plan(file)?;
         let trimmed_frame_numbers = self.trimmed_frame_numbers(&frame_plan.stored_frame_order)?;
-        let frames = if parallel {
-            decode_frame_numbers_parallel(file, options, &trimmed_frame_numbers)?
+        let image = if parallel {
+            Self::reduce_frames(decode_frame_numbers_parallel(
+                file,
+                options,
+                &trimmed_frame_numbers,
+            )?)?
         } else {
-            decode_frame_numbers_serial(file, options, &trimmed_frame_numbers)?
+            Self::reduce_frame_numbers_serial(file, options, &trimmed_frame_numbers)?
         };
+        Ok(prepared_volume(file, vec![image], frame_plan))
+    }
+}
+
+impl MaxIntensity {
+    fn reduce_frames(frames: Vec<DynamicImage>) -> Result<DynamicImage, DicomError> {
         let mut frames = frames.into_iter();
         let mut image = frames.next().ok_or(DicomError::FrameIndexError {
             start: 0,
@@ -736,11 +743,28 @@ impl MaxIntensity {
         for frame in frames {
             image = Self::reduce(image, frame);
         }
-        Ok(prepared_volume(file, vec![image], frame_plan))
+        Ok(image)
     }
-}
 
-impl MaxIntensity {
+    fn reduce_frame_numbers_serial(
+        file: &FileDicomObject<InMemDicomObject>,
+        options: &ConvertOptions,
+        frame_numbers: &[u32],
+    ) -> Result<DynamicImage, DicomError> {
+        let mut frame_numbers = frame_numbers.iter();
+        let first_frame_number = frame_numbers.next().ok_or(DicomError::FrameIndexError {
+            start: 0,
+            end: 0,
+            number_of_frames: 0,
+        })?;
+        let mut image = decode_frame_number(file, options, *first_frame_number)?;
+        for frame_number in frame_numbers {
+            let frame = decode_frame_number(file, options, *frame_number)?;
+            image = Self::reduce(image, frame);
+        }
+        Ok(image)
+    }
+
     fn reduce(current: DynamicImage, new: DynamicImage) -> DynamicImage {
         let mut current = current;
         let (width, height) = current.dimensions();
@@ -1924,6 +1948,23 @@ mod tests {
             laplacian_plan.display_frames,
             vec![VolumeFrameSource::Derived]
         );
+    }
+
+    #[test]
+    fn max_intensity_serial_matches_streaming_ordered_reduction() {
+        let dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        let mut frames = raw_ordered_frames(&dicom).into_iter();
+        let mut expected = frames.next().unwrap();
+        for frame in frames {
+            expected = MaxIntensity::reduce(expected, frame);
+        }
+
+        let actual = MaxIntensity::new(0, 0)
+            .prepare_volume_with_options(&dicom, &ConvertOptions::default(), false)
+            .unwrap()
+            .images;
+
+        assert_images_match(&[expected], &actual);
     }
 
     #[test]

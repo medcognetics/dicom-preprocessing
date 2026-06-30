@@ -8,6 +8,7 @@ pub mod preprocess;
 pub mod save;
 pub mod transform;
 pub mod validation;
+pub mod viewer;
 
 pub use color::*;
 pub use errors::*;
@@ -19,6 +20,7 @@ pub use preprocess::*;
 pub use save::*;
 pub use transform::*;
 pub use validation::*;
+pub use viewer::*;
 
 #[cfg(feature = "python")]
 pub mod python;

@@ -7,8 +7,8 @@ use tiff::encoder::TiffKind;
 pub mod resolution;
 pub use resolution::*;
 
-pub(crate) mod frame_order;
-pub(crate) use frame_order::*;
+pub mod frame_order;
+pub use frame_order::*;
 
 pub mod preprocessing;
 pub use preprocessing::*;

@@ -10,8 +10,8 @@ use crate::errors::DicomError;
 use crate::metadata::{FrameCount, PreprocessingMetadata, Resolution};
 use crate::transform::resize;
 use crate::transform::{
-    inverse_standard_dbt_flip, Crop, HandleVolume, KeepVolume, Padding, PaddingDirection, Resize,
-    Transform, VolumeHandler,
+    inverse_standard_dbt_flip, Crop, KeepVolume, Padding, PaddingDirection, PreparedVolume, Resize,
+    Transform, VolumeFramePlan, VolumeFrameSource, VolumeHandler,
 };
 
 /// Configuration for spacing-based resizing
@@ -243,24 +243,24 @@ impl Preprocessor {
         file: &FileDicomObject<InMemDicomObject>,
         parallel: bool,
     ) -> Result<Vec<DynamicImage>, DicomError> {
+        Ok(self
+            .prepare_volume_with_single_frame_guard(file, parallel)?
+            .images)
+    }
+
+    fn prepare_volume_with_single_frame_guard(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+        parallel: bool,
+    ) -> Result<PreparedVolume, DicomError> {
         let frame_count: u32 = FrameCount::try_from(file)?.into();
-
-        if frame_count == 1 {
-            let keep_handler = KeepVolume;
-            return if parallel {
-                keep_handler.par_decode_volume_with_options(file, &self.convert_options)
-            } else {
-                keep_handler.decode_volume_with_options(file, &self.convert_options)
-            };
-        }
-
-        if parallel {
-            self.volume_handler
-                .par_decode_volume_with_options(file, &self.convert_options)
+        let effective_handler = if frame_count == 1 {
+            VolumeHandler::Keep(KeepVolume)
         } else {
-            self.volume_handler
-                .decode_volume_with_options(file, &self.convert_options)
-        }
+            self.volume_handler.clone()
+        };
+
+        effective_handler.prepare_volume_with_options(file, &self.convert_options, parallel)
     }
 
     /// Decodes the pixel data and applies transformations.
@@ -270,9 +270,22 @@ impl Preprocessor {
         file: &FileDicomObject<InMemDicomObject>,
         parallel: bool,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
+        let (images, metadata, _) = self.prepare_image_with_plan(file, parallel)?;
+        Ok((images, metadata))
+    }
+
+    /// Decodes pixel data, applies preprocessing transforms, and returns the
+    /// display-frame provenance used to produce the image stack.
+    pub fn prepare_image_with_plan(
+        &self,
+        file: &FileDicomObject<InMemDicomObject>,
+        parallel: bool,
+    ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata, VolumeFramePlan), DicomError> {
         // Run decoding and volume handling
-        let mut image_data = self.decode_with_single_frame_guard(file, parallel)?;
-        let flip = inverse_standard_dbt_flip(file, &image_data);
+        let prepared_volume = self.prepare_volume_with_single_frame_guard(file, parallel)?;
+        let mut image_data = prepared_volume.images;
+        let mut frame_plan = prepared_volume.frame_plan;
+        let flip = prepared_volume.orientation_flip;
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
@@ -284,7 +297,11 @@ impl Preprocessor {
             .or_else(|| self.volume_handler.get_target_frames());
 
         if let Some(target_frames) = target_frames {
+            let original_frame_count = image_data.len();
             image_data = self.interpolate_z_spacing(image_data, target_frames);
+            if image_data.len() != original_frame_count {
+                frame_plan.display_frames = vec![VolumeFrameSource::Derived; image_data.len()];
+            }
 
             // Update the z-resolution after interpolation
             if let Some(ref mut res) = resolution {
@@ -325,6 +342,7 @@ impl Preprocessor {
                 resolution,
                 num_frames,
             },
+            frame_plan,
         ))
     }
 
@@ -492,7 +510,7 @@ mod tests {
     use dicom::object::open_file;
 
     use crate::metadata::FrameCount;
-    use crate::volume::{CentralSlice, KeepVolume, LaplacianMip, VolumeHandler};
+    use crate::volume::{CentralSlice, KeepVolume, LaplacianMip, VolumeFrameSource, VolumeHandler};
     use image::{GenericImageView, RgbaImage};
     use rstest::rstest;
 
@@ -583,6 +601,40 @@ mod tests {
         assert_eq!(
             metadata.apply(&Coord::new(0, 0)),
             Coord::new(flip.width - 1, flip.height - 1)
+        );
+    }
+
+    #[test]
+    fn prepare_image_delegates_to_prepare_image_with_plan() {
+        let dicom_file =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: Some((32, 32)),
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: true,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+        let (images_with_plan, metadata_with_plan, frame_plan) = preprocessor
+            .prepare_image_with_plan(&dicom_file, false)
+            .unwrap();
+
+        assert_eq!(images, images_with_plan);
+        assert_eq!(metadata, metadata_with_plan);
+        assert_eq!(
+            frame_plan.display_frames,
+            vec![VolumeFrameSource::StoredFrame {
+                stored_frame_index: 0
+            }]
         );
     }
 

@@ -67,6 +67,22 @@ pub enum DicomError {
     },
 
     #[snafu(display(
+        "display frame index out of bounds: display_frame_index={}, number_of_frames={}",
+        display_frame_index,
+        number_of_frames
+    ))]
+    DisplayFrameIndexError {
+        display_frame_index: usize,
+        number_of_frames: usize,
+    },
+
+    #[snafu(display(
+        "display frame {} is derived and has no exact stored frame",
+        display_frame_index
+    ))]
+    DerivedFrameDecodeError { display_frame_index: usize },
+
+    #[snafu(display(
         "number of frames {} is insufficient for laplacian mip with skip {}-{}",
         number_of_frames,
         skip_start,

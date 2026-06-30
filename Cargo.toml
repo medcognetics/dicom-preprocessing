@@ -99,3 +99,7 @@ harness = false
 [[bench]]
 name = "dbt_parallel"
 harness = false
+
+[[bench]]
+name = "crop"
+harness = false

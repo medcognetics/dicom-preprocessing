@@ -1,4 +1,4 @@
-use image::{DynamicImage, GenericImage, GenericImageView, Pixel};
+use image::{DynamicImage, GenericImage, GenericImageView, ImageBuffer, Luma, Pixel};
 use std::fmt;
 use std::io::{Read, Seek, Write};
 use tiff::decoder::Decoder;
@@ -12,6 +12,8 @@ use crate::metadata::WriteTags;
 use crate::transform::{Coord, InvertibleTransform, Transform};
 
 pub const ACTIVE_AREA: u16 = 50829;
+
+type Luma16Image = ImageBuffer<Luma<u16>, Vec<u16>>;
 
 #[derive(Clone, Debug, clap::ValueEnum, Default, Copy)]
 pub enum PaddingDirection {
@@ -112,10 +114,43 @@ impl Padding {
             }
         }
     }
+
+    fn apply_luma16(&self, image: &Luma16Image) -> DynamicImage {
+        let (source_width_px, source_height_px) = image.dimensions();
+        let destination_width_px = source_width_px + self.left + self.right;
+        let destination_height_px = source_height_px + self.top + self.bottom;
+        let mut padded_image = Luma16Image::new(destination_width_px, destination_height_px);
+
+        let source_width = source_width_px as usize;
+        let source_height = source_height_px as usize;
+        let destination_width = destination_width_px as usize;
+        let left_offset = self.left as usize;
+        let top_offset = self.top as usize;
+        let source = image.as_flat_samples().samples;
+
+        {
+            let destination = padded_image.as_flat_samples_mut().samples;
+
+            for row in 0..source_height {
+                let source_start = row * source_width;
+                let source_end = source_start + source_width;
+                let destination_start = (row + top_offset) * destination_width + left_offset;
+                let destination_end = destination_start + source_width;
+                destination[destination_start..destination_end]
+                    .copy_from_slice(&source[source_start..source_end]);
+            }
+        }
+
+        DynamicImage::ImageLuma16(padded_image)
+    }
 }
 
 impl Transform<DynamicImage> for Padding {
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
+        if let DynamicImage::ImageLuma16(image) = image {
+            return self.apply_luma16(image);
+        }
+
         let (width, height) = image.dimensions();
         let mut padded_image = DynamicImage::new(
             width + self.left + self.right,
@@ -211,7 +246,7 @@ impl TryFrom<Vec<u32>> for Padding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{DynamicImage, RgbaImage};
+    use image::{DynamicImage, ImageBuffer, Luma, RgbaImage};
     use rstest::rstest;
     use std::fs::File;
     use tempfile::tempdir;
@@ -360,6 +395,45 @@ mod tests {
             .collect();
 
         assert_eq!(padded_pixels, expected_pixels);
+    }
+
+    #[test]
+    fn test_pad_luma16_fast_path() {
+        const WIDTH: u32 = 3;
+        const HEIGHT: u32 = 2;
+        const PADDING: Padding = Padding {
+            left: 1,
+            top: 2,
+            right: 2,
+            bottom: 1,
+        };
+        const OUTPUT_WIDTH: u32 = WIDTH + PADDING.left + PADDING.right;
+        const OUTPUT_HEIGHT: u32 = HEIGHT + PADDING.top + PADDING.bottom;
+
+        fn pixel_value(x: u32, y: u32) -> u16 {
+            (y * WIDTH + x + 1) as u16
+        }
+
+        let image = ImageBuffer::from_fn(WIDTH, HEIGHT, |x, y| Luma([pixel_value(x, y)]));
+        let dynamic_image = DynamicImage::ImageLuma16(image);
+
+        let padded_image = PADDING.apply(&dynamic_image);
+        let padded = padded_image
+            .as_luma16()
+            .expect("Padding Luma16 input should preserve Luma16 color type");
+        assert_eq!(padded.dimensions(), (OUTPUT_WIDTH, OUTPUT_HEIGHT));
+
+        let mut expected = vec![0_u16; (OUTPUT_WIDTH * OUTPUT_HEIGHT) as usize];
+        for y in 0..HEIGHT {
+            for x in 0..WIDTH {
+                let destination_x = x + PADDING.left;
+                let destination_y = y + PADDING.top;
+                let destination_index = (destination_y * OUTPUT_WIDTH + destination_x) as usize;
+                expected[destination_index] = pixel_value(x, y);
+            }
+        }
+
+        assert_eq!(padded.as_raw().as_slice(), expected.as_slice());
     }
 
     #[rstest]

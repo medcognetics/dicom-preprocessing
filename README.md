@@ -269,6 +269,20 @@ if not report["summary"]["valid"]:
     print(report["errors"])
 ```
 
+### Node/TypeScript Bindings
+
+Node bindings are provided under `bindings/node` with NAPI-RS. The package name is `@medcognetics/dicom-preprocessing`, and the viewer path exposes the same frame-plan and raw-frame contract as the Rust `ViewerDicom` API without crop, resize, or pad.
+
+```ts
+import { prepareDicom, renderFrame } from '@medcognetics/dicom-preprocessing'
+
+const prepared = prepareDicom({ path: '/path/to/image.dcm' })
+const frame = renderFrame(prepared, 0)
+console.log(frame.width, frame.height, frame.dtype, frame.source)
+```
+
+`frame.data` is a Node `Buffer` containing raw stored-frame bytes. NAPI-RS can transfer Rust-owned buffers without copying in standard Node runtimes, but Electron may copy buffers because of V8 memory-cage constraints.
+
 
 ### CT Scan Stacking
 

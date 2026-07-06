@@ -18,7 +18,7 @@ jobs:
                 command: cargo fmt -- --check
             - run:
                 name: Clippy check
-                command: cargo clippy --all-features -- -D warnings
+                command: cargo clippy --workspace --all-features -- -D warnings
             - save_cache:
                 key: v3-rust-quality-{{ arch }}-{{ checksum "Cargo.lock" }}
                 paths:
@@ -51,6 +51,34 @@ jobs:
                 name: Run Python quality checks
                 command: make quality-python
 
+    node_quality:
+        docker:
+            - image: cimg/node:24.13
+        steps:
+            - checkout
+            - restore_cache:
+                keys:
+                  - v1-node-{{ checksum "bindings/node/package-lock.json" }}
+                  - v1-node-
+            - run:
+                name: Install Rust
+                command: |
+                    if [ ! -f "$HOME/.cargo/env" ]; then
+                        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    fi
+                    echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
+            - run:
+                name: Install Node dependencies
+                command: make init-node
+            - save_cache:
+                key: v1-node-{{ checksum "bindings/node/package-lock.json" }}
+                paths:
+                  - ~/.npm
+                  - bindings/node/node_modules
+            - run:
+                name: Run Node quality checks
+                command: make quality-node
+
     rust_tests:
         docker:
             - image: rust:latest
@@ -67,7 +95,7 @@ jobs:
                 command: apt-get update && apt-get install -y python3-dev
             - run:
                 name: Run Rust tests
-                command: cargo test --all-features
+                command: cargo test --workspace --all-features
             - save_cache:
                 key: v3-rust-tests-{{ arch }}-{{ checksum "Cargo.lock" }}
                 paths:
@@ -118,6 +146,34 @@ jobs:
                   - ~/.rustup
                   - ./target
 
+    node_tests:
+        docker:
+            - image: cimg/node:24.13
+        steps:
+            - checkout
+            - restore_cache:
+                keys:
+                  - v1-node-{{ checksum "bindings/node/package-lock.json" }}
+                  - v1-node-
+            - run:
+                name: Install Rust
+                command: |
+                    if [ ! -f "$HOME/.cargo/env" ]; then
+                        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                    fi
+                    echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
+            - run:
+                name: Install Node dependencies
+                command: make init-node
+            - save_cache:
+                key: v1-node-{{ checksum "bindings/node/package-lock.json" }}
+                paths:
+                  - ~/.npm
+                  - bindings/node/node_modules
+            - run:
+                name: Run Node tests
+                command: make test-node
+
 workflows:
     build_and_test:
         jobs:
@@ -127,7 +183,15 @@ workflows:
                 requires:
                     - rust_quality
                     - python_quality
+                    - node_quality
             - python_tests:
                 requires:
                     - rust_quality
                     - python_quality
+                    - node_quality
+            - node_quality
+            - node_tests:
+                requires:
+                    - rust_quality
+                    - python_quality
+                    - node_quality

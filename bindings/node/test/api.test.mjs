@@ -77,7 +77,21 @@ test('invalid frame index is structured', () => {
   assert.throws(() => renderFrame(prepared, 999), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
 })
 
+test('frame indexes are validated before rendering', () => {
+  const prepared = prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') })
+
+  assert.throws(() => prepared.renderFrame(0.5), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
+  assert.throws(() => renderFrame(prepared, 2 ** 40), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
+})
+
 test('unreadable path and non-DICOM bytes are structured', () => {
   assert.throws(() => prepareDicom({ path: '/definitely/not/a/file.dcm' }), { code: 'READ_FILE' })
-  assert.throws(() => prepareDicom({ bytes: Buffer.from('not dicom') }), { code: 'READ_BYTES' })
+  assert.throws(
+    () => prepareDicom({ bytes: Buffer.from('not dicom') }),
+    (error) => {
+      assert.equal(error.code, 'READ_BYTES')
+      assert.doesNotMatch(error.message, /Backtrace|dicom_preprocessing_node::/)
+      return true
+    },
+  )
 })

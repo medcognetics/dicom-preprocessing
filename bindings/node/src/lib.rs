@@ -65,12 +65,12 @@ impl PreparedDicom {
         self.frame_plan.clone()
     }
 
-    #[napi(ts_return_type = "RenderedFrame")]
+    #[napi(ts_args_type = "frameIndex: number", ts_return_type = "RenderedFrame")]
     pub fn render_frame(
         &self,
-        frame_index: u32,
+        frame_index: Unknown<'_>,
     ) -> std::result::Result<NodeRenderedFrame, Error<String>> {
-        render_prepared_frame(self, frame_index)
+        render_prepared_frame(self, parse_frame_index(frame_index)?)
     }
 }
 
@@ -88,12 +88,15 @@ pub fn prepare_dicom(
     Ok(PreparedDicom { viewer, frame_plan })
 }
 
-#[napi(ts_return_type = "RenderedFrame")]
+#[napi(
+    ts_args_type = "prepared: PreparedDicom, frameIndex: number",
+    ts_return_type = "RenderedFrame"
+)]
 pub fn render_frame(
     prepared: &PreparedDicom,
-    frame_index: u32,
+    frame_index: Unknown<'_>,
 ) -> std::result::Result<NodeRenderedFrame, Error<String>> {
-    render_prepared_frame(prepared, frame_index)
+    render_prepared_frame(prepared, parse_frame_index(frame_index)?)
 }
 
 fn render_prepared_frame(
@@ -156,7 +159,7 @@ fn parse_dicom_input(
             let file = from_reader(Cursor::new(data)).map_err(|error| {
                 js_error(
                     CODE_READ_BYTES,
-                    format!("error reading DICOM bytes: {error:?}"),
+                    format!("error reading DICOM bytes: {error}"),
                 )
             })?;
             ViewerDicom::from_object(file, volume_handler).map_err(map_dicom_open_error)
@@ -186,6 +189,27 @@ fn parse_prepare_options(
         return Ok(VolumeHandler::keep());
     };
     parse_volume_handler(handler)
+}
+
+fn parse_frame_index(frame_index: Unknown<'_>) -> std::result::Result<u32, Error<String>> {
+    if frame_index.get_type().map_err(map_napi_invalid_input)? != ValueType::Number {
+        return Err(js_error(CODE_INVALID_INPUT, "frameIndex must be a number"));
+    }
+    let value = frame_index
+        .coerce_to_number()
+        .and_then(|number| number.get_double())
+        .map_err(map_napi_invalid_input)?;
+    checked_frame_index(value)
+}
+
+fn checked_frame_index(value: f64) -> std::result::Result<u32, Error<String>> {
+    if !value.is_finite() || value.fract() != 0.0 || value < 0.0 || value > f64::from(u32::MAX) {
+        return Err(js_error(
+            CODE_FRAME_INDEX_OUT_OF_RANGE,
+            format!("frameIndex must be a non-negative integer <= {}", u32::MAX),
+        ));
+    }
+    Ok(value as u32)
 }
 
 fn parse_volume_handler(handler: Unknown<'_>) -> std::result::Result<VolumeHandler, Error<String>> {
@@ -410,6 +434,25 @@ mod tests {
         assert_eq!(node_plan.display_frames.len(), 1);
         assert_eq!(node_plan.stored_frame_order, vec![0]);
         assert_eq!(node_plan.frame_order_strategy, "raw-preserved");
+    }
+
+    #[test]
+    fn checked_frame_index_rejects_lossy_js_numbers() {
+        assert_eq!(checked_frame_index(0.0).unwrap(), 0);
+        assert_eq!(checked_frame_index(f64::from(u32::MAX)).unwrap(), u32::MAX);
+
+        for value in [
+            -1.0,
+            0.5,
+            f64::NAN,
+            f64::INFINITY,
+            f64::from(u32::MAX) + 1.0,
+        ] {
+            assert_eq!(
+                checked_frame_index(value).unwrap_err().status,
+                CODE_FRAME_INDEX_OUT_OF_RANGE
+            );
+        }
     }
 
     #[test]

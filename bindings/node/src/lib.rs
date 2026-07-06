@@ -5,7 +5,7 @@ use dicom_preprocessing::{
     metadata::pixel_spacing_mm, DicomError, FrameOrderStrategy, ViewerDicom, VolumeFrameSource,
     VolumeHandler,
 };
-use napi::bindgen_prelude::{Buffer, Object, Unknown};
+use napi::bindgen_prelude::{Buffer, Object, Uint8Array, Unknown};
 use napi::{Error, JsValue, ValueType};
 use napi_derive::napi;
 
@@ -149,13 +149,13 @@ fn parse_dicom_input(
         .get::<String>("path")
         .map_err(map_napi_invalid_input)?;
     let bytes = input
-        .get::<Buffer>("bytes")
+        .get::<Uint8Array>("bytes")
         .map_err(map_napi_invalid_input)?;
 
     match (path, bytes) {
         (Some(path), None) => ViewerDicom::open(path, volume_handler).map_err(map_dicom_open_error),
         (None, Some(bytes)) => {
-            let data: Vec<u8> = bytes.into();
+            let data = bytes.as_ref().to_vec();
             let file = from_reader(Cursor::new(data)).map_err(|error| {
                 js_error(
                     CODE_READ_BYTES,
@@ -303,7 +303,8 @@ fn dtype_for_frame(
     signed: bool,
 ) -> std::result::Result<&'static str, Error<String>> {
     match (bits_allocated, signed) {
-        (8, _) => Ok("uint8"),
+        (8, false) => Ok("uint8"),
+        (8, true) => Ok("int8"),
         (16, false) => Ok("uint16"),
         (16, true) => Ok("int16"),
         _ => Err(js_error(
@@ -403,7 +404,7 @@ mod tests {
     #[test]
     fn dtype_maps_supported_native_frames() {
         assert_eq!(dtype_for_frame(8, false).unwrap(), "uint8");
-        assert_eq!(dtype_for_frame(8, true).unwrap(), "uint8");
+        assert_eq!(dtype_for_frame(8, true).unwrap(), "int8");
         assert_eq!(dtype_for_frame(16, false).unwrap(), "uint16");
         assert_eq!(dtype_for_frame(16, true).unwrap(), "int16");
         assert_eq!(

@@ -52,6 +52,23 @@ test('prepareDicom accepts bytes with parity against path input', () => {
   assert.deepEqual(fromBytes.data, fromPath.data)
 })
 
+test('prepareDicom accepts Uint8Array byte views', () => {
+  const path = requireFixture('DICOM_PREPROCESSING_CT_FIXTURE')
+  const file = readFileSync(path)
+  const padded = new Uint8Array(file.byteLength + 2)
+  padded.set(file, 1)
+  const bytes = padded.subarray(1, 1 + file.byteLength)
+
+  assert.equal(Buffer.isBuffer(bytes), false)
+  const fromPath = renderFrame(prepareDicom({ path }), 0)
+  const fromBytes = renderFrame(prepareDicom({ bytes, filename: 'CT_small.dcm' }), 0)
+
+  assert.equal(fromBytes.width, fromPath.width)
+  assert.equal(fromBytes.height, fromPath.height)
+  assert.equal(fromBytes.dtype, fromPath.dtype)
+  assert.deepEqual(fromBytes.data, fromPath.data)
+})
+
 test('renderFrame returns RGB metadata for RGB DICOM input', () => {
   const rendered = renderFrame(prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_RGB_FIXTURE') }), 0)
 

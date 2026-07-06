@@ -32,7 +32,7 @@ export interface FramePlan {
 export interface FrameMetadata {
   width: number
   height: number
-  dtype: 'uint8' | 'uint16' | 'int16'
+  dtype: 'uint8' | 'int8' | 'uint16' | 'int16'
   samplesPerPixel: number
   photometricInterpretation: string
   pixelSpacing?: [number, number]

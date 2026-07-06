@@ -49,6 +49,7 @@ rand = "0.10"
 criterion = "0.8"
 
 [workspace]
+members = [".", "bindings/node"]
 resolver = "2"
 
 [patch.crates-io]

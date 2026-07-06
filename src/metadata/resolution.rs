@@ -181,7 +181,8 @@ impl TryFrom<&FileDicomObject<InMemDicomObject>> for Resolution {
     }
 }
 
-fn pixel_spacing_mm(file: &FileDicomObject<InMemDicomObject>) -> Option<[f32; 2]> {
+/// Resolve DICOM in-plane pixel spacing in DICOM order: row spacing, then column spacing.
+pub fn pixel_spacing_mm(file: &FileDicomObject<InMemDicomObject>) -> Option<[f32; 2]> {
     file.get(tags::PIXEL_SPACING)
         .or_else(|| file.get(tags::IMAGER_PIXEL_SPACING))
         .and_then(parse_pair_from_element)

@@ -1,0 +1,22 @@
+[package]
+name = "dicom-preprocessing-node"
+version = "0.1.2"
+edition = "2021"
+publish = false
+
+[lib]
+name = "dicom_preprocessing_node"
+crate-type = ["cdylib"]
+
+[dependencies]
+dicom = { version = "0.9.0", features = ["image", "ndarray"] }
+dicom-preprocessing = { path = "../.." }
+napi = "3.10.3"
+napi-derive = "3.5.9"
+
+[build-dependencies]
+napi-build = "2.3.2"
+
+[dev-dependencies]
+dicom-test-files = "0.4"
+tempfile = "3.24"

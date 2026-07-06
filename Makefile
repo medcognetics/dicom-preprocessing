@@ -9,8 +9,10 @@ MATURIN_FEATURES=-F python -F pyo3/extension-module
 PYTHON=$(UV_RUN) python
 PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
 PYTEST_ARGS=-rs ./tests/
+NODE_PACKAGE=bindings/node
+NPM=npm
 
-.PHONY: init init-no-project ensure-uv develop develop-debug develop-release quality quality-python style test-python test-python-ci test-python-pdb test
+.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build-node quality quality-python quality-node style test-python test-python-ci test-python-pdb test-node test
 
 ensure-uv:
 	which $(UV) || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -24,6 +26,9 @@ init: ensure-uv
 init-no-project: ensure-uv
 	$(UV_SYNC_ALL_GROUPS) --no-install-project
 
+init-node:
+	$(NPM) --prefix $(NODE_PACKAGE) ci
+
 develop: develop-release
 
 develop-debug: $(MATURIN)
@@ -34,14 +39,21 @@ develop-release: $(MATURIN)
 
 quality:
 	cargo fmt -- --check
-	cargo check --all-features
-	cargo clippy --all-features -- -D warnings
+	cargo check --workspace --all-features
+	cargo clippy --workspace --all-features -- -D warnings
 	$(MAKE) quality-python
+	$(MAKE) quality-node
 
 quality-python:
 	$(UV_NO_PROJECT) ruff format --check $(PYTHON_QUALITY_TARGETS)
 	$(UV_NO_PROJECT) ruff check $(PYTHON_QUALITY_TARGETS)
 	$(UV_NO_PROJECT) basedpyright
+
+build-node:
+	$(NPM) --prefix $(NODE_PACKAGE) run build
+
+quality-node: init-node
+	$(NPM) --prefix $(NODE_PACKAGE) run typecheck
 
 style:
 	cargo fix --allow-dirty --all-features
@@ -60,8 +72,16 @@ test-python-pdb: develop
 	$(PYTHON) -m pytest $(PYTEST_ARGS) --pdb
 
 test:
-	cargo test
+	cargo test --workspace
 	$(MAKE) test-python
+	$(MAKE) test-node
+
+test-node: init-node
+	cargo test -p dicom-preprocessing-node ensure_node_fixtures
+	DICOM_PREPROCESSING_CT_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/CT_small.dcm" \
+	DICOM_PREPROCESSING_MULTIFRAME_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/emri_small.dcm" \
+	DICOM_PREPROCESSING_RGB_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/SC_rgb.dcm" \
+	$(NPM) --prefix $(NODE_PACKAGE) test
 
 # Docs image generation recipe.
 # NOTE: The lesion crop coordinates were manually determined for the specific source DICOM

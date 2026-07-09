@@ -187,31 +187,36 @@ fn render_derived_display_frame(
         .map_err(map_dicom_render_error)?;
     let width = image.width();
     let height = image.height();
+    let color = image.color();
     let (data, dtype, samples_per_pixel, photometric_interpretation) =
-        if let Some(image) = image.as_luma8() {
-            (
-                image.as_raw().clone(),
+        match (color.channel_count(), color.bits_per_pixel()) {
+            (1, 8) => (
+                image.into_luma8().into_raw(),
                 "uint8",
                 1_u32,
                 "MONOCHROME2".to_string(),
-            )
-        } else if let Some(image) = image.as_luma16() {
-            let data = image
-                .as_raw()
-                .iter()
-                .flat_map(|value| u16::to_le_bytes(*value))
-                .collect();
-            (data, "uint16", 1_u32, "MONOCHROME2".to_string())
-        } else if let Some(image) = image.as_rgb8() {
-            (image.as_raw().clone(), "uint8", 3_u32, "RGB".to_string())
-        } else {
-            return Err(js_error(
-                CODE_UNSUPPORTED_IMAGE_LAYOUT,
-                format!(
-                    "unsupported derived display frame color type: {:?}",
-                    image.color()
-                ),
-            ));
+            ),
+            (1, 16) => {
+                let data = image
+                    .into_luma16()
+                    .into_raw()
+                    .into_iter()
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                (data, "uint16", 1_u32, "MONOCHROME2".to_string())
+            }
+            (3, 24) => (
+                image.into_rgb8().into_raw(),
+                "uint8",
+                3_u32,
+                "RGB".to_string(),
+            ),
+            _ => {
+                return Err(js_error(
+                    CODE_UNSUPPORTED_IMAGE_LAYOUT,
+                    format!("unsupported derived display frame color type: {color:?}"),
+                ));
+            }
         };
 
     Ok(NodeRenderedFrame {

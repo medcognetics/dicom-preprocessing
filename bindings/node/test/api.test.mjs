@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { test } from 'node:test'
 import { fileURLToPath } from 'node:url'
 
-import { prepareDicom, renderFrame } from '../index.js'
+import { prepareDicom, renderDisplayFrame, renderFrame } from '../index.js'
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 const DEFAULT_FIXTURES = {
@@ -23,6 +23,11 @@ function requireFixture(name) {
   throw new Error(`${name} environment variable is required, or run make test-node to download fixtures`)
 }
 
+function frameByteLength(rendered) {
+  const bytesPerSample = rendered.dtype.endsWith('8') ? 1 : 2
+  return rendered.width * rendered.height * rendered.samplesPerPixel * bytesPerSample
+}
+
 test('prepareDicom accepts a file path and renders raw monochrome pixels', () => {
   const prepared = prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') })
   const rendered = prepared.renderFrame(0)
@@ -34,10 +39,7 @@ test('prepareDicom accepts a file path and renders raw monochrome pixels', () =>
   assert.equal(rendered.photometricInterpretation.startsWith('MONOCHROME'), true)
   assert.match(rendered.dtype, /^u?int(8|16)$/)
   assert.equal(Buffer.isBuffer(rendered.data), true)
-  assert.equal(
-    rendered.data.length,
-    rendered.width * rendered.height * rendered.samplesPerPixel * (rendered.dtype === 'uint8' ? 1 : 2),
-  )
+  assert.equal(rendered.data.length, frameByteLength(rendered))
 })
 
 test('prepareDicom accepts bytes with parity against path input', () => {
@@ -78,6 +80,16 @@ test('renderFrame returns RGB metadata for RGB DICOM input', () => {
   assert.equal(rendered.data.length, rendered.width * rendered.height * rendered.samplesPerPixel)
 })
 
+test('renderDisplayFrame matches raw rendering for stored display frames', () => {
+  const prepared = prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') })
+  const raw = renderFrame(prepared, 0)
+  const display = renderDisplayFrame(prepared, 0)
+  const displayMethod = prepared.renderDisplayFrame(0)
+
+  assert.deepEqual(display, raw)
+  assert.deepEqual(displayMethod, raw)
+})
+
 test('derived frame sources are exposed and raw rendering rejects them', () => {
   const prepared = prepareDicom(
     { path: requireFixture('DICOM_PREPROCESSING_MULTIFRAME_FIXTURE') },
@@ -88,10 +100,50 @@ test('derived frame sources are exposed and raw rendering rejects them', () => {
   assert.throws(() => prepared.renderFrame(0), { code: 'DERIVED_FRAME_NO_RAW_SOURCE' })
 })
 
+test('renderDisplayFrame renders derived laplacian mip output', () => {
+  const prepared = prepareDicom(
+    { path: requireFixture('DICOM_PREPROCESSING_MULTIFRAME_FIXTURE') },
+    { volumeHandler: { kind: 'laplacian-mip', skipStart: 0, skipEnd: 0 } },
+  )
+
+  assert.deepEqual(prepared.framePlan.displayFrames, [{ kind: 'derived' }])
+  assert.throws(() => prepared.renderFrame(0), { code: 'DERIVED_FRAME_NO_RAW_SOURCE' })
+
+  const rendered = prepared.renderDisplayFrame(0)
+  const topLevelRendered = renderDisplayFrame(prepared, 0)
+
+  assert.equal(rendered.displayFrameIndex, 0)
+  assert.deepEqual(rendered.source, { kind: 'derived' })
+  assert.equal(Buffer.isBuffer(rendered.data), true)
+  assert.equal(rendered.dtype, 'uint16')
+  assert.equal(rendered.samplesPerPixel, 1)
+  assert.equal(rendered.photometricInterpretation, 'MONOCHROME2')
+  assert.equal(rendered.rescaleSlope, 1)
+  assert.equal(rendered.rescaleIntercept, 0)
+  assert.equal(rendered.windowCenter, undefined)
+  assert.equal(rendered.windowWidth, undefined)
+  assert.equal(rendered.data.length, frameByteLength(rendered))
+  assert.deepEqual(topLevelRendered, rendered)
+})
+
+test('renderDisplayFrame has path and byte parity for derived frames', () => {
+  const path = requireFixture('DICOM_PREPROCESSING_MULTIFRAME_FIXTURE')
+  const options = { volumeHandler: { kind: 'laplacian-mip', skipStart: 0, skipEnd: 0 } }
+  const fromPath = renderDisplayFrame(prepareDicom({ path }, options), 0)
+  const fromBytes = renderDisplayFrame(prepareDicom({ bytes: readFileSync(path), filename: 'emri_small.dcm' }, options), 0)
+
+  assert.equal(fromBytes.width, fromPath.width)
+  assert.equal(fromBytes.height, fromPath.height)
+  assert.equal(fromBytes.dtype, fromPath.dtype)
+  assert.deepEqual(fromBytes.source, fromPath.source)
+  assert.deepEqual(fromBytes.data, fromPath.data)
+})
+
 test('invalid frame index is structured', () => {
   const prepared = prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') })
 
   assert.throws(() => renderFrame(prepared, 999), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
+  assert.throws(() => renderDisplayFrame(prepared, 999), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
 })
 
 test('frame indexes are validated before rendering', () => {
@@ -99,6 +151,8 @@ test('frame indexes are validated before rendering', () => {
 
   assert.throws(() => prepared.renderFrame(0.5), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
   assert.throws(() => renderFrame(prepared, 2 ** 40), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
+  assert.throws(() => prepared.renderDisplayFrame(0.5), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
+  assert.throws(() => renderDisplayFrame(prepared, 2 ** 40), { code: 'FRAME_INDEX_OUT_OF_RANGE' })
 })
 
 test('unreadable path and non-DICOM bytes are structured', () => {

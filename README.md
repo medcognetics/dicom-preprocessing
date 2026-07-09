@@ -271,17 +271,20 @@ if not report["summary"]["valid"]:
 
 ### Node/TypeScript Bindings
 
-Node bindings are provided under `bindings/node` with NAPI-RS. The package name is `@medcognetics/dicom-preprocessing`, and the viewer path exposes the same frame-plan and raw-frame contract as the Rust `ViewerDicom` API without crop, resize, or pad.
+Node bindings are provided under `bindings/node` with NAPI-RS. The package name is `@medcognetics/dicom-preprocessing`, and the viewer path exposes the same frame-plan contract as the Rust `ViewerDicom` API without crop, resize, or pad.
 
 ```ts
-import { prepareDicom, renderFrame } from '@medcognetics/dicom-preprocessing'
+import { prepareDicom, renderDisplayFrame, renderFrame } from '@medcognetics/dicom-preprocessing'
 
 const prepared = prepareDicom({ path: '/path/to/image.dcm' })
-const frame = renderFrame(prepared, 0)
-console.log(frame.width, frame.height, frame.dtype, frame.source)
+const raw = renderFrame(prepared, 0)
+const display = renderDisplayFrame(prepared, 0)
+console.log(display.width, display.height, display.dtype, display.source)
 ```
 
-`frame.data` is a Node `Buffer` containing raw stored-frame bytes. NAPI-RS can transfer Rust-owned buffers without copying in standard Node runtimes, but Electron may copy buffers because of V8 memory-cage constraints.
+`renderFrame` returns raw stored-frame bytes and rejects derived display frames because they have no exact stored-frame source.
+`renderDisplayFrame` returns the display-frame pixels, including derived volume-handler outputs such as `laplacian-mip`.
+Frame data is returned as a Node `Buffer`. NAPI-RS can transfer Rust-owned buffers without copying in standard Node runtimes, but Electron may copy buffers because of V8 memory-cage constraints.
 
 
 ### CT Scan Stacking

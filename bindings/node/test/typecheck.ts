@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import {
   PreparedDicom,
   prepareDicom,
+  renderDisplayFrame,
   renderFrame,
   type DicomInput,
   type FrameSource,
@@ -16,6 +17,7 @@ const handler: VolumeHandler = { kind: 'max-intensity', skipStart: 1, skipEnd: 1
 const prepared: PreparedDicom = prepareDicom(input, { volumeHandler: handler })
 const source: FrameSource = prepared.framePlan.displayFrames[0]
 const rendered: RenderedFrame = renderFrame(prepared, 0)
+const displayRendered: RenderedFrame = renderDisplayFrame(prepared, 0)
 const dtype: RenderedFrame['dtype'] = 'int8'
 
 if (source.kind === 'stored') {
@@ -23,5 +25,7 @@ if (source.kind === 'stored') {
 }
 
 rendered.data.byteLength.toFixed()
+displayRendered.data.byteLength.toFixed()
 prepareDicom(byteViewInput).renderFrame(0)
+prepareDicom(byteViewInput).renderDisplayFrame(0)
 dtype.toUpperCase()

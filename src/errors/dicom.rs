@@ -97,6 +97,9 @@ pub enum DicomError {
     #[snafu(display("cannot project laplacian mip from empty input frames"))]
     LaplacianMipEmptyInput,
 
+    #[snafu(display("invalid DICOM series input {}: {}", input_index, reason))]
+    InvalidSeriesInput { input_index: usize, reason: String },
+
     #[snafu(display("unsupported multi-volume DICOM frame organization: {}", reason))]
     UnsupportedMultiVolume { reason: String },
 

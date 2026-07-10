@@ -7,7 +7,9 @@ use dicom::pixeldata::ConvertOptions;
 use rayon::prelude::*;
 
 use crate::errors::DicomError;
-use crate::metadata::{FrameCount, PreprocessingMetadata, Resolution};
+use crate::metadata::{
+    resolve_series_order, FrameCount, PreprocessingMetadata, Resolution, SeriesOrderStrategy,
+};
 use crate::transform::resize;
 use crate::transform::{
     inverse_standard_dbt_flip, Crop, KeepVolume, Padding, PaddingDirection, PreparedVolume, Resize,
@@ -63,6 +65,19 @@ pub struct Preprocessor {
     pub border_frac: Option<f32>,
     pub target_frames: u32,
     pub convert_options: ConvertOptions,
+}
+
+/// Geometry-aware result for a validated single-frame DICOM series.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedSeries {
+    pub image_batches: Vec<Vec<DynamicImage>>,
+    pub metadata: PreprocessingMetadata,
+    /// Original caller input index for each output slice. Derived z-interpolated
+    /// slices use `None` because they do not have one exact source object.
+    pub source_indices: Vec<Option<usize>>,
+    pub order_strategy: SeriesOrderStrategy,
+    /// Resolved center-to-center spacing from geometry or Spacing Between Slices.
+    pub z_spacing_mm: Option<f32>,
 }
 
 impl Default for Preprocessor {
@@ -361,6 +376,54 @@ impl Preprocessor {
             });
         }
 
+        let files = files.iter().collect::<Vec<_>>();
+        self.prepare_images_batch_impl(&files, parallel, None)
+    }
+
+    /// Validate, geometry-order, and prepare a single-frame DICOM series.
+    ///
+    /// Unlike [`Self::prepare_images_batch`], this method validates that every input
+    /// belongs to one compatible series. Complete patient geometry is used first;
+    /// Instance Number is a fallback only when geometry is absent from every input.
+    /// Mixed input is sorted, while monotonic ascending or descending input retains
+    /// its direction. Geometry-derived center spacing overrides Slice Thickness for
+    /// z-spacing interpolation.
+    pub fn prepare_series(
+        &self,
+        files: &[FileDicomObject<InMemDicomObject>],
+        parallel: bool,
+    ) -> Result<PreparedSeries, DicomError> {
+        let plan = resolve_series_order(files)?;
+        let ordered_files = plan
+            .source_indices
+            .iter()
+            .map(|&source_index| &files[source_index])
+            .collect::<Vec<_>>();
+        let mut resolution = Resolution::try_from(ordered_files[0])?;
+        resolution.frames_per_mm = plan.z_spacing_mm.map(|z_spacing_mm| 1.0 / z_spacing_mm);
+
+        let (image_batches, metadata) =
+            self.prepare_images_batch_impl(&ordered_files, parallel, Some(resolution))?;
+        let source_indices = if image_batches.len() == plan.source_indices.len() {
+            plan.source_indices.iter().copied().map(Some).collect()
+        } else {
+            vec![None; image_batches.len()]
+        };
+        Ok(PreparedSeries {
+            image_batches,
+            metadata,
+            source_indices,
+            order_strategy: plan.strategy,
+            z_spacing_mm: plan.z_spacing_mm,
+        })
+    }
+
+    fn prepare_images_batch_impl(
+        &self,
+        files: &[&FileDicomObject<InMemDicomObject>],
+        parallel: bool,
+        resolution: Option<Resolution>,
+    ) -> Result<(Vec<Vec<DynamicImage>>, PreprocessingMetadata), DicomError> {
         // Decode all files and collect their images into a single volume
         // For CT scans, each file is typically a single 2D slice
         let mut combined_volume: Vec<DynamicImage> = Vec::new();
@@ -370,10 +433,10 @@ impl Preprocessor {
             // Add all frames from this file to the combined volume
             combined_volume.extend(images);
         }
-        let flip = inverse_standard_dbt_flip(&files[0], &combined_volume);
+        let flip = inverse_standard_dbt_flip(files[0], &combined_volume);
 
         // Try to determine the resolution from the first file's pixel spacing attributes
-        let mut resolution = Resolution::try_from(&files[0]).ok();
+        let mut resolution = resolution.or_else(|| Resolution::try_from(files[0]).ok());
 
         // Apply z-spacing interpolation to the entire combined volume
         // First check if there's a spacing-based target, otherwise use VolumeHandler target
@@ -1442,5 +1505,120 @@ mod tests {
 
         assert_eq!(serial_metadata, parallel_metadata);
         assert_images_equal(&serial_images, &parallel_images);
+    }
+
+    fn geometry_series_slice(
+        position_z: f64,
+        instance_number: i32,
+    ) -> FileDicomObject<InMemDicomObject> {
+        let mut file = open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        put_str_element(
+            &mut file,
+            tags::SERIES_INSTANCE_UID,
+            VR::UI,
+            "1.2.826.0.1.3680043.10.100",
+        );
+        put_str_element(
+            &mut file,
+            tags::FRAME_OF_REFERENCE_UID,
+            VR::UI,
+            "1.2.826.0.1.3680043.10.200",
+        );
+        file.put_element(DataElement::new(
+            tags::IMAGE_POSITION_PATIENT,
+            VR::DS,
+            PrimitiveValue::from([0.0_f64, 0.0, position_z]),
+        ));
+        file.put_element(DataElement::new(
+            tags::IMAGE_ORIENTATION_PATIENT,
+            VR::DS,
+            PrimitiveValue::from([1.0_f64, 0.0, 0.0, 0.0, 1.0, 0.0]),
+        ));
+        file.put_element(DataElement::new(
+            tags::INSTANCE_NUMBER,
+            VR::IS,
+            instance_number.to_string(),
+        ));
+        file
+    }
+
+    fn series_preprocessor(spacing: Option<SpacingConfig>) -> Preprocessor {
+        Preprocessor {
+            crop: false,
+            size: None,
+            spacing,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        }
+    }
+
+    #[test]
+    fn prepare_series_orders_geometry_and_returns_source_provenance() {
+        let files = vec![
+            geometry_series_slice(2.0, 3),
+            geometry_series_slice(0.0, 1),
+            geometry_series_slice(1.0, 2),
+        ];
+        let preprocessor = series_preprocessor(None);
+
+        let prepared = preprocessor.prepare_series(&files, true).unwrap();
+
+        assert_eq!(prepared.order_strategy, SeriesOrderStrategy::Geometry);
+        assert_eq!(prepared.source_indices, vec![Some(1), Some(2), Some(0)]);
+        assert_eq!(prepared.z_spacing_mm, Some(1.0));
+        assert_eq!(prepared.image_batches.len(), 3);
+        assert_eq!(
+            prepared.metadata.resolution.unwrap().frames_per_mm,
+            Some(1.0)
+        );
+    }
+
+    #[test]
+    fn prepare_series_instance_fallback_does_not_treat_slice_thickness_as_spacing() {
+        let mut first = geometry_series_slice(2.0, 2);
+        let mut second = geometry_series_slice(0.0, 1);
+        for file in [&mut first, &mut second] {
+            file.remove_element(tags::IMAGE_POSITION_PATIENT);
+            file.remove_element(tags::IMAGE_ORIENTATION_PATIENT);
+            file.remove_element(tags::SPACING_BETWEEN_SLICES);
+        }
+        let preprocessor = series_preprocessor(None);
+
+        let prepared = preprocessor
+            .prepare_series(&[first, second], false)
+            .unwrap();
+
+        assert_eq!(prepared.order_strategy, SeriesOrderStrategy::InstanceNumber);
+        assert_eq!(prepared.source_indices, vec![Some(0), Some(1)]);
+        assert_eq!(prepared.metadata.resolution.unwrap().frames_per_mm, None);
+    }
+
+    #[test]
+    fn prepare_series_marks_z_interpolated_slices_as_derived() {
+        let files = vec![
+            geometry_series_slice(0.0, 1),
+            geometry_series_slice(1.0, 2),
+            geometry_series_slice(2.0, 3),
+        ];
+        let [spacing_y, spacing_x] = crate::metadata::pixel_spacing_mm(&files[0]).unwrap();
+        let spacing = SpacingConfig::new_3d(spacing_x, spacing_y, 0.5);
+
+        let prepared = series_preprocessor(Some(spacing))
+            .prepare_series(&files, false)
+            .unwrap();
+
+        assert_eq!(prepared.image_batches.len(), 6);
+        assert_eq!(prepared.source_indices, vec![None; 6]);
+        assert_eq!(
+            prepared.metadata.resolution.unwrap().frames_per_mm,
+            Some(2.0)
+        );
     }
 }

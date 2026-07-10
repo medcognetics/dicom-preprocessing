@@ -44,6 +44,9 @@ pub enum Error {
     #[snafu(display("Invalid output path: {}", path.display()))]
     InvalidOutputPath { path: PathBuf },
 
+    #[snafu(display("Invalid preprocessing configuration: {}", source))]
+    InvalidConfiguration { source: DicomError },
+
     #[snafu(display("Failed to create directory: {}", path.display()))]
     CreateDir {
         path: PathBuf,
@@ -145,8 +148,8 @@ struct Args {
         short = 'b',
         value_parser = clap::builder::ValueParser::new(|s: &str| {
             let value = s.parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid border fraction"))?;
-            if value < 0.0 || value > 0.5 {
-                Err(clap::Error::raw(ErrorKind::InvalidValue, "Border fraction must be between 0.0 and 0.5"))
+            if !value.is_finite() || !(0.0..=0.5).contains(&value) {
+                Err(clap::Error::raw(ErrorKind::InvalidValue, "Border fraction must be finite and between 0.0 and 0.5"))
             } else {
                 Ok(value)
             }
@@ -164,7 +167,11 @@ struct Args {
             if parts.len() == 2 {
                 let width = parts[0].parse::<u32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid width"))?;
                 let height = parts[1].parse::<u32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid height"))?;
-                Ok((width, height))
+                if width == 0 || height == 0 {
+                    Err(clap::Error::raw(ErrorKind::InvalidValue, "Width and height must be at least 1"))
+                } else {
+                    Ok((width, height))
+                }
             } else {
                 Err(clap::Error::raw(ErrorKind::InvalidValue, "Size must be in the format width,height"))
             }
@@ -178,14 +185,27 @@ struct Args {
         conflicts_with = "size",
         value_parser = clap::builder::ValueParser::new(|s: &str| {
             let parts: Vec<&str> = s.split(',').collect();
+            let parse_spacing = |value: &str, name: &'static str| {
+                let value = value.parse::<f32>().map_err(|_| {
+                    clap::Error::raw(ErrorKind::InvalidValue, format!("Invalid {name} spacing"))
+                })?;
+                if !value.is_finite() || value <= 0.0 {
+                    Err(clap::Error::raw(
+                        ErrorKind::InvalidValue,
+                        format!("{name} spacing must be finite and greater than 0"),
+                    ))
+                } else {
+                    Ok(value)
+                }
+            };
             if parts.len() == 2 {
-                let x = parts[0].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid x spacing"))?;
-                let y = parts[1].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid y spacing"))?;
+                let x = parse_spacing(parts[0], "x")?;
+                let y = parse_spacing(parts[1], "y")?;
                 Ok((x, y, None))
             } else if parts.len() == 3 {
-                let x = parts[0].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid x spacing"))?;
-                let y = parts[1].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid y spacing"))?;
-                let z = parts[2].parse::<f32>().map_err(|_| clap::Error::raw(ErrorKind::InvalidValue, "Invalid z spacing"))?;
+                let x = parse_spacing(parts[0], "x")?;
+                let y = parse_spacing(parts[1], "y")?;
+                let z = parse_spacing(parts[2], "z")?;
                 Ok((x, y, Some(z)))
             } else {
                 Err(clap::Error::raw(ErrorKind::InvalidValue, "Spacing must be in the format x,y or x,y,z"))
@@ -239,6 +259,7 @@ struct Args {
         short = 't',
         default_value_t = DEFAULT_INTERPOLATE_TARGET_FRAMES,
         requires = "volume_handler",
+        value_parser = clap::value_parser!(u32).range(1..),
     )]
     target_frames: u32,
 
@@ -524,6 +545,9 @@ fn run(args: Args) -> Result<(), Error> {
         target_frames: args.target_frames,
         convert_options,
     };
+    preprocessor
+        .validate()
+        .map_err(|source| Error::InvalidConfiguration { source })?;
     let compressor = args.compressor;
 
     // Create progress bar
@@ -587,6 +611,7 @@ mod tests {
     use crate::FilterType;
     use crate::PaddingDirection;
     use crate::SupportedCompressor;
+    use clap::{error::ErrorKind, Parser};
     use dicom::dictionary_std::tags;
     use dicom::object::open_file;
     use dicom_preprocessing::crop::{DEFAULT_CROP_ORIGIN, DEFAULT_CROP_SIZE};
@@ -601,6 +626,24 @@ mod tests {
 
     use tiff::tags::ResolutionUnit;
     use tiff::tags::Tag;
+
+    #[rstest]
+    #[case(&["--size", "0,32"])]
+    #[case(&["--size", "32,0"])]
+    #[case(&["--spacing", "0,1"])]
+    #[case(&["--spacing", "1,nan"])]
+    #[case(&["--spacing", "1,1,inf"])]
+    #[case(&["--volume-handler", "interpolate", "--target-frames", "0"])]
+    #[case(&["--border-frac", "nan"])]
+    fn invalid_preprocessing_arguments_are_rejected(#[case] options: &[&str]) {
+        let args = ["dicom-preprocess", "source.dcm", "output.tiff"]
+            .into_iter()
+            .chain(options.iter().copied());
+
+        let error = Args::try_parse_from(args).unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+    }
 
     #[rstest]
     #[case("path")]

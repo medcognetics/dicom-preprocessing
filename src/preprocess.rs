@@ -87,6 +87,67 @@ impl Default for Preprocessor {
 impl Preprocessor {
     const PARALLEL_TRANSFORM_MIN_FRAMES: usize = 2;
 
+    /// Validate configuration values before decoding or allocating image buffers.
+    pub fn validate(&self) -> Result<(), DicomError> {
+        if self.size.is_some() && self.spacing.is_some() {
+            return Err(DicomError::InvalidPreprocessorConfiguration {
+                field: "size/spacing",
+                reason: "size and spacing are mutually exclusive",
+            });
+        }
+
+        if let Some((width, height)) = self.size {
+            if width == 0 || height == 0 {
+                return Err(DicomError::InvalidPreprocessorConfiguration {
+                    field: "size",
+                    reason: "width and height must be at least 1",
+                });
+            }
+        }
+
+        if let Some(spacing) = self.spacing {
+            Self::validate_spacing("spacing_mm_x", spacing.spacing_mm_x)?;
+            Self::validate_spacing("spacing_mm_y", spacing.spacing_mm_y)?;
+            if let Some(spacing_mm_z) = spacing.spacing_mm_z {
+                Self::validate_spacing("spacing_mm_z", spacing_mm_z)?;
+            }
+        }
+
+        if self.target_frames == 0 {
+            return Err(DicomError::InvalidPreprocessorConfiguration {
+                field: "target_frames",
+                reason: "target frame count must be at least 1",
+            });
+        }
+        if self.volume_handler.get_target_frames() == Some(0) {
+            return Err(DicomError::InvalidPreprocessorConfiguration {
+                field: "volume_handler.target_frames",
+                reason: "target frame count must be at least 1",
+            });
+        }
+
+        if let Some(border_frac) = self.border_frac {
+            if !border_frac.is_finite() || !(0.0..=0.5).contains(&border_frac) {
+                return Err(DicomError::InvalidPreprocessorConfiguration {
+                    field: "border_frac",
+                    reason: "border fraction must be finite and between 0.0 and 0.5",
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_spacing(field: &'static str, value: f32) -> Result<(), DicomError> {
+        if !value.is_finite() || value <= 0.0 {
+            return Err(DicomError::InvalidPreprocessorConfiguration {
+                field,
+                reason: "spacing must be finite and greater than 0",
+            });
+        }
+        Ok(())
+    }
+
     fn get_crop(&self, images: &[DynamicImage]) -> Option<Crop> {
         match self.crop {
             true => Some(Crop::new_from_images(
@@ -254,6 +315,12 @@ impl Preprocessor {
         parallel: bool,
     ) -> Result<PreparedVolume, DicomError> {
         let frame_count: u32 = FrameCount::try_from(file)?.into();
+        if frame_count == 0 {
+            return Err(DicomError::InvalidValueError {
+                name: "Number of Frames",
+                value: frame_count.to_string(),
+            });
+        }
         let effective_handler = if frame_count == 1 {
             VolumeHandler::Keep(KeepVolume)
         } else {
@@ -281,6 +348,8 @@ impl Preprocessor {
         file: &FileDicomObject<InMemDicomObject>,
         parallel: bool,
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata, VolumeFramePlan), DicomError> {
+        self.validate()?;
+
         // Run decoding and volume handling
         let prepared_volume = self.prepare_volume_with_single_frame_guard(file, parallel)?;
         let mut image_data = prepared_volume.images;
@@ -355,6 +424,8 @@ impl Preprocessor {
         files: &[FileDicomObject<InMemDicomObject>],
         parallel: bool,
     ) -> Result<(Vec<Vec<DynamicImage>>, PreprocessingMetadata), DicomError> {
+        self.validate()?;
+
         if files.is_empty() {
             return Err(DicomError::Other {
                 message: "Cannot process empty batch of files".to_string(),
@@ -452,6 +523,8 @@ impl Preprocessor {
         &self,
         images: &[DynamicImage],
     ) -> Result<(Vec<DynamicImage>, PreprocessingMetadata), DicomError> {
+        self.validate()?;
+
         // Try to determine the resolution (none for test images)
         let resolution = None;
 
@@ -546,6 +619,99 @@ mod tests {
             patient_orientation,
         );
         dicom
+    }
+
+    #[test]
+    fn central_slice_rejects_zero_frame_dicom_without_panicking() {
+        let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        put_str_element(&mut dicom, tags::NUMBER_OF_FRAMES, VR::IS, "0");
+        let preprocessor = Preprocessor {
+            volume_handler: VolumeHandler::CentralSlice(CentralSlice),
+            ..Preprocessor::default()
+        };
+
+        let error = preprocessor.prepare_image(&dicom, false).unwrap_err();
+
+        assert!(matches!(
+            error,
+            DicomError::InvalidValueError {
+                name: "Number of Frames",
+                value,
+            } if value == "0"
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_invalid_preprocessor_configuration() {
+        let invalid_cases = [
+            (
+                Preprocessor {
+                    size: Some((0, 32)),
+                    ..Preprocessor::default()
+                },
+                "size",
+            ),
+            (
+                Preprocessor {
+                    spacing: Some(SpacingConfig::new(f32::NAN, 1.0)),
+                    ..Preprocessor::default()
+                },
+                "spacing_mm_x",
+            ),
+            (
+                Preprocessor {
+                    border_frac: Some(f32::INFINITY),
+                    ..Preprocessor::default()
+                },
+                "border_frac",
+            ),
+            (
+                Preprocessor {
+                    target_frames: 0,
+                    ..Preprocessor::default()
+                },
+                "target_frames",
+            ),
+            (
+                Preprocessor {
+                    volume_handler: VolumeHandler::Interpolate(InterpolateVolume::new(0)),
+                    ..Preprocessor::default()
+                },
+                "volume_handler.target_frames",
+            ),
+            (
+                Preprocessor {
+                    size: Some((32, 32)),
+                    spacing: Some(SpacingConfig::new(1.0, 1.0)),
+                    ..Preprocessor::default()
+                },
+                "size/spacing",
+            ),
+        ];
+
+        for (preprocessor, expected_field) in invalid_cases {
+            let error = preprocessor.validate().unwrap_err();
+            assert!(matches!(
+                error,
+                DicomError::InvalidPreprocessorConfiguration { field, .. }
+                    if field == expected_field
+            ));
+        }
+    }
+
+    #[test]
+    fn batch_preparation_validates_before_decoding() {
+        let preprocessor = Preprocessor {
+            size: Some((0, 32)),
+            ..Preprocessor::default()
+        };
+
+        let error = preprocessor.prepare_images_batch(&[], false).unwrap_err();
+
+        assert!(matches!(
+            error,
+            DicomError::InvalidPreprocessorConfiguration { field: "size", .. }
+        ));
     }
 
     fn assert_images_equal(expected: &[DynamicImage], actual: &[DynamicImage]) {
@@ -1178,25 +1344,20 @@ mod tests {
     }
 
     #[test]
-    fn test_zero_frame_input_does_not_bypass_laplacian_mip() {
+    fn test_zero_frame_input_is_rejected_before_laplacian_mip() {
         let dicom_file = malformed_zero_frame_dicom();
         let preprocessor = laplacian_mip_preprocessor();
 
         let err = preprocessor
             .decode_with_single_frame_guard(&dicom_file, false)
             .unwrap_err();
-        match err {
-            DicomError::LaplacianMipInsufficientFrames {
-                number_of_frames,
-                skip_start,
-                skip_end,
-            } => {
-                assert_eq!(number_of_frames, 0);
-                assert_eq!(skip_start, 5);
-                assert_eq!(skip_end, 5);
-            }
-            other => panic!("Expected LaplacianMipInsufficientFrames, got {other}"),
-        }
+        assert!(matches!(
+            err,
+            DicomError::InvalidValueError {
+                name: "Number of Frames",
+                value,
+            } if value == "0"
+        ));
     }
 
     #[test]

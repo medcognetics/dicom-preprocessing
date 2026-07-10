@@ -108,3 +108,7 @@ harness = false
 [[bench]]
 name = "pad"
 harness = false
+
+[[bench]]
+name = "batch_preprocess"
+harness = false

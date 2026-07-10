@@ -1,6 +1,7 @@
 pub mod color;
 pub mod errors;
 pub mod file;
+pub mod image_array;
 pub mod load;
 pub mod manifest;
 pub mod metadata;
@@ -13,6 +14,7 @@ pub mod viewer;
 pub use color::*;
 pub use errors::*;
 pub use file::*;
+pub use image_array::*;
 pub use load::*;
 pub use manifest::*;
 pub use metadata::*;

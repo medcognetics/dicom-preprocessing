@@ -423,7 +423,7 @@ fn process<P: AsRef<Path>>(
     let color_type = DicomColorType::try_from(&file).context(DicomSnafu { path: source })?;
 
     let saver = TiffSaver::new(compressor.into(), color_type);
-    let mut encoder = saver.open_tiff(dest).unwrap();
+    let mut encoder = saver.open_tiff(dest).context(TiffSnafu { path: dest })?;
     images
         .into_iter()
         .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
@@ -451,7 +451,12 @@ fn run(args: Args) -> Result<(), Error> {
                 path: args.source.to_path_buf(),
             })?
             .collect::<Vec<_>>()
-    } else if args.source.is_file() && args.source.extension().unwrap() == "txt" {
+    } else if args.source.is_file()
+        && args
+            .source
+            .extension()
+            .is_some_and(|extension| extension == "txt")
+    {
         args.source
             .read_dicom_paths_with_bar()
             .map_err(|_| Error::InvalidSourcePath {
@@ -597,43 +602,16 @@ mod tests {
     use rstest::rstest;
     use std::fs::File;
     use std::io::BufReader;
+    use std::path::PathBuf;
     use tiff::decoder::Decoder;
 
     use tiff::tags::ResolutionUnit;
     use tiff::tags::Tag;
 
-    #[rstest]
-    #[case("path")]
-    #[case("text")]
-    #[case("dir")]
-    fn test_main(#[case] input_type: &str) {
-        // Get the expected SOPInstanceUID from the DICOM
-        let dicom_file_path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
-
-        // Create a temp directory and copy the test file to it
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dicom_path = temp_dir.path().join("CT_small.dcm");
-        std::fs::copy(&dicom_file_path, &temp_dicom_path).unwrap();
-
-        // Create a temp directory to hold the output
-        let output_dir = tempfile::tempdir().unwrap();
-
-        // Decide the source based on the input type
-        let source = match input_type {
-            "path" => temp_dicom_path,
-            "text" => {
-                let paths_file_path = temp_dir.path().join("paths.txt");
-                std::fs::write(&paths_file_path, temp_dicom_path.to_str().unwrap()).unwrap();
-                paths_file_path
-            }
-            "dir" => temp_dir.path().to_path_buf(),
-            _ => unreachable!(),
-        };
-
-        // Run the main function
-        let args = Args {
+    fn default_args(source: PathBuf, output: PathBuf) -> Args {
+        Args {
             source,
-            output: output_dir.path().to_path_buf(),
+            output,
             crop: true,
             size: Some((64, 64)),
             spacing: None,
@@ -648,12 +626,50 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             window: None,
-            // LaplacianMip defaults
             mip_weight: 1.5,
             skip_frames: 5,
             projection_mode: "parallel-beam".to_string(),
             threads: None,
+        }
+    }
+
+    #[rstest]
+    #[case("path")]
+    #[case("text")]
+    #[case("dir")]
+    #[case("extensionless")]
+    fn test_main(#[case] input_type: &str) {
+        // Get the expected SOPInstanceUID from the DICOM
+        let dicom_file_path = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
+
+        // Create a temp directory and copy the test file to it
+        let temp_dir = tempfile::tempdir().unwrap();
+        let filename = if input_type == "extensionless" {
+            "CT_small"
+        } else {
+            "CT_small.dcm"
         };
+        let temp_dicom_path = temp_dir.path().join(filename);
+        std::fs::copy(&dicom_file_path, &temp_dicom_path).unwrap();
+
+        // Create a temp directory to hold the output
+        let output_dir = tempfile::tempdir().unwrap();
+
+        // Decide the source based on the input type
+        let source = match input_type {
+            "path" => temp_dicom_path,
+            "extensionless" => temp_dicom_path,
+            "text" => {
+                let paths_file_path = temp_dir.path().join("paths.txt");
+                std::fs::write(&paths_file_path, temp_dicom_path.to_str().unwrap()).unwrap();
+                paths_file_path
+            }
+            "dir" => temp_dir.path().to_path_buf(),
+            _ => unreachable!(),
+        };
+
+        // Run the main function
+        let args = default_args(source, output_dir.path().to_path_buf());
         run(args).unwrap();
 
         // Get the StudyInstanceUID, SeriesInstanceUID, and SOPInstanceUID from the DICOM
@@ -754,5 +770,28 @@ mod tests {
         assert!(determine_parallelism(2, 4));
         assert!(!determine_parallelism(4, 4));
         assert!(!determine_parallelism(8, 4));
+    }
+
+    #[test]
+    fn extensionless_non_dicom_returns_structured_error() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let source = temp_dir.path().join("not_dicom");
+        std::fs::write(&source, b"not a DICOM file").unwrap();
+        let output = temp_dir.path().join("output.tiff");
+
+        let error = run(default_args(source.clone(), output)).unwrap_err();
+
+        assert!(matches!(error, super::Error::DicomError { path, .. } if path == source));
+    }
+
+    #[test]
+    fn output_creation_failure_returns_structured_tiff_error() {
+        let source = dicom_test_files::path("pydicom/CT_small.dcm").unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = temp_dir.path().join("missing-parent").join("output.tiff");
+
+        let error = run(default_args(source, output.clone())).unwrap_err();
+
+        assert!(matches!(error, super::Error::TiffError { path, .. } if path == output));
     }
 }

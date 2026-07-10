@@ -1,5 +1,6 @@
 import shutil
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -371,6 +372,127 @@ def multiframe_dicom_stream(multiframe_dicom_path):
     """Load multi-frame DICOM file as byte stream."""
     with open(multiframe_dicom_path, "rb") as f:
         return f.read()
+
+
+def volume_preprocessor(volume_handler):
+    return dp.Preprocessor(
+        crop=False,
+        size=None,
+        volume_handler=volume_handler,
+        use_padding=False,
+    )
+
+
+def test_central_slice_name_and_legacy_alias_match(multiframe_dicom_path):
+    legacy = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor("central"),
+        parallel=False,
+    )
+    named = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor("central-slice"),
+        parallel=False,
+    )
+    typed = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor(dp.VolumeHandler.central_slice()),
+        parallel=False,
+    )
+
+    assert np.array_equal(named, legacy)
+    assert np.array_equal(typed, legacy)
+
+
+def test_max_intensity_typed_and_named_defaults_match(multiframe_dicom_path):
+    named = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor("max-intensity"),
+        parallel=False,
+    )
+    typed = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor(dp.VolumeHandler.max_intensity()),
+        parallel=False,
+    )
+
+    assert named.shape[0] == 1
+    assert np.array_equal(typed, named)
+
+
+def test_laplacian_mip_typed_and_named_defaults_match(multiframe_dicom_path):
+    named = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor("laplacian-mip"),
+        parallel=False,
+    )
+    typed = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor(dp.VolumeHandler.laplacian_mip()),
+        parallel=False,
+    )
+
+    assert named.shape[0] == 1
+    assert np.array_equal(typed, named)
+
+
+def test_configured_projection_handlers_execute(multiframe_dicom_path):
+    handlers = [
+        dp.VolumeHandler.max_intensity(skip_start=1, skip_end=2),
+        dp.VolumeHandler.laplacian_mip(
+            skip_start=1,
+            skip_end=1,
+            mip_weight=0.75,
+            projection_mode="central-slice",
+        ),
+    ]
+
+    for handler in handlers:
+        result = dp.preprocess_u16(
+            multiframe_dicom_path,
+            volume_preprocessor(handler),
+            parallel=False,
+        )
+        assert result.shape[0] == 1
+
+
+def test_typed_interpolate_matches_legacy_configuration(multiframe_dicom_path):
+    legacy = dp.preprocess_u16(
+        multiframe_dicom_path,
+        dp.Preprocessor(crop=False, volume_handler="interpolate", target_frames=8),
+        parallel=False,
+    )
+    typed = dp.preprocess_u16(
+        multiframe_dicom_path,
+        volume_preprocessor(dp.VolumeHandler.interpolate(8)),
+        parallel=False,
+    )
+
+    assert np.array_equal(typed, legacy)
+
+
+@pytest.mark.parametrize(
+    "factory, message",
+    [
+        (lambda: dp.VolumeHandler.max_intensity(skip_start=-1), "skip_start"),
+        (lambda: dp.VolumeHandler.interpolate(0), "target_frames"),
+        (lambda: dp.VolumeHandler.laplacian_mip(mip_weight=float("nan")), "mip_weight"),
+        (
+            lambda: dp.VolumeHandler.laplacian_mip(projection_mode=cast(Any, "invalid")),
+            "projection mode",
+        ),
+    ],
+)
+def test_volume_handler_factories_reject_invalid_parameters(factory, message):
+    with pytest.raises(ValueError, match=message):
+        factory()
+
+
+def test_preprocessor_rejects_invalid_volume_handler_and_window():
+    with pytest.raises(ValueError, match="volume_handler"):
+        dp.Preprocessor(volume_handler=cast(Any, object()))
+    with pytest.raises(ValueError, match="window center"):
+        dp.Preprocessor(convert_options="invalid,1")
 
 
 @pytest.mark.parametrize("target_frames", [8, 16, 32])

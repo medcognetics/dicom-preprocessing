@@ -5,7 +5,10 @@ use crate::preprocess::Preprocessor;
 use crate::python::path::PyPath;
 use crate::save::TiffSaver;
 use crate::transform::resize::FilterType;
-use crate::transform::volume::{CentralSlice, InterpolateVolume, KeepVolume, VolumeHandler};
+use crate::transform::volume::{
+    CentralSlice, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity, ProjectionMode,
+    VolumeHandler,
+};
 use crate::transform::{Crop, Flip, Padding, PaddingDirection, Resize};
 use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
 use ::tiff::decoder::Decoder;
@@ -19,7 +22,7 @@ use pyo3::buffer::PyBuffer;
 use pyo3::prelude::*;
 use pyo3::wrap_pyfunction;
 use pyo3::{
-    exceptions::{PyFileNotFoundError, PyRuntimeError},
+    exceptions::{PyFileNotFoundError, PyRuntimeError, PyValueError},
     pymodule,
     types::{PyAnyMethods, PyModule},
     Bound, PyAny, PyResult, Python,
@@ -33,6 +36,143 @@ use tiff::encoder::TiffEncoder;
 
 // We guess 64MB as enough for most preprocessed images without being burdensome.
 const SPOOL_SIZE: usize = 1024 * 1024 * 64;
+
+const DEFAULT_LAPLACIAN_SKIP_FRAMES: i64 = 0;
+const DEFAULT_LAPLACIAN_MIP_WEIGHT: f64 = 1.5;
+
+#[pyclass(name = "VolumeHandler", frozen, from_py_object)]
+#[derive(Debug, Clone)]
+pub struct PyVolumeHandler {
+    inner: VolumeHandler,
+}
+
+#[pymethods]
+impl PyVolumeHandler {
+    #[staticmethod]
+    fn keep() -> Self {
+        Self {
+            inner: VolumeHandler::Keep(KeepVolume),
+        }
+    }
+
+    #[staticmethod]
+    fn central_slice() -> Self {
+        Self {
+            inner: VolumeHandler::CentralSlice(CentralSlice),
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (skip_start=0, skip_end=0))]
+    fn max_intensity(skip_start: i64, skip_end: i64) -> PyResult<Self> {
+        Ok(Self {
+            inner: VolumeHandler::MaxIntensity(MaxIntensity::new(
+                nonnegative_u32("skip_start", skip_start)?,
+                nonnegative_u32("skip_end", skip_end)?,
+            )),
+        })
+    }
+
+    #[staticmethod]
+    fn interpolate(target_frames: i64) -> PyResult<Self> {
+        Ok(Self {
+            inner: VolumeHandler::Interpolate(InterpolateVolume::new(positive_u32(
+                "target_frames",
+                target_frames,
+            )?)),
+        })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (
+        skip_start=DEFAULT_LAPLACIAN_SKIP_FRAMES,
+        skip_end=DEFAULT_LAPLACIAN_SKIP_FRAMES,
+        mip_weight=DEFAULT_LAPLACIAN_MIP_WEIGHT,
+        projection_mode="parallel-beam",
+    ))]
+    fn laplacian_mip(
+        skip_start: i64,
+        skip_end: i64,
+        mip_weight: f64,
+        projection_mode: &str,
+    ) -> PyResult<Self> {
+        if !mip_weight.is_finite() || mip_weight < 0.0 || mip_weight > f64::from(f32::MAX) {
+            return Err(PyValueError::new_err(
+                "mip_weight must be a finite non-negative number representable as float32",
+            ));
+        }
+        let projection_mode = parse_projection_mode(projection_mode)?;
+        Ok(Self {
+            inner: VolumeHandler::LaplacianMip(
+                LaplacianMip::new(
+                    nonnegative_u32("skip_start", skip_start)?,
+                    nonnegative_u32("skip_end", skip_end)?,
+                )
+                .with_mip_weight(mip_weight as f32)
+                .with_projection_mode(projection_mode),
+            ),
+        })
+    }
+
+    fn __repr__(&self) -> String {
+        format!("VolumeHandler({:?})", self.inner)
+    }
+}
+
+fn nonnegative_u32(name: &str, value: i64) -> PyResult<u32> {
+    u32::try_from(value).map_err(|_| {
+        PyValueError::new_err(format!("{name} must be an integer from 0 to {}", u32::MAX))
+    })
+}
+
+fn positive_u32(name: &str, value: i64) -> PyResult<u32> {
+    let value = nonnegative_u32(name, value)?;
+    if value == 0 {
+        return Err(PyValueError::new_err(format!(
+            "{name} must be greater than zero"
+        )));
+    }
+    Ok(value)
+}
+
+fn parse_projection_mode(projection_mode: &str) -> PyResult<ProjectionMode> {
+    match projection_mode.to_ascii_lowercase().as_str() {
+        "central-slice" => Ok(ProjectionMode::CentralSlice),
+        "parallel-beam" => Ok(ProjectionMode::ParallelBeam),
+        _ => Err(PyValueError::new_err(format!(
+            "Invalid projection mode: {projection_mode}"
+        ))),
+    }
+}
+
+fn parse_volume_handler(
+    volume_handler: Option<&Bound<'_, PyAny>>,
+    target_frames: u32,
+) -> PyResult<VolumeHandler> {
+    let Some(volume_handler) = volume_handler else {
+        return Ok(VolumeHandler::Keep(KeepVolume));
+    };
+    if let Ok(name) = volume_handler.extract::<String>() {
+        return match name.to_ascii_lowercase().as_str() {
+            "keep" => Ok(VolumeHandler::Keep(KeepVolume)),
+            "central" | "central-slice" => Ok(VolumeHandler::CentralSlice(CentralSlice)),
+            "max-intensity" => Ok(VolumeHandler::MaxIntensity(MaxIntensity::default())),
+            "interpolate" => Ok(VolumeHandler::Interpolate(InterpolateVolume::new(
+                positive_u32("target_frames", i64::from(target_frames))?,
+            ))),
+            "laplacian-mip" => Ok(VolumeHandler::LaplacianMip(LaplacianMip::new(0, 0))),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid volume handler: {name}"
+            ))),
+        };
+    }
+    if let Ok(config) = volume_handler.extract::<PyRef<'_, PyVolumeHandler>>() {
+        return Ok(config.inner.clone());
+    }
+    Err(PyValueError::new_err(
+        "volume_handler must be a string or VolumeHandler",
+    ))
+}
 
 #[pyclass(name = "Preprocessor", from_py_object)]
 #[derive(Clone)]
@@ -50,7 +190,7 @@ impl PyPreprocessor {
         filter="triangle",
         padding_direction="zero",
         crop_max=true,
-        volume_handler="keep",
+        volume_handler=None,
         use_components=true,
         use_padding=true,
         border_frac=None,
@@ -65,7 +205,7 @@ impl PyPreprocessor {
         filter: &str,
         padding_direction: &str,
         crop_max: bool,
-        volume_handler: &str,
+        volume_handler: Option<&Bound<'_, PyAny>>,
         use_components: bool,
         use_padding: bool,
         border_frac: Option<f32>,
@@ -98,16 +238,7 @@ impl PyPreprocessor {
             }
         };
 
-        let volume_handler = match volume_handler.to_lowercase().as_str() {
-            "keep" => VolumeHandler::Keep(KeepVolume),
-            "central" => VolumeHandler::CentralSlice(CentralSlice),
-            "interpolate" => VolumeHandler::Interpolate(InterpolateVolume::new(target_frames)),
-            _ => {
-                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
-                    "Invalid volume handler: {volume_handler}"
-                )))
-            }
-        };
+        let volume_handler = parse_volume_handler(volume_handler, target_frames)?;
 
         let convert_options = match convert_options.to_lowercase().as_str() {
             "default" => ConvertOptions::default(),
@@ -115,14 +246,13 @@ impl PyPreprocessor {
             s if s.contains(',') => {
                 let mut parts = s.split(',');
                 let (first, second) = (parts.next().unwrap(), parts.next().unwrap());
-                let window = WindowLevel {
-                    center: first
-                        .parse()
-                        .unwrap_or_else(|_| panic!("Invalid window center: {first}")),
-                    width: second
-                        .parse()
-                        .unwrap_or_else(|_| panic!("Invalid window width: {second}")),
-                };
+                let center = first.parse().map_err(|_| {
+                    PyValueError::new_err(format!("Invalid window center: {first}"))
+                })?;
+                let width = second.parse().map_err(|_| {
+                    PyValueError::new_err(format!("Invalid window width: {second}"))
+                })?;
+                let window = WindowLevel { center, width };
                 let voi_lut = VoiLutOption::Custom(window);
                 ConvertOptions::default().with_voi_lut(voi_lut)
             }
@@ -1205,6 +1335,7 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
         preprocess_stream_f32_slices_with_metadata,
         m
     )?)?;
+    m.add_class::<PyVolumeHandler>()?;
     m.add_class::<PyPreprocessor>()?;
     m.add_class::<PyFlip>()?;
     m.add_class::<PyCrop>()?;
@@ -1213,4 +1344,58 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
     m.add_class::<PyResolution>()?;
     m.add_class::<PyPreprocessingMetadata>()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dicom::object::open_file;
+
+    fn assert_handler_output_parity(python: PyVolumeHandler, rust: VolumeHandler) {
+        let file = open_file(dicom_test_files::path("pydicom/emri_small.dcm").unwrap()).unwrap();
+        let options = ConvertOptions::default();
+        let actual = python
+            .inner
+            .prepare_volume_with_options(&file, &options, false)
+            .unwrap()
+            .images;
+        let expected = rust
+            .prepare_volume_with_options(&file, &options, false)
+            .unwrap()
+            .images;
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn typed_volume_handlers_match_direct_rust_outputs() {
+        assert_handler_output_parity(PyVolumeHandler::keep(), VolumeHandler::Keep(KeepVolume));
+        assert_handler_output_parity(
+            PyVolumeHandler::central_slice(),
+            VolumeHandler::CentralSlice(CentralSlice),
+        );
+        assert_handler_output_parity(
+            PyVolumeHandler::max_intensity(1, 2).unwrap(),
+            VolumeHandler::MaxIntensity(MaxIntensity::new(1, 2)),
+        );
+        assert_handler_output_parity(
+            PyVolumeHandler::interpolate(6).unwrap(),
+            VolumeHandler::Interpolate(InterpolateVolume::new(6)),
+        );
+        assert_handler_output_parity(
+            PyVolumeHandler::laplacian_mip(0, 0, 0.75, "central-slice").unwrap(),
+            VolumeHandler::LaplacianMip(
+                LaplacianMip::new(0, 0)
+                    .with_mip_weight(0.75)
+                    .with_projection_mode(ProjectionMode::CentralSlice),
+            ),
+        );
+    }
+
+    #[test]
+    fn typed_volume_handler_validation_returns_python_errors() {
+        assert!(PyVolumeHandler::max_intensity(-1, 0).is_err());
+        assert!(PyVolumeHandler::interpolate(0).is_err());
+        assert!(PyVolumeHandler::laplacian_mip(0, 0, f64::NAN, "parallel-beam").is_err());
+        assert!(PyVolumeHandler::laplacian_mip(0, 0, 1.5, "invalid").is_err());
+    }
 }

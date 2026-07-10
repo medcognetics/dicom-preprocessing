@@ -257,6 +257,21 @@ This temporary file is spooled, having an in-memory capacity of 64MB with additi
 This spool size was chosen to accommodate most preprocessed 2D images without being overly burdensome.
 In the future we will support a direct conversion, avoiding the need for an intermediate TIFF file.
 
+Python exposes typed factories for the same volume handlers as Rust and Node. String names remain available, including `central` as an alias for `central-slice`.
+
+```python
+import dicom_preprocessing as dp
+
+handler = dp.VolumeHandler.laplacian_mip(
+    skip_start=2,
+    skip_end=2,
+    mip_weight=1.5,
+    projection_mode="parallel-beam",
+)
+preprocessor = dp.Preprocessor(crop=False, volume_handler=handler)
+projection = dp.preprocess_f32("/path/to/volume.dcm", preprocessor)
+```
+
 The validator API returns the same report schema as `dicom-validate --format json`.
 Validation blockers are reported in the returned dictionary rather than raised as Python exceptions.
 Runtime errors such as a missing source path still raise exceptions.

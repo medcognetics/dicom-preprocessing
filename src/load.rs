@@ -78,13 +78,19 @@ impl LoadFromTiff<u8> for Array4<u8> {
     fn to_vec(decoded: DecodingResult) -> Result<Vec<u8>, TiffError> {
         match decoded {
             DecodingResult::U8(image) => Ok(image),
-            DecodingResult::U16(image) => Ok(image
-                .iter()
-                .map(|&x| (x as u8) * (u8::MAX / u16::MAX as u8))
-                .collect()),
+            DecodingResult::U16(image) => Ok(image.into_iter().map(scale_u16_to_u8).collect()),
             _ => Err(TiffError::UnsupportedDataType { data_type: decoded }),
         }
     }
+}
+
+/// Scale the full `u16` range into `u8`, rounding to the nearest output value.
+fn scale_u16_to_u8(value: u16) -> u8 {
+    let input_max = u32::from(u16::MAX);
+    let output_max = u32::from(u8::MAX);
+    let rounding_offset = input_max / 2;
+    let scaled = (u32::from(value) * output_max + rounding_offset) / input_max;
+    u8::try_from(scaled).expect("scaled u16 value must fit in u8")
 }
 
 impl LoadFromTiff<u16> for Array4<u16> {
@@ -256,6 +262,15 @@ mod tests {
 
     const NUM_CHANNELS_MONO: usize = 1;
     const NUM_CHANNELS_RGB: usize = 3;
+
+    #[test]
+    fn u16_to_u8_scales_the_full_range_with_nearest_rounding() {
+        let decoded = DecodingResult::U16(vec![0, 128, 129, 257, 32_767, 32_768, u16::MAX]);
+
+        let converted = Array4::<u8>::to_vec(decoded).unwrap();
+
+        assert_eq!(converted, vec![0, 0, 1, 1, 127, 128, u8::MAX]);
+    }
 
     #[rstest]
     #[case("pydicom/CT_small.dcm", 16, false, false)]

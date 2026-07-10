@@ -132,7 +132,11 @@ impl Preprocessor {
 
         target_size.map(|(target_width, target_height)| {
             let first_image = images.first().unwrap();
-            Resize::new(first_image, target_width, target_height, self.filter)
+            if self.size.is_none() && self.spacing.is_some() && resolution.is_some() {
+                Resize::new_exact(first_image, target_width, target_height, self.filter)
+            } else {
+                Resize::new(first_image, target_width, target_height, self.filter)
+            }
         })
     }
 
@@ -170,17 +174,34 @@ impl Preprocessor {
                 if spacing_config.spacing_mm_z.is_some() && res.frames_per_mm.is_some() =>
             {
                 let target_spacing_mm_z = spacing_config.spacing_mm_z.unwrap();
-                let target_frames_per_mm = 1.0 / target_spacing_mm_z;
                 let current_frames_per_mm = res.frames_per_mm.unwrap();
-
-                // Scale factor for frames
-                let scale_z = target_frames_per_mm / current_frames_per_mm;
-
-                // Compute target frame count based on actual current frame count
-                Some((current_frame_count as f32 * scale_z).round() as u32)
+                let source_extent_mm =
+                    current_frame_count.saturating_sub(1) as f32 / current_frames_per_mm;
+                Some((source_extent_mm / target_spacing_mm_z).round() as u32 + 1)
             }
             _ => None,
         }
+    }
+
+    fn update_z_resolution_after_resampling(
+        resolution: &mut Option<Resolution>,
+        source_frame_count: usize,
+        output_frame_count: usize,
+    ) {
+        let Some(resolution) = resolution.as_mut() else {
+            return;
+        };
+        let Some(source_frames_per_mm) = resolution.frames_per_mm else {
+            return;
+        };
+        if source_frame_count <= 1 || output_frame_count <= 1 {
+            return;
+        }
+
+        resolution.frames_per_mm = Some(
+            source_frames_per_mm * (output_frame_count - 1) as f32
+                / (source_frame_count - 1) as f32,
+        );
     }
 
     /// Apply z-direction interpolation to resample frames based on spacing
@@ -299,17 +320,13 @@ impl Preprocessor {
         if let Some(target_frames) = target_frames {
             let original_frame_count = image_data.len();
             image_data = self.interpolate_z_spacing(image_data, target_frames);
+            Self::update_z_resolution_after_resampling(
+                &mut resolution,
+                original_frame_count,
+                image_data.len(),
+            );
             if image_data.len() != original_frame_count {
                 frame_plan.display_frames = vec![VolumeFrameSource::Derived; image_data.len()];
-            }
-
-            // Update the z-resolution after interpolation
-            if let Some(ref mut res) = resolution {
-                if let Some(spacing_config) = self.spacing {
-                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
-                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
-                    }
-                }
             }
         }
 
@@ -382,16 +399,13 @@ impl Preprocessor {
             .or_else(|| self.volume_handler.get_target_frames());
 
         if let Some(target_frames) = target_frames {
+            let original_frame_count = combined_volume.len();
             combined_volume = self.interpolate_z_spacing(combined_volume, target_frames);
-
-            // Update the z-resolution after interpolation
-            if let Some(ref mut res) = resolution {
-                if let Some(spacing_config) = self.spacing {
-                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
-                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
-                    }
-                }
-            }
+            Self::update_z_resolution_after_resampling(
+                &mut resolution,
+                original_frame_count,
+                combined_volume.len(),
+            );
         }
 
         // Use the combined volume for determining common crop bounds
@@ -992,6 +1006,7 @@ mod tests {
     #[case("pydicom/CT_small.dcm", 1.0, 1.0)]
     #[case("pydicom/CT_small.dcm", 0.5, 0.5)]
     #[case("pydicom/CT_small.dcm", 2.0, 2.0)]
+    #[case("pydicom/CT_small.dcm", 1.0, 0.5)]
     fn test_spacing_based_resize(
         #[case] dicom_file_path: &str,
         #[case] target_spacing_x: f32,
@@ -1053,6 +1068,15 @@ mod tests {
         let output_resolution = metadata.resolution.unwrap();
         let output_spacing_x = 1.0 / output_resolution.pixels_per_mm_x;
         let output_spacing_y = 1.0 / output_resolution.pixels_per_mm_y;
+        let realized_spacing_x = native_spacing_x * native_width as f32 / output_width as f32;
+        let realized_spacing_y = native_spacing_y * native_height as f32 / output_height as f32;
+
+        assert!((output_spacing_x - realized_spacing_x).abs() < f32::EPSILON);
+        assert!((output_spacing_y - realized_spacing_y).abs() < f32::EPSILON);
+        assert_eq!(
+            output_resolution.frames_per_mm,
+            native_resolution.frames_per_mm
+        );
 
         // Allow small floating point error (tolerance is higher for larger spacing values)
         let tolerance = target_spacing_x.max(target_spacing_y) * 0.02; // 2% tolerance
@@ -1244,8 +1268,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case("pydicom/emri_small.dcm", 10.0)] // Upsample: larger spacing = fewer frames
-    #[case("pydicom/emri_small.dcm", 2.5)] // Downsample: smaller spacing = more frames
+    #[case("pydicom/emri_small.dcm", 10.0)]
+    #[case("pydicom/emri_small.dcm", 4.0)]
+    #[case("pydicom/emri_small.dcm", 2.5)]
     fn test_spacing_based_z_resize(#[case] dicom_file_path: &str, #[case] target_spacing_z: f32) {
         let mut dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 
@@ -1293,8 +1318,8 @@ mod tests {
         let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
 
         // Check that the output frame count matches expected scaling
-        let expected_frame_count =
-            (native_frame_count as f32 * (native_spacing_z / target_spacing_z)).round() as usize;
+        let native_extent_z = (native_frame_count - 1) as f32 * native_spacing_z;
+        let expected_frame_count = (native_extent_z / target_spacing_z).round() as usize + 1;
 
         assert_eq!(
             images.len(),
@@ -1309,11 +1334,16 @@ mod tests {
             .map(|f| 1.0 / f)
             .expect("Should have output z-spacing");
 
-        // Allow small floating point error
-        let tolerance = target_spacing_z * 0.05; // 5% tolerance
+        let expected_output_spacing_z = native_extent_z / (expected_frame_count - 1) as f32;
+        let output_extent_z = (images.len() - 1) as f32 * output_spacing_z;
+        let tolerance = f32::EPSILON * native_extent_z;
         assert!(
-            (output_spacing_z - target_spacing_z).abs() < tolerance,
-            "Output spacing Z should be close to target. Got {output_spacing_z} expected {target_spacing_z}"
+            (output_spacing_z - expected_output_spacing_z).abs() < tolerance,
+            "Output spacing Z should describe the realized sampling. Got {output_spacing_z} expected {expected_output_spacing_z}"
+        );
+        assert!(
+            (output_extent_z - native_extent_z).abs() < tolerance,
+            "Output extent Z should preserve source endpoints. Got {output_extent_z} expected {native_extent_z}"
         );
     }
 

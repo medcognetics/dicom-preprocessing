@@ -91,13 +91,27 @@ impl Resize {
             filter,
         }
     }
+
+    pub fn new_exact(
+        image: &DynamicImage,
+        target_width: u32,
+        target_height: u32,
+        filter: FilterType,
+    ) -> Self {
+        let (width, height) = image.dimensions();
+        Resize {
+            scale_x: target_width as f32 / width as f32,
+            scale_y: target_height as f32 / height as f32,
+            filter,
+        }
+    }
 }
 
 impl Transform<DynamicImage> for Resize {
     fn apply(&self, image: &DynamicImage) -> DynamicImage {
         let (width, height) = image.dimensions();
-        let target_width = (width as f32 * self.scale_x) as u32;
-        let target_height = (height as f32 * self.scale_y) as u32;
+        let target_width = (width as f32 * self.scale_x).round() as u32;
+        let target_height = (height as f32 * self.scale_y).round() as u32;
 
         // Special handling for MaxPool
         if self.filter == FilterType::MaxPool {
@@ -124,27 +138,20 @@ impl Transform<DynamicImage> for Resize {
             }
             output
         } else {
-            image.resize(target_width, target_height, self.filter.into())
+            image.resize_exact(target_width, target_height, self.filter.into())
         }
     }
 }
 
 impl Transform<Resolution> for Resize {
     fn apply(&self, resolution: &Resolution) -> Resolution {
-        assert_eq!(
-            self.scale_x, self.scale_y,
-            "Expected scale_x and scale_y to be equal: {} {}",
-            self.scale_x, self.scale_y
-        );
-        let scale = self.scale_x;
-        resolution.scale(scale)
+        resolution.scale_xy(self.scale_x, self.scale_y)
     }
 }
 
 impl InvertibleTransform<Resolution> for Resize {
     fn invert(&self, resolution: &Resolution) -> Resolution {
-        let scale = 1.0 / self.scale_x;
-        resolution.scale(scale)
+        resolution.scale_xy(1.0 / self.scale_x, 1.0 / self.scale_y)
     }
 }
 
@@ -291,6 +298,15 @@ mod tests {
         assert_eq!(resize.apply(&dynamic_image), expected_dynamic_image);
     }
 
+    #[test]
+    fn fixed_size_resize_preserves_aspect_ratio() {
+        let image = DynamicImage::ImageRgba8(RgbaImage::new(8, 4));
+
+        let resize = Resize::new(&image, 4, 4, FilterType::Nearest);
+
+        assert_eq!(resize.apply(&image).dimensions(), (4, 2));
+    }
+
     #[rstest]
     #[case(Resize { scale_x: 2.0, scale_y: 2.0, filter: FilterType::Nearest })]
     fn test_write_tags(#[case] resize: Resize) {
@@ -380,6 +396,21 @@ mod tests {
     ) {
         let result = resize.apply(&resolution);
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn anisotropic_resize_updates_only_in_plane_resolution() {
+        let resize = Resize {
+            scale_x: 0.5,
+            scale_y: 2.0,
+            filter: FilterType::Nearest,
+        };
+        let resolution = Resolution::new_3d(2.0, 4.0, 0.25);
+
+        assert_eq!(
+            resize.apply(&resolution),
+            Resolution::new_3d(1.0, 8.0, 0.25)
+        );
     }
 
     #[rstest]

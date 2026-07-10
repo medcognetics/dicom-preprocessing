@@ -50,6 +50,7 @@ export interface RenderedFrame extends FrameMetadata {
 export declare class PreparedDicom {
   get framePlan(): FramePlan
   renderFrame(frameIndex: number): RenderedFrame
+  renderDisplayFrame(frameIndex: number): RenderedFrame
 }
 
 export interface NodeFramePlan {
@@ -81,5 +82,7 @@ export interface NodeRenderedFrame {
 }
 
 export declare function prepareDicom(input: DicomInput, options?: PrepareOptions): PreparedDicom
+
+export declare function renderDisplayFrame(prepared: PreparedDicom, frameIndex: number): RenderedFrame
 
 export declare function renderFrame(prepared: PreparedDicom, frameIndex: number): RenderedFrame

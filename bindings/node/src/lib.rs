@@ -1,6 +1,7 @@
 use std::io::Cursor;
 
 use dicom::object::from_reader;
+use dicom::pixeldata::ConvertOptions;
 use dicom_preprocessing::{
     metadata::pixel_spacing_mm, DicomError, FrameOrderStrategy, ViewerDicom, VolumeFrameSource,
     VolumeHandler,
@@ -70,7 +71,15 @@ impl PreparedDicom {
         &self,
         frame_index: Unknown<'_>,
     ) -> std::result::Result<NodeRenderedFrame, Error<String>> {
-        render_prepared_frame(self, parse_frame_index(frame_index)?)
+        render_raw_prepared_frame(self, parse_frame_index(frame_index)?)
+    }
+
+    #[napi(ts_args_type = "frameIndex: number", ts_return_type = "RenderedFrame")]
+    pub fn render_display_frame(
+        &self,
+        frame_index: Unknown<'_>,
+    ) -> std::result::Result<NodeRenderedFrame, Error<String>> {
+        render_prepared_display_frame(self, parse_frame_index(frame_index)?)
     }
 }
 
@@ -96,14 +105,25 @@ pub fn render_frame(
     prepared: &PreparedDicom,
     frame_index: Unknown<'_>,
 ) -> std::result::Result<NodeRenderedFrame, Error<String>> {
-    render_prepared_frame(prepared, parse_frame_index(frame_index)?)
+    render_raw_prepared_frame(prepared, parse_frame_index(frame_index)?)
 }
 
-fn render_prepared_frame(
+#[napi(
+    ts_args_type = "prepared: PreparedDicom, frameIndex: number",
+    ts_return_type = "RenderedFrame"
+)]
+pub fn render_display_frame(
+    prepared: &PreparedDicom,
+    frame_index: Unknown<'_>,
+) -> std::result::Result<NodeRenderedFrame, Error<String>> {
+    render_prepared_display_frame(prepared, parse_frame_index(frame_index)?)
+}
+
+fn display_frame_source(
     prepared: &PreparedDicom,
     frame_index: u32,
-) -> std::result::Result<NodeRenderedFrame, Error<String>> {
-    let source = prepared
+) -> std::result::Result<VolumeFrameSource, Error<String>> {
+    prepared
         .viewer
         .frame_plan()
         .display_frames
@@ -114,14 +134,19 @@ fn render_prepared_frame(
                 CODE_FRAME_INDEX_OUT_OF_RANGE,
                 format!("display frame index {frame_index} is out of range"),
             )
-        })?;
+        })
+}
+
+fn render_raw_prepared_frame(
+    prepared: &PreparedDicom,
+    frame_index: u32,
+) -> std::result::Result<NodeRenderedFrame, Error<String>> {
+    let source = display_frame_source(prepared, frame_index)?;
     let raw = prepared
         .viewer
         .decode_raw_display_frame(frame_index as usize)
         .map_err(map_dicom_render_error)?;
     let dtype = dtype_for_frame(raw.bits_allocated, raw.pixel_representation_signed)?;
-    let pixel_spacing = pixel_spacing_mm(prepared.viewer.file())
-        .map(|[row_mm, column_mm]| vec![f64::from(column_mm), f64::from(row_mm)]);
 
     Ok(NodeRenderedFrame {
         display_frame_index: frame_index,
@@ -132,12 +157,88 @@ fn render_prepared_frame(
         dtype: dtype.to_string(),
         samples_per_pixel: u32::from(raw.samples_per_pixel),
         photometric_interpretation: raw.photometric_interpretation,
-        pixel_spacing,
+        pixel_spacing: node_pixel_spacing(&prepared.viewer),
         rescale_slope: raw.rescale_slope,
         rescale_intercept: raw.rescale_intercept,
         window_center: raw.window_center,
         window_width: raw.window_width,
     })
+}
+
+fn render_prepared_display_frame(
+    prepared: &PreparedDicom,
+    frame_index: u32,
+) -> std::result::Result<NodeRenderedFrame, Error<String>> {
+    let source = display_frame_source(prepared, frame_index)?;
+    match source {
+        VolumeFrameSource::StoredFrame { .. } => render_raw_prepared_frame(prepared, frame_index),
+        VolumeFrameSource::Derived => render_derived_display_frame(prepared, frame_index, source),
+    }
+}
+
+fn render_derived_display_frame(
+    prepared: &PreparedDicom,
+    frame_index: u32,
+    source: VolumeFrameSource,
+) -> std::result::Result<NodeRenderedFrame, Error<String>> {
+    let image = prepared
+        .viewer
+        .decode_display_frame_with_options(frame_index as usize, &ConvertOptions::default())
+        .map_err(map_dicom_render_error)?;
+    let width = image.width();
+    let height = image.height();
+    let color = image.color();
+    let (data, dtype, samples_per_pixel, photometric_interpretation) =
+        match (color.channel_count(), color.bits_per_pixel()) {
+            (1, 8) => (
+                image.into_luma8().into_raw(),
+                "uint8",
+                1_u32,
+                "MONOCHROME2".to_string(),
+            ),
+            (1, 16) => {
+                let data = image
+                    .into_luma16()
+                    .into_raw()
+                    .into_iter()
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                (data, "uint16", 1_u32, "MONOCHROME2".to_string())
+            }
+            (3, 24) => (
+                image.into_rgb8().into_raw(),
+                "uint8",
+                3_u32,
+                "RGB".to_string(),
+            ),
+            _ => {
+                return Err(js_error(
+                    CODE_UNSUPPORTED_IMAGE_LAYOUT,
+                    format!("unsupported derived display frame color type: {color:?}"),
+                ));
+            }
+        };
+
+    Ok(NodeRenderedFrame {
+        display_frame_index: frame_index,
+        source: node_frame_source(source),
+        data: data.into(),
+        width,
+        height,
+        dtype: dtype.to_string(),
+        samples_per_pixel,
+        photometric_interpretation,
+        pixel_spacing: node_pixel_spacing(&prepared.viewer),
+        rescale_slope: 1.0,
+        rescale_intercept: 0.0,
+        window_center: None,
+        window_width: None,
+    })
+}
+
+fn node_pixel_spacing(viewer: &ViewerDicom) -> Option<Vec<f64>> {
+    pixel_spacing_mm(viewer.file())
+        .map(|[row_mm, column_mm]| vec![f64::from(column_mm), f64::from(row_mm)])
 }
 
 fn parse_dicom_input(

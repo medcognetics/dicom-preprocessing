@@ -182,31 +182,29 @@ impl Crop {
             })
             .unwrap_or((0, thumbnail.width() - 1, 0, thumbnail.height() - 1));
 
-        // Determine scale factor between resized and original cropped image
         let orig_width = crop.width;
         let orig_height = crop.height;
-        let scale_w = orig_width as f32 / thumbnail.width() as f32;
-        let scale_h = orig_height as f32 / thumbnail.height() as f32;
+        let thumbnail_width = thumbnail.width();
+        let thumbnail_height = thumbnail.height();
 
-        // Scale crop coordinates to the original image size
-        let left = (left as f32 * scale_w).round() as u32;
-        let top = (top as f32 * scale_h).round() as u32;
-        let right = (right as f32 * scale_w).round() as u32;
-        let bottom = (bottom as f32 * scale_h).round() as u32;
+        // Map inclusive thumbnail bounds to conservative half-open source bounds.
+        let left = (u64::from(left) * u64::from(orig_width) / u64::from(thumbnail_width)) as u32;
+        let top = (u64::from(top) * u64::from(orig_height) / u64::from(thumbnail_height)) as u32;
+        let right = (u64::from(right + 1) * u64::from(orig_width))
+            .div_ceil(u64::from(thumbnail_width)) as u32;
+        let bottom = (u64::from(bottom + 1) * u64::from(orig_height))
+            .div_ceil(u64::from(thumbnail_height)) as u32;
 
-        // Offset crop coordinates to the original image
-        let left = left + crop.left;
-        let top = top + crop.top;
-        let right = right + crop.left;
-        let bottom = bottom + crop.top;
+        let left = left.min(orig_width - 1);
+        let top = top.min(orig_height - 1);
+        let right = right.min(orig_width).max(left + 1);
+        let bottom = bottom.min(orig_height).max(top + 1);
 
-        let width = right - left + 1;
-        let height = bottom - top + 1;
         Crop {
-            left,
-            top,
-            width,
-            height,
+            left: left + crop.left,
+            top: top + crop.top,
+            width: right - left,
+            height: bottom - top,
         }
     }
 
@@ -276,28 +274,41 @@ impl Crop {
 fn is_uncroppable_pixel(x: u32, y: u32, image: &DynamicImage, check_max: bool) -> bool {
     let (max_value, pixel_value) = match image {
         DynamicImage::ImageLuma8(image) => {
-            (u8::MAX as u16, image.get_pixel(x, y).channels()[0] as u16)
+            (u8::MAX as f32, image.get_pixel(x, y).channels()[0] as f32)
         }
         DynamicImage::ImageLumaA8(image) => {
-            (u8::MAX as u16, image.get_pixel(x, y).channels()[1] as u16)
+            (u8::MAX as f32, image.get_pixel(x, y).channels()[0] as f32)
         }
-        DynamicImage::ImageLuma16(image) => (u16::MAX, image.get_pixel(x, y).channels()[0]),
-        DynamicImage::ImageLumaA16(image) => (u16::MAX, image.get_pixel(x, y).channels()[1]),
-        DynamicImage::ImageRgb8(image) => {
-            (u8::MAX as u16, image.get_pixel(x, y).channels()[0] as u16)
-        }
-        DynamicImage::ImageRgba8(image) => (
-            u8::MAX as u16,
-            image.get_pixel(x, y).to_luma().channels()[0] as u16,
+        DynamicImage::ImageRgb8(image) => (
+            u8::MAX as f32,
+            image.get_pixel(x, y).to_luma().channels()[0] as f32,
         ),
-        DynamicImage::ImageRgb16(image) => (u16::MAX, image.get_pixel(x, y).channels()[0]),
-        DynamicImage::ImageRgba16(image) => (u16::MAX, image.get_pixel(x, y).channels()[1]),
+        DynamicImage::ImageRgba8(image) => (
+            u8::MAX as f32,
+            image.get_pixel(x, y).to_luma().channels()[0] as f32,
+        ),
+        DynamicImage::ImageLuma16(image) => {
+            (u16::MAX as f32, image.get_pixel(x, y).channels()[0] as f32)
+        }
+        DynamicImage::ImageLumaA16(image) => {
+            (u16::MAX as f32, image.get_pixel(x, y).channels()[0] as f32)
+        }
+        DynamicImage::ImageRgb16(image) => (
+            u16::MAX as f32,
+            image.get_pixel(x, y).to_luma().channels()[0] as f32,
+        ),
+        DynamicImage::ImageRgba16(image) => (
+            u16::MAX as f32,
+            image.get_pixel(x, y).to_luma().channels()[0] as f32,
+        ),
+        DynamicImage::ImageRgb32F(image) => (1.0, image.get_pixel(x, y).to_luma().channels()[0]),
+        DynamicImage::ImageRgba32F(image) => (1.0, image.get_pixel(x, y).to_luma().channels()[0]),
         _ => (
-            u16::MAX,
-            image.get_pixel(x, y).to_luma().channels()[0] as u16,
+            u8::MAX as f32,
+            image.get_pixel(x, y).to_luma().channels()[0] as f32,
         ),
     };
-    pixel_value != 0 && !(check_max && pixel_value == max_value)
+    pixel_value != 0.0 && !(check_max && pixel_value == max_value)
 }
 
 impl From<&DynamicImage> for Crop {
@@ -426,7 +437,7 @@ impl From<(u32, u32, u32, u32)> for Crop {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{DynamicImage, RgbaImage};
+    use image::{DynamicImage, ImageBuffer, LumaA, Rgb, RgbImage, Rgba, RgbaImage};
     use rstest::rstest;
     use std::fs::File;
     use tempfile::tempdir;
@@ -496,6 +507,54 @@ mod tests {
         let crop = Crop::new(&dynamic_image, crop_max, None);
         let expected_crop = expected_crop.into();
         assert_eq!(crop, expected_crop);
+    }
+
+    #[rstest]
+    #[case(Rgb([u8::MAX, 0, 0]))]
+    #[case(Rgb([0, u8::MAX, 0]))]
+    #[case(Rgb([0, 0, u8::MAX]))]
+    fn rgb_primary_colors_are_foreground(#[case] foreground: Rgb<u8>) {
+        let mut image = RgbImage::new(3, 3);
+        image.put_pixel(1, 1, foreground);
+        let image = DynamicImage::ImageRgb8(image);
+        let expected = Crop {
+            left: 1,
+            top: 1,
+            width: 1,
+            height: 1,
+        };
+
+        assert_eq!(Crop::new(&image, false, None), expected);
+    }
+
+    #[test]
+    fn luma_alpha_uses_intensity_instead_of_alpha() {
+        let mut image = ImageBuffer::from_pixel(3, 3, LumaA([0_u8, u8::MAX]));
+        image.put_pixel(1, 1, LumaA([7, 0]));
+        let image = DynamicImage::ImageLumaA8(image);
+        let expected = Crop {
+            left: 1,
+            top: 1,
+            width: 1,
+            height: 1,
+        };
+
+        assert_eq!(Crop::new(&image, false, None), expected);
+    }
+
+    #[test]
+    fn rgba16_uses_luminance_instead_of_one_color_channel() {
+        let mut image = ImageBuffer::from_pixel(3, 3, Rgba([0_u16, 0, 0, u16::MAX]));
+        image.put_pixel(1, 1, Rgba([0, 0, u16::MAX, 0]));
+        let image = DynamicImage::ImageRgba16(image);
+        let expected = Crop {
+            left: 1,
+            top: 1,
+            width: 1,
+            height: 1,
+        };
+
+        assert_eq!(Crop::new(&image, false, None), expected);
     }
 
     #[rstest]
@@ -574,6 +633,35 @@ mod tests {
                 top: 3,
                 width: 3,
                 height: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn downsampled_component_crop_includes_inclusive_source_bounds() {
+        const IMAGE_SIZE: u32 = 1_024;
+        const LEFT: u32 = 101;
+        const RIGHT: u32 = 900;
+        const TOP: u32 = 83;
+        const BOTTOM: u32 = 910;
+        let image: ImageBuffer<Luma<u16>, Vec<u16>> =
+            ImageBuffer::from_fn(IMAGE_SIZE, IMAGE_SIZE, |x, y| {
+                if (LEFT..=RIGHT).contains(&x) && (TOP..=BOTTOM).contains(&y) {
+                    Luma([1])
+                } else {
+                    Luma([0])
+                }
+            });
+
+        let crop = Crop::new_from_components(&DynamicImage::ImageLuma16(image), false, None);
+
+        assert_eq!(
+            crop,
+            Crop {
+                left: LEFT,
+                top: TOP,
+                width: RIGHT - LEFT + 1,
+                height: BOTTOM - TOP + 1,
             }
         );
     }

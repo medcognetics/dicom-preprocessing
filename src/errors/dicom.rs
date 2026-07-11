@@ -104,6 +104,29 @@ pub enum DicomError {
         source: Box<DicomError>,
     },
 
+    #[snafu(display(
+        "frame {} is incompatible: expected {}x{} {:?}, got {}x{} {:?}",
+        frame_index,
+        expected_width,
+        expected_height,
+        expected_color_type,
+        actual_width,
+        actual_height,
+        actual_color_type
+    ))]
+    IncompatibleFrame {
+        frame_index: usize,
+        expected_width: u32,
+        expected_height: u32,
+        expected_color_type: image::ColorType,
+        actual_width: u32,
+        actual_height: u32,
+        actual_color_type: image::ColorType,
+    },
+
+    #[snafu(display("unsupported image color type for volume arithmetic: {:?}", color_type))]
+    UnsupportedVolumeColorType { color_type: image::ColorType },
+
     #[snafu(display("unsupported multi-volume DICOM frame organization: {}", reason))]
     UnsupportedMultiVolume { reason: String },
 

@@ -76,12 +76,16 @@ impl Padding {
                 right: padding_width,
                 bottom: padding_height,
             },
-            PaddingDirection::Center => Padding {
-                left: padding_width / 2,
-                top: padding_height / 2,
-                right: padding_width / 2,
-                bottom: padding_height / 2,
-            },
+            PaddingDirection::Center => {
+                let left = padding_width / 2;
+                let top = padding_height / 2;
+                Padding {
+                    left,
+                    top,
+                    right: padding_width - left,
+                    bottom: padding_height - top,
+                }
+            }
             PaddingDirection::Zero => {
                 // Count the number of zero pixels on each side
                 let count_left = (0..height).map(|y| is_zero(0, y)).filter(|&v| v).count();
@@ -267,6 +271,15 @@ mod tests {
     )]
     #[case(
         vec![
+            vec![1, 1],
+            vec![1, 1],
+        ],
+        (5, 7),
+        PaddingDirection::Center,
+        Padding { left: 1, top: 2, right: 2, bottom: 3 }
+    )]
+    #[case(
+        vec![
             vec![0, 0, 0, 0],
             vec![0, 1, 1, 0],
             vec![0, 1, 1, 0],
@@ -436,8 +449,44 @@ mod tests {
         assert_eq!(padded.as_raw().as_slice(), expected.as_slice());
     }
 
+    #[test]
+    fn center_padding_with_odd_differences_reaches_target_dimensions() {
+        const SOURCE_WIDTH: u32 = 2;
+        const SOURCE_HEIGHT: u32 = 2;
+        const TARGET_WIDTH: u32 = 5;
+        const TARGET_HEIGHT: u32 = 7;
+        let image = DynamicImage::ImageLuma16(ImageBuffer::from_pixel(
+            SOURCE_WIDTH,
+            SOURCE_HEIGHT,
+            Luma([7]),
+        ));
+
+        let padding = Padding::new(
+            &image,
+            TARGET_WIDTH,
+            TARGET_HEIGHT,
+            PaddingDirection::Center,
+        );
+        let padded = padding.apply(&image);
+
+        assert_eq!(
+            padding,
+            Padding {
+                left: 1,
+                top: 2,
+                right: 2,
+                bottom: 3,
+            }
+        );
+        assert_eq!(padded.dimensions(), (TARGET_WIDTH, TARGET_HEIGHT));
+        assert_eq!(padded.as_luma16().unwrap().get_pixel(1, 2), &Luma([7]));
+        assert_eq!(padding.left + padding.right, TARGET_WIDTH - SOURCE_WIDTH);
+        assert_eq!(padding.top + padding.bottom, TARGET_HEIGHT - SOURCE_HEIGHT);
+    }
+
     #[rstest]
     #[case(Padding { left: 1, top: 1, right: 2, bottom: 2 })]
+    #[case(Padding { left: 1, top: 2, right: 2, bottom: 3 })]
     fn test_write_tags(#[case] padding: Padding) {
         // Prepare the TIFF
         let temp_dir = tempdir().unwrap();

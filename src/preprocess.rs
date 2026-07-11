@@ -249,11 +249,11 @@ impl Preprocessor {
         &self,
         images: Vec<DynamicImage>,
         target_frames: u32,
-    ) -> Vec<DynamicImage> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         use crate::volume::InterpolateVolume;
 
         if images.len() <= 1 || target_frames <= 1 || images.len() == target_frames as usize {
-            return images;
+            return Ok(images);
         }
 
         InterpolateVolume::interpolate_frames(&images, target_frames)
@@ -367,7 +367,7 @@ impl Preprocessor {
 
         if let Some(target_frames) = target_frames {
             let original_frame_count = image_data.len();
-            image_data = self.interpolate_z_spacing(image_data, target_frames);
+            image_data = self.interpolate_z_spacing(image_data, target_frames)?;
             if image_data.len() != original_frame_count {
                 frame_plan.display_frames = vec![VolumeFrameSource::Derived; image_data.len()];
             }
@@ -453,7 +453,7 @@ impl Preprocessor {
             .or_else(|| self.volume_handler.get_target_frames());
 
         if let Some(target_frames) = target_frames {
-            combined_volume = self.interpolate_z_spacing(combined_volume, target_frames);
+            combined_volume = self.interpolate_z_spacing(combined_volume, target_frames)?;
 
             // Update the z-resolution after interpolation
             if let Some(ref mut res) = resolution {

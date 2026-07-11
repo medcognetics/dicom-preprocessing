@@ -150,6 +150,16 @@ def test_load_tiff_u8(path):
     assert np.array_equal(result, array)
 
 
+def test_load_tiff_u8_scales_u16_with_nearest_rounding(path):
+    array = np.array([0, 128, 129, 257, 32767, 32768, 65535], dtype=np.uint16).reshape(1, 1, 7, 1)
+    Image.fromarray(array[0, ..., 0]).save(path, format="TIFF")
+
+    result = load_tiff_u8(path)
+
+    expected = np.array([0, 0, 1, 1, 127, 128, 255], dtype=np.uint8).reshape(1, 1, 7, 1)
+    assert np.array_equal(result, expected)
+
+
 def test_load_tiff_u16(path):
     N, H, W, C = 3, 10, 10, 1
     array = np.random.randint(0, 65535, size=(N, H, W, C), dtype=np.uint16)

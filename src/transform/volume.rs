@@ -37,8 +37,7 @@ use dicom::dictionary_std::{tags, uids};
 use dicom::object::{FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, PixelDecoder, PixelRepresentation};
 use image::DynamicImage;
-use image::Pixel;
-use image::{GenericImage, GenericImageView};
+use image::GenericImageView;
 use rayon::prelude::*;
 use snafu::ResultExt;
 use std::cmp::{max, min};
@@ -51,6 +50,60 @@ const PARALLEL_MIN_TARGET_FRAMES: usize = 2;
 const BILATERAL_RADIUS_SIGMA_MULTIPLIER: f32 = 2.0;
 const BILATERAL_RANGE_LUT_BINS: usize = 2_048;
 const NORMALIZED_INTENSITY_SQUARED_MAX: f32 = 1.0;
+
+fn validate_frame_compatibility(
+    reference: &DynamicImage,
+    frame: &DynamicImage,
+    frame_index: usize,
+) -> Result<(), DicomError> {
+    let (expected_width, expected_height) = reference.dimensions();
+    let (actual_width, actual_height) = frame.dimensions();
+    let expected_color_type = reference.color();
+    let actual_color_type = frame.color();
+    if (expected_width, expected_height, expected_color_type)
+        != (actual_width, actual_height, actual_color_type)
+    {
+        return Err(DicomError::IncompatibleFrame {
+            frame_index,
+            expected_width,
+            expected_height,
+            expected_color_type,
+            actual_width,
+            actual_height,
+            actual_color_type,
+        });
+    }
+    Ok(())
+}
+
+fn reduce_samples<T: Copy + PartialOrd>(current: &mut [T], new: &[T]) {
+    for (current_sample, new_sample) in current.iter_mut().zip(new) {
+        if *new_sample > *current_sample {
+            *current_sample = *new_sample;
+        }
+    }
+}
+
+fn interpolate_u8_samples(current: &mut [u8], new: &[u8], alpha: f32) {
+    for (current_sample, new_sample) in current.iter_mut().zip(new) {
+        *current_sample =
+            (*current_sample as f32 * (1.0 - alpha) + *new_sample as f32 * alpha) as u8;
+    }
+}
+
+fn interpolate_u16_samples(current: &mut [u16], new: &[u16], alpha: f32) {
+    let alpha = f64::from(alpha);
+    for (current_sample, new_sample) in current.iter_mut().zip(new) {
+        *current_sample =
+            (*current_sample as f64 * (1.0 - alpha) + *new_sample as f64 * alpha) as u16;
+    }
+}
+
+fn interpolate_f32_samples(current: &mut [f32], new: &[f32], alpha: f32) {
+    for (current_sample, new_sample) in current.iter_mut().zip(new) {
+        *current_sample = *current_sample * (1.0 - alpha) + *new_sample * alpha;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VolumeFrameSource {
@@ -740,8 +793,8 @@ impl MaxIntensity {
             end: 0,
             number_of_frames: 0,
         })?;
-        for frame in frames {
-            image = Self::reduce(image, frame);
+        for (frame_index, frame) in frames.enumerate() {
+            image = Self::reduce(image, frame, frame_index + 1)?;
         }
         Ok(image)
     }
@@ -758,25 +811,63 @@ impl MaxIntensity {
             number_of_frames: 0,
         })?;
         let mut image = decode_frame_number(file, options, *first_frame_number)?;
-        for frame_number in frame_numbers {
+        for (frame_index, frame_number) in frame_numbers.enumerate() {
             let frame = decode_frame_number(file, options, *frame_number)?;
-            image = Self::reduce(image, frame);
+            image = Self::reduce(image, frame, frame_index + 1)?;
         }
         Ok(image)
     }
 
-    fn reduce(current: DynamicImage, new: DynamicImage) -> DynamicImage {
-        let mut current = current;
-        let (width, height) = current.dimensions();
-        for x in 0..width {
-            for y in 0..height {
-                let mut current_pixel = current.get_pixel(x, y);
-                let new_pixel = new.get_pixel(x, y);
-                current_pixel.apply2(&new_pixel, max);
-                current.put_pixel(x, y, current_pixel);
-            }
+    fn reduce(
+        current: DynamicImage,
+        new: DynamicImage,
+        frame_index: usize,
+    ) -> Result<DynamicImage, DicomError> {
+        validate_frame_compatibility(&current, &new, frame_index)?;
+
+        macro_rules! reduce_buffer {
+            ($current:expr, $new:expr, $variant:ident) => {{
+                let mut current = $current;
+                reduce_samples(current.as_mut(), $new.as_raw());
+                Ok(DynamicImage::$variant(current))
+            }};
         }
-        current
+
+        match (current, new) {
+            (DynamicImage::ImageLuma8(current), DynamicImage::ImageLuma8(new)) => {
+                reduce_buffer!(current, new, ImageLuma8)
+            }
+            (DynamicImage::ImageLumaA8(current), DynamicImage::ImageLumaA8(new)) => {
+                reduce_buffer!(current, new, ImageLumaA8)
+            }
+            (DynamicImage::ImageRgb8(current), DynamicImage::ImageRgb8(new)) => {
+                reduce_buffer!(current, new, ImageRgb8)
+            }
+            (DynamicImage::ImageRgba8(current), DynamicImage::ImageRgba8(new)) => {
+                reduce_buffer!(current, new, ImageRgba8)
+            }
+            (DynamicImage::ImageLuma16(current), DynamicImage::ImageLuma16(new)) => {
+                reduce_buffer!(current, new, ImageLuma16)
+            }
+            (DynamicImage::ImageLumaA16(current), DynamicImage::ImageLumaA16(new)) => {
+                reduce_buffer!(current, new, ImageLumaA16)
+            }
+            (DynamicImage::ImageRgb16(current), DynamicImage::ImageRgb16(new)) => {
+                reduce_buffer!(current, new, ImageRgb16)
+            }
+            (DynamicImage::ImageRgba16(current), DynamicImage::ImageRgba16(new)) => {
+                reduce_buffer!(current, new, ImageRgba16)
+            }
+            (DynamicImage::ImageRgb32F(current), DynamicImage::ImageRgb32F(new)) => {
+                reduce_buffer!(current, new, ImageRgb32F)
+            }
+            (DynamicImage::ImageRgba32F(current), DynamicImage::ImageRgba32F(new)) => {
+                reduce_buffer!(current, new, ImageRgba32F)
+            }
+            (current, _) => Err(DicomError::UnsupportedVolumeColorType {
+                color_type: current.color(),
+            }),
+        }
     }
 }
 
@@ -841,43 +932,73 @@ impl InterpolateVolume {
         frames: &[DynamicImage],
         target_frames: u32,
         output_frame_idx: u32,
-    ) -> DynamicImage {
+    ) -> Result<DynamicImage, DicomError> {
         let t = output_frame_idx as f32 / (target_frames - 1) as f32;
         let frame_idx = t * (frames.len() - 1) as f32;
         let frame_idx_floor = frame_idx.floor() as usize;
         let frame_idx_ceil = frame_idx.ceil() as usize;
         let alpha = frame_idx - frame_idx_floor as f32;
-        let (width, height) = frames[0].dimensions();
 
-        // Create a new image with the same color type as the input.
-        let mut interpolated = frames[0].clone();
-        for x in 0..width {
-            for y in 0..height {
-                let pixel1 = frames[frame_idx_floor].get_pixel(x, y);
-                let pixel2 = frames[frame_idx_ceil].get_pixel(x, y);
-                let interpolated_pixel = pixel1.map2(&pixel2, |p1, p2| {
-                    let p1 = p1 as f32;
-                    let p2 = p2 as f32;
-                    (p1 * (1.0 - alpha) + p2 * alpha) as u8
-                });
-                interpolated.put_pixel(x, y, interpolated_pixel);
-            }
+        macro_rules! interpolate_buffer {
+            ($current:expr, $new:expr, $variant:ident, $interpolate:ident) => {{
+                let mut current = $current.clone();
+                $interpolate(current.as_mut(), $new.as_raw(), alpha);
+                Ok(DynamicImage::$variant(current))
+            }};
         }
-        interpolated
+
+        match (&frames[frame_idx_floor], &frames[frame_idx_ceil]) {
+            (DynamicImage::ImageLuma8(current), DynamicImage::ImageLuma8(new)) => {
+                interpolate_buffer!(current, new, ImageLuma8, interpolate_u8_samples)
+            }
+            (DynamicImage::ImageLumaA8(current), DynamicImage::ImageLumaA8(new)) => {
+                interpolate_buffer!(current, new, ImageLumaA8, interpolate_u8_samples)
+            }
+            (DynamicImage::ImageRgb8(current), DynamicImage::ImageRgb8(new)) => {
+                interpolate_buffer!(current, new, ImageRgb8, interpolate_u8_samples)
+            }
+            (DynamicImage::ImageRgba8(current), DynamicImage::ImageRgba8(new)) => {
+                interpolate_buffer!(current, new, ImageRgba8, interpolate_u8_samples)
+            }
+            (DynamicImage::ImageLuma16(current), DynamicImage::ImageLuma16(new)) => {
+                interpolate_buffer!(current, new, ImageLuma16, interpolate_u16_samples)
+            }
+            (DynamicImage::ImageLumaA16(current), DynamicImage::ImageLumaA16(new)) => {
+                interpolate_buffer!(current, new, ImageLumaA16, interpolate_u16_samples)
+            }
+            (DynamicImage::ImageRgb16(current), DynamicImage::ImageRgb16(new)) => {
+                interpolate_buffer!(current, new, ImageRgb16, interpolate_u16_samples)
+            }
+            (DynamicImage::ImageRgba16(current), DynamicImage::ImageRgba16(new)) => {
+                interpolate_buffer!(current, new, ImageRgba16, interpolate_u16_samples)
+            }
+            (DynamicImage::ImageRgb32F(current), DynamicImage::ImageRgb32F(new)) => {
+                interpolate_buffer!(current, new, ImageRgb32F, interpolate_f32_samples)
+            }
+            (DynamicImage::ImageRgba32F(current), DynamicImage::ImageRgba32F(new)) => {
+                interpolate_buffer!(current, new, ImageRgba32F, interpolate_f32_samples)
+            }
+            (current, _) => Err(DicomError::UnsupportedVolumeColorType {
+                color_type: current.color(),
+            }),
+        }
     }
 
-    fn interpolate_frames_serial(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
+    fn interpolate_frames_serial(
+        frames: &[DynamicImage],
+        target_frames: u32,
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         let mut result = Vec::with_capacity(target_frames as usize);
         for i in 0..target_frames {
-            result.push(Self::interpolate_single_frame(frames, target_frames, i));
+            result.push(Self::interpolate_single_frame(frames, target_frames, i)?);
         }
-        result
+        Ok(result)
     }
 
     fn interpolate_frames_parallel(
         frames: &[DynamicImage],
         target_frames: u32,
-    ) -> Vec<DynamicImage> {
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         (0..target_frames)
             .into_par_iter()
             .map(|i| Self::interpolate_single_frame(frames, target_frames, i))
@@ -885,15 +1006,21 @@ impl InterpolateVolume {
     }
 
     /// Interpolate between frames using linear interpolation
-    pub fn interpolate_frames(frames: &[DynamicImage], target_frames: u32) -> Vec<DynamicImage> {
+    pub fn interpolate_frames(
+        frames: &[DynamicImage],
+        target_frames: u32,
+    ) -> Result<Vec<DynamicImage>, DicomError> {
         if frames.is_empty() {
-            return vec![];
+            return Ok(vec![]);
         }
         if frames.len() == 1 {
-            return frames.to_vec();
+            return Ok(frames.to_vec());
         }
         if target_frames <= 1 {
-            return vec![frames[0].clone()];
+            return Ok(vec![frames[0].clone()]);
+        }
+        for (frame_index, frame) in frames.iter().enumerate().skip(1) {
+            validate_frame_compatibility(&frames[0], frame, frame_index)?;
         }
 
         let (width, height) = frames[0].dimensions();
@@ -942,7 +1069,7 @@ impl InterpolateVolume {
         } else {
             decode_frame_numbers_serial(file, options, &frame_plan.stored_frame_order)?
         };
-        let frames = Self::interpolate_frames(&frames, self.target_frames);
+        let frames = Self::interpolate_frames(&frames, self.target_frames)?;
         Ok(prepared_volume(file, frames, frame_plan))
     }
 }
@@ -1797,7 +1924,7 @@ mod tests {
     use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;
-    use image::{ImageBuffer, Rgb};
+    use image::{ImageBuffer, Luma, Rgb};
     use rstest::rstest;
 
     const MULTI_FRAME_TEST_DICOM: &str = "pydicom/emri_small.dcm";
@@ -1955,8 +2082,8 @@ mod tests {
         let dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
         let mut frames = raw_ordered_frames(&dicom).into_iter();
         let mut expected = frames.next().unwrap();
-        for frame in frames {
-            expected = MaxIntensity::reduce(expected, frame);
+        for (frame_index, frame) in frames.enumerate() {
+            expected = MaxIntensity::reduce(expected, frame, frame_index + 1).unwrap();
         }
 
         let actual = MaxIntensity::new(0, 0)
@@ -1965,6 +2092,57 @@ mod tests {
             .images;
 
         assert_images_match(&[expected], &actual);
+    }
+
+    #[test]
+    fn max_intensity_luma16_matches_typed_reference() {
+        let dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        let frames = raw_ordered_frames(&dicom);
+        let mut expected = frames[0].as_luma16().unwrap().clone();
+        for frame in &frames[1..] {
+            for (expected_sample, sample) in expected
+                .as_mut()
+                .iter_mut()
+                .zip(frame.as_luma16().unwrap().as_raw())
+            {
+                *expected_sample = max(*expected_sample, *sample);
+            }
+        }
+        let expected = DynamicImage::ImageLuma16(expected);
+
+        let serial = MaxIntensity::new(0, 0)
+            .prepare_volume_with_options(&dicom, &ConvertOptions::default(), false)
+            .unwrap()
+            .images;
+        let parallel = MaxIntensity::new(0, 0)
+            .prepare_volume_with_options(&dicom, &ConvertOptions::default(), true)
+            .unwrap()
+            .images;
+
+        assert_eq!(serial, vec![expected.clone()]);
+        assert_eq!(parallel, vec![expected]);
+    }
+
+    #[test]
+    fn max_intensity_rejects_incompatible_frames() {
+        let frames = vec![
+            DynamicImage::ImageLuma8(ImageBuffer::from_pixel(2, 2, Luma([1]))),
+            DynamicImage::ImageLuma8(ImageBuffer::from_pixel(3, 2, Luma([2]))),
+        ];
+
+        let error = MaxIntensity::reduce_frames(frames).unwrap_err();
+
+        assert!(matches!(
+            error,
+            DicomError::IncompatibleFrame {
+                frame_index: 1,
+                expected_width: 2,
+                expected_height: 2,
+                actual_width: 3,
+                actual_height: 2,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2113,7 +2291,8 @@ mod tests {
         }
 
         let frames = vec![DynamicImage::ImageRgb8(img1), DynamicImage::ImageRgb8(img2)];
-        let interpolated = InterpolateVolume::interpolate_frames(&frames, interpolated_frames);
+        let interpolated =
+            InterpolateVolume::interpolate_frames(&frames, interpolated_frames).unwrap();
 
         // Should have 3 frames
         assert_eq!(interpolated.len(), interpolated_frames as usize);
@@ -2148,6 +2327,37 @@ mod tests {
     }
 
     #[test]
+    fn interpolate_frames_preserves_luma16_precision() {
+        let frames = vec![
+            DynamicImage::ImageLuma16(ImageBuffer::from_pixel(1, 1, Luma([1_000]))),
+            DynamicImage::ImageLuma16(ImageBuffer::from_pixel(1, 1, Luma([2_000]))),
+        ];
+
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, 3).unwrap();
+        let values: Vec<u16> = interpolated
+            .iter()
+            .map(|frame| frame.as_luma16().unwrap().get_pixel(0, 0)[0])
+            .collect();
+
+        assert_eq!(values, vec![1_000, 1_500, 2_000]);
+    }
+
+    #[test]
+    fn interpolate_frames_rejects_incompatible_color_types() {
+        let frames = vec![
+            DynamicImage::ImageLuma8(ImageBuffer::from_pixel(1, 1, Luma([1]))),
+            DynamicImage::ImageRgb8(ImageBuffer::from_pixel(1, 1, Rgb([2, 2, 2]))),
+        ];
+
+        let error = InterpolateVolume::interpolate_frames(&frames, 3).unwrap_err();
+
+        assert!(matches!(
+            error,
+            DicomError::IncompatibleFrame { frame_index: 1, .. }
+        ));
+    }
+
+    #[test]
     fn test_interpolate_single_frame() {
         // Test interpolation with a single input frame
         let width = 2;
@@ -2160,7 +2370,7 @@ mod tests {
         }
 
         let frames = vec![DynamicImage::ImageRgb8(img)];
-        let interpolated = InterpolateVolume::interpolate_frames(&frames, 3);
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, 3).unwrap();
 
         // Should have 1 frame (same as input)
         assert_eq!(interpolated.len(), 1);
@@ -2189,7 +2399,7 @@ mod tests {
         }
 
         let frames = vec![DynamicImage::ImageRgb8(img1), DynamicImage::ImageRgb8(img2)];
-        let interpolated = InterpolateVolume::interpolate_frames(&frames, 1);
+        let interpolated = InterpolateVolume::interpolate_frames(&frames, 1).unwrap();
 
         assert_eq!(interpolated.len(), 1);
         assert_eq!(
@@ -2215,8 +2425,9 @@ mod tests {
             })
             .collect();
 
-        let serial = InterpolateVolume::interpolate_frames_serial(&frames, target_frames);
-        let parallel = InterpolateVolume::interpolate_frames_parallel(&frames, target_frames);
+        let serial = InterpolateVolume::interpolate_frames_serial(&frames, target_frames).unwrap();
+        let parallel =
+            InterpolateVolume::interpolate_frames_parallel(&frames, target_frames).unwrap();
         assert_eq!(serial, parallel);
     }
 

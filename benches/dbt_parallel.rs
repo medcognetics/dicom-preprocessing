@@ -56,10 +56,13 @@ fn bench_interpolation(c: &mut Criterion) {
         &source_frames,
         |b, frames| {
             b.iter(|| {
-                black_box(InterpolateVolume::interpolate_frames(
-                    black_box(frames),
-                    INTERPOLATE_TARGET_FRAMES,
-                ))
+                black_box(
+                    InterpolateVolume::interpolate_frames(
+                        black_box(frames),
+                        INTERPOLATE_TARGET_FRAMES,
+                    )
+                    .expect("synthetic frames are compatible"),
+                )
             })
         },
     );

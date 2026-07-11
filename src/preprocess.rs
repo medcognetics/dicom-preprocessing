@@ -262,6 +262,16 @@ impl Preprocessor {
             })
     }
 
+    fn should_parallelize_batch_frames(
+        file: &FileDicomObject<InMemDicomObject>,
+        parallel: bool,
+    ) -> bool {
+        parallel
+            && FrameCount::try_from(file)
+                .map(|frame_count| u32::from(frame_count) > 1)
+                .unwrap_or(true)
+    }
+
     fn decode_batch(
         &self,
         files: &[FileDicomObject<InMemDicomObject>],
@@ -271,17 +281,17 @@ impl Preprocessor {
             files
                 .par_iter()
                 .enumerate()
-                .map(|(input_index, file)| self.decode_batch_input(input_index, file, false))
+                .map(|(input_index, file)| {
+                    let parallel_frames = Self::should_parallelize_batch_frames(file, parallel);
+                    self.decode_batch_input(input_index, file, parallel_frames)
+                })
                 .collect()
         } else {
             files
                 .iter()
                 .enumerate()
                 .map(|(input_index, file)| {
-                    let parallel_frames = parallel
-                        && FrameCount::try_from(file)
-                            .map(|frame_count| u32::from(frame_count) > 1)
-                            .unwrap_or(true);
+                    let parallel_frames = Self::should_parallelize_batch_frames(file, parallel);
                     self.decode_batch_input(input_index, file, parallel_frames)
                 })
                 .collect()
@@ -1481,6 +1491,27 @@ mod tests {
 
         assert_eq!(serial_metadata, parallel_metadata);
         assert_images_equal(&serial_images, &parallel_images);
+    }
+
+    #[test]
+    fn test_batch_parallelism_keeps_multiframe_decode_parallel() {
+        let single_frame =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let multi_frame =
+            open_file(dicom_test_files::path("pydicom/emri_small.dcm").unwrap()).unwrap();
+
+        assert!(!Preprocessor::should_parallelize_batch_frames(
+            &single_frame,
+            true
+        ));
+        assert!(Preprocessor::should_parallelize_batch_frames(
+            &multi_frame,
+            true
+        ));
+        assert!(!Preprocessor::should_parallelize_batch_frames(
+            &multi_frame,
+            false
+        ));
     }
 
     #[test]

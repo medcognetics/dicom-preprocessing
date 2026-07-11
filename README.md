@@ -252,10 +252,9 @@ Python bindings are provided via the `pyo3` crate. The following features are su
  - Direct preprocessing of a DICOM file or buffer into a Numpy array
  - Validating whether a DICOM file is ready for preprocessing
 
-Direct preprocessing of a DICOM file or buffer into a Numpy array is achieved using a temporary TIFF file.
-This temporary file is spooled, having an in-memory capacity of 64MB with additional space allocated on disk as needed.
-This spool size was chosen to accommodate most preprocessed 2D images without being overly burdensome.
-In the future we will support a direct conversion, avoiding the need for an intermediate TIFF file.
+Python preprocessing converts the resulting image stack directly into one NHWC NumPy array without creating an intermediate TIFF file.
+The `u8`, `u16`, and `f32` entry points use the same numeric conversion semantics as the explicit TIFF-loading APIs, and DICOM pixel decoding and preprocessing release the Python GIL.
+TIFF serialization remains available through the CLI and Rust output APIs when a persistent preprocessed file is desired.
 
 Python exposes typed factories for the same volume handlers as Rust and Node. String names remain available, including `central` as an alias for `central-slice`.
 

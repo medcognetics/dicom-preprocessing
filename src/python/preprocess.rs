@@ -1,9 +1,8 @@
-use crate::color::DicomColorType;
+use crate::image_array::images_to_array;
 use crate::load::LoadFromTiff;
 use crate::metadata::{PreprocessingMetadata, Resolution};
 use crate::preprocess::Preprocessor;
 use crate::python::path::PyPath;
-use crate::save::TiffSaver;
 use crate::transform::resize::FilterType;
 use crate::transform::volume::{
     CentralSlice, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity, ProjectionMode,
@@ -11,7 +10,6 @@ use crate::transform::volume::{
 };
 use crate::transform::{Crop, Flip, Padding, PaddingDirection, Resize};
 use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
-use ::tiff::decoder::Decoder;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
 use ndarray::Array4;
@@ -28,14 +26,7 @@ use pyo3::{
     Bound, PyAny, PyResult, Python,
 };
 use std::clone::Clone;
-use std::io::Seek;
 use std::path::Path;
-use tempfile::spooled_tempfile;
-use tiff::encoder::compression::{Compressor, Uncompressed};
-use tiff::encoder::TiffEncoder;
-
-// We guess 64MB as enough for most preprocessed images without being burdensome.
-const SPOOL_SIZE: usize = 1024 * 1024 * 64;
 
 const DEFAULT_LAPLACIAN_SKIP_FRAMES: i64 = 0;
 const DEFAULT_LAPLACIAN_MIP_WEIGHT: f64 = 1.5;
@@ -565,11 +556,7 @@ impl From<PreprocessingMetadata> for PyPreprocessingMetadata {
     }
 }
 
-/*
-TODO: We preprocess by saving to a temporary TIFF file in memory, then decoding it back to an array.
-It would be faster to directly preprocess the DICOM object without an intermediate TIFF file.
- */
-fn preprocess_with_temp_tiff<'py, T>(
+fn preprocess_to_array<'py, T>(
     py: Python<'py>,
     preprocessor: &Preprocessor,
     dcm: &FileDicomObject<InMemDicomObject>,
@@ -579,12 +566,11 @@ where
     T: Clone + Zero + Element,
     Array4<T>: LoadFromTiff<T>,
 {
-    let (array, _metadata) =
-        preprocess_with_temp_tiff_and_metadata(py, preprocessor, dcm, parallel)?;
+    let (array, _metadata) = preprocess_to_array_and_metadata(py, preprocessor, dcm, parallel)?;
     Ok(array)
 }
 
-fn preprocess_with_temp_tiff_and_metadata<'py, T>(
+fn preprocess_to_array_and_metadata<'py, T>(
     py: Python<'py>,
     preprocessor: &Preprocessor,
     dcm: &FileDicomObject<InMemDicomObject>,
@@ -594,32 +580,16 @@ where
     T: Clone + Zero + Element,
     Array4<T>: LoadFromTiff<T>,
 {
-    // Run preprocessing
-    let (images, metadata) = preprocessor
-        .prepare_image(dcm, parallel)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare image: {e}")))?;
-
-    // Save the images to an in-memory temporary TIFF file
-    let color_type = DicomColorType::try_from(dcm)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to get color type: {e}")))?;
-    let compressor = Compressor::Uncompressed(Uncompressed);
-    let saver = TiffSaver::new(compressor, color_type);
-    let mut buffer = spooled_tempfile(SPOOL_SIZE);
-    let mut encoder = TiffEncoder::new(&mut buffer)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create TIFF encoder: {e}")))?;
-    images
-        .into_iter()
-        .try_for_each(|image| saver.save(&mut encoder, &image, &metadata))
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to save temporary TIFF: {e}")))?;
-
-    // Decode the TIFF file back to an array
-    buffer
-        .rewind()
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to rewind buffer: {e}")))?;
-    let mut decoder = Decoder::new(buffer)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {e}")))?;
-    let array = Array4::<T>::decode(&mut decoder)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {e}")))?;
+    let (array, metadata) = py
+        .detach(|| {
+            let (images, metadata) = preprocessor
+                .prepare_image(dcm, parallel)
+                .map_err(|error| format!("Failed to prepare image: {error}"))?;
+            let array = images_to_array::<T>(images)
+                .map_err(|error| format!("Failed to create image array: {error}"))?;
+            Ok::<_, String>((array, metadata))
+        })
+        .map_err(PyRuntimeError::new_err)?;
     Ok((array.into_pyarray(py), metadata.into()))
 }
 
@@ -629,7 +599,7 @@ Input order is preserved; automatic metadata-based reordering only applies to
 single multi-frame DICOM objects.
 Returns a 5D array with shape (num_slices, num_frames, height, width, channels).
  */
-fn preprocess_slices_with_temp_tiff<'py, T>(
+fn preprocess_slices_to_arrays<'py, T>(
     py: Python<'py>,
     preprocessor: &Preprocessor,
     dcms: &[FileDicomObject<InMemDicomObject>],
@@ -640,11 +610,11 @@ where
     Array4<T>: LoadFromTiff<T>,
 {
     let (arrays, _metadata) =
-        preprocess_slices_with_temp_tiff_and_metadata(py, preprocessor, dcms, parallel)?;
+        preprocess_slices_to_arrays_and_metadata(py, preprocessor, dcms, parallel)?;
     Ok(arrays)
 }
 
-fn preprocess_slices_with_temp_tiff_and_metadata<'py, T>(
+fn preprocess_slices_to_arrays_and_metadata<'py, T>(
     py: Python<'py>,
     preprocessor: &Preprocessor,
     dcms: &[FileDicomObject<InMemDicomObject>],
@@ -660,50 +630,23 @@ where
         ));
     }
 
-    // Run batch preprocessing
-    let (batch_images, metadata) = preprocessor
-        .prepare_images_batch(dcms, parallel)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to prepare images batch: {e}")))?;
-
-    // Get color type from first DICOM (assumed same for all slices)
-    let color_type = DicomColorType::try_from(&dcms[0])
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to get color type: {e}")))?;
-    let compressor = Compressor::Uncompressed(Uncompressed);
-    let saver = TiffSaver::new(compressor, color_type);
-
-    // Process each slice's images
-    let mut result_arrays = Vec::with_capacity(batch_images.len());
-    for images in batch_images {
-        // Create metadata for this specific slice with correct frame count
-        let slice_num_frames = images.len().into();
-        let slice_metadata = PreprocessingMetadata {
-            flip: metadata.flip,
-            crop: metadata.crop,
-            resize: metadata.resize,
-            padding: metadata.padding,
-            resolution: metadata.resolution,
-            num_frames: slice_num_frames,
-        };
-
-        // Save images to temporary TIFF
-        let mut buffer = spooled_tempfile(SPOOL_SIZE);
-        let mut encoder = TiffEncoder::new(&mut buffer)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create TIFF encoder: {e}")))?;
-        images
-            .into_iter()
-            .try_for_each(|image| saver.save(&mut encoder, &image, &slice_metadata))
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to save temporary TIFF: {e}")))?;
-
-        // Decode the TIFF file back to an array
-        buffer
-            .rewind()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to rewind buffer: {e}")))?;
-        let mut decoder = Decoder::new(buffer)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create decoder: {e}")))?;
-        let array = Array4::<T>::decode(&mut decoder)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to decode TIFF: {e}")))?;
-        result_arrays.push(array.into_pyarray(py));
-    }
+    let (arrays, metadata) = py
+        .detach(|| {
+            let (batch_images, metadata) = preprocessor
+                .prepare_images_batch(dcms, parallel)
+                .map_err(|error| format!("Failed to prepare images batch: {error}"))?;
+            let arrays = batch_images
+                .into_iter()
+                .map(images_to_array::<T>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("Failed to create image array: {error}"))?;
+            Ok::<_, String>((arrays, metadata))
+        })
+        .map_err(PyRuntimeError::new_err)?;
+    let result_arrays = arrays
+        .into_iter()
+        .map(|array| array.into_pyarray(py))
+        .collect();
 
     Ok((result_arrays, metadata.into()))
 }
@@ -732,7 +675,7 @@ where
     let mut dcm = from_reader(bytes)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create DICOM object: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm, parallel)
+    preprocess_to_array::<T>(py, preprocessor, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -793,7 +736,7 @@ where
     let mut dcm = open_file(path)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff::<T>(py, preprocessor, &dcm, parallel)
+    preprocess_to_array::<T>(py, preprocessor, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -857,7 +800,7 @@ where
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff::<T>(py, preprocessor, &dcms, parallel)
+    preprocess_slices_to_arrays::<T>(py, preprocessor, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -927,7 +870,7 @@ where
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff::<T>(py, preprocessor, &dcms, parallel)
+    preprocess_slices_to_arrays::<T>(py, preprocessor, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -1000,7 +943,7 @@ fn preprocess_u8_with_metadata<'py>(
     let mut dcm = open_file(path)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff_and_metadata::<u8>(py, &preprocessor.inner, &dcm, parallel)
+    preprocess_to_array_and_metadata::<u8>(py, &preprocessor.inner, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -1022,7 +965,7 @@ fn preprocess_u16_with_metadata<'py>(
     let mut dcm = open_file(path)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff_and_metadata::<u16>(py, &preprocessor.inner, &dcm, parallel)
+    preprocess_to_array_and_metadata::<u16>(py, &preprocessor.inner, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -1044,7 +987,7 @@ fn preprocess_f32_with_metadata<'py>(
     let mut dcm = open_file(path)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to open DICOM file: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff_and_metadata::<f32>(py, &preprocessor.inner, &dcm, parallel)
+    preprocess_to_array_and_metadata::<f32>(py, &preprocessor.inner, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -1067,7 +1010,7 @@ fn preprocess_stream_u8_with_metadata<'py>(
     let mut dcm = from_reader(bytes)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create DICOM object: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff_and_metadata::<u8>(py, &preprocessor.inner, &dcm, parallel)
+    preprocess_to_array_and_metadata::<u8>(py, &preprocessor.inner, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -1090,7 +1033,7 @@ fn preprocess_stream_u16_with_metadata<'py>(
     let mut dcm = from_reader(bytes)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create DICOM object: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff_and_metadata::<u16>(py, &preprocessor.inner, &dcm, parallel)
+    preprocess_to_array_and_metadata::<u16>(py, &preprocessor.inner, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -1113,7 +1056,7 @@ fn preprocess_stream_f32_with_metadata<'py>(
     let mut dcm = from_reader(bytes)
         .map_err(|e| PyRuntimeError::new_err(format!("Failed to create DICOM object: {e}")))?;
     Preprocessor::sanitize_dicom(&mut dcm);
-    preprocess_with_temp_tiff_and_metadata::<f32>(py, &preprocessor.inner, &dcm, parallel)
+    preprocess_to_array_and_metadata::<f32>(py, &preprocessor.inner, &dcm, parallel)
 }
 
 #[pyfunction]
@@ -1140,7 +1083,7 @@ fn preprocess_u8_slices_with_metadata<'py>(
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff_and_metadata::<u8>(py, &preprocessor.inner, &dcms, parallel)
+    preprocess_slices_to_arrays_and_metadata::<u8>(py, &preprocessor.inner, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -1167,7 +1110,7 @@ fn preprocess_u16_slices_with_metadata<'py>(
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff_and_metadata::<u16>(py, &preprocessor.inner, &dcms, parallel)
+    preprocess_slices_to_arrays_and_metadata::<u16>(py, &preprocessor.inner, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -1194,7 +1137,7 @@ fn preprocess_f32_slices_with_metadata<'py>(
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff_and_metadata::<f32>(py, &preprocessor.inner, &dcms, parallel)
+    preprocess_slices_to_arrays_and_metadata::<f32>(py, &preprocessor.inner, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -1228,7 +1171,7 @@ fn preprocess_stream_u8_slices_with_metadata<'py>(
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff_and_metadata::<u8>(py, &preprocessor.inner, &dcms, parallel)
+    preprocess_slices_to_arrays_and_metadata::<u8>(py, &preprocessor.inner, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -1262,7 +1205,7 @@ fn preprocess_stream_u16_slices_with_metadata<'py>(
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff_and_metadata::<u16>(py, &preprocessor.inner, &dcms, parallel)
+    preprocess_slices_to_arrays_and_metadata::<u16>(py, &preprocessor.inner, &dcms, parallel)
 }
 
 #[pyfunction]
@@ -1296,7 +1239,7 @@ fn preprocess_stream_f32_slices_with_metadata<'py>(
         Preprocessor::sanitize_dicom(&mut dcm);
         dcms.push(dcm);
     }
-    preprocess_slices_with_temp_tiff_and_metadata::<f32>(py, &preprocessor.inner, &dcms, parallel)
+    preprocess_slices_to_arrays_and_metadata::<f32>(py, &preprocessor.inner, &dcms, parallel)
 }
 
 #[pymodule]

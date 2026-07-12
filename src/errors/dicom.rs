@@ -32,6 +32,12 @@ pub enum DicomError {
     #[snafu(display("invalid DICOM property value '{}': {}", name, value))]
     InvalidValueError { name: &'static str, value: String },
 
+    #[snafu(display("invalid preprocessor configuration '{}': {}", field, reason))]
+    InvalidPreprocessorConfiguration {
+        field: &'static str,
+        reason: &'static str,
+    },
+
     #[snafu(display("error processing DICOM pixel data: {:?}", source))]
     PixelDataError {
         #[snafu(source(from(dicom::pixeldata::Error, Box::new)))]

@@ -86,6 +86,7 @@ impl Default for Preprocessor {
 
 impl Preprocessor {
     const PARALLEL_TRANSFORM_MIN_FRAMES: usize = 2;
+    const PARALLEL_BATCH_DECODE_MIN_FILES: usize = 2;
 
     /// Validate configuration values before decoding or allocating image buffers.
     pub fn validate(&self) -> Result<(), DicomError> {
@@ -330,6 +331,55 @@ impl Preprocessor {
             .images)
     }
 
+    fn decode_batch_input(
+        &self,
+        input_index: usize,
+        file: &FileDicomObject<InMemDicomObject>,
+        parallel_frames: bool,
+    ) -> Result<Vec<DynamicImage>, DicomError> {
+        self.decode_with_single_frame_guard(file, parallel_frames)
+            .map_err(|source| DicomError::BatchDecodeError {
+                input_index,
+                source: Box::new(source),
+            })
+    }
+
+    fn should_parallelize_batch_frames(
+        file: &FileDicomObject<InMemDicomObject>,
+        parallel: bool,
+    ) -> bool {
+        parallel
+            && FrameCount::try_from(file)
+                .map(|frame_count| u32::from(frame_count) > 1)
+                .unwrap_or(true)
+    }
+
+    fn decode_batch(
+        &self,
+        files: &[FileDicomObject<InMemDicomObject>],
+        parallel: bool,
+    ) -> Result<Vec<Vec<DynamicImage>>, DicomError> {
+        if parallel && files.len() >= Self::PARALLEL_BATCH_DECODE_MIN_FILES {
+            files
+                .par_iter()
+                .enumerate()
+                .map(|(input_index, file)| {
+                    let parallel_frames = Self::should_parallelize_batch_frames(file, parallel);
+                    self.decode_batch_input(input_index, file, parallel_frames)
+                })
+                .collect()
+        } else {
+            files
+                .iter()
+                .enumerate()
+                .map(|(input_index, file)| {
+                    let parallel_frames = Self::should_parallelize_batch_frames(file, parallel);
+                    self.decode_batch_input(input_index, file, parallel_frames)
+                })
+                .collect()
+        }
+    }
+
     fn prepare_volume_with_single_frame_guard(
         &self,
         file: &FileDicomObject<InMemDicomObject>,
@@ -449,15 +499,14 @@ impl Preprocessor {
             });
         }
 
-        // Decode all files and collect their images into a single volume
-        // For CT scans, each file is typically a single 2D slice
-        let mut combined_volume: Vec<DynamicImage> = Vec::new();
-        for file in files {
-            let images = self.decode_with_single_frame_guard(file, parallel)?;
-
-            // Add all frames from this file to the combined volume
-            combined_volume.extend(images);
-        }
+        // Decode across files when the batch can occupy the Rayon pool. The indexed
+        // parallel iterator preserves input order, and per-file frame parallelism is
+        // disabled to avoid nested scheduling for the common single-frame series case.
+        let mut combined_volume: Vec<DynamicImage> = self
+            .decode_batch(files, parallel)?
+            .into_iter()
+            .flatten()
+            .collect();
         let flip = inverse_standard_dbt_flip(&files[0], &combined_volume);
 
         // Try to determine the resolution from the first file's pixel spacing attributes
@@ -1633,5 +1682,75 @@ mod tests {
 
         assert_eq!(serial_metadata, parallel_metadata);
         assert_images_equal(&serial_images, &parallel_images);
+    }
+
+    #[test]
+    fn test_batch_parallelism_keeps_multiframe_decode_parallel() {
+        let single_frame =
+            open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let multi_frame =
+            open_file(dicom_test_files::path("pydicom/emri_small.dcm").unwrap()).unwrap();
+
+        assert!(!Preprocessor::should_parallelize_batch_frames(
+            &single_frame,
+            true
+        ));
+        assert!(Preprocessor::should_parallelize_batch_frames(
+            &multi_frame,
+            true
+        ));
+        assert!(!Preprocessor::should_parallelize_batch_frames(
+            &multi_frame,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_prepare_images_batch_parallel_preserves_mixed_input_order() {
+        let ct = open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let mr = open_file(dicom_test_files::path("pydicom/MR_small.dcm").unwrap()).unwrap();
+        let files = vec![ct.clone(), mr.clone(), ct, mr];
+        let preprocessor = Preprocessor {
+            crop: false,
+            size: None,
+            spacing: None,
+            filter: resize::FilterType::Nearest,
+            padding_direction: PaddingDirection::default(),
+            crop_max: false,
+            volume_handler: VolumeHandler::Keep(KeepVolume),
+            use_components: true,
+            use_padding: false,
+            border_frac: None,
+            target_frames: 32,
+            convert_options: ConvertOptions::default(),
+        };
+
+        let (serial, serial_metadata) = preprocessor.prepare_images_batch(&files, false).unwrap();
+        let (parallel, parallel_metadata) =
+            preprocessor.prepare_images_batch(&files, true).unwrap();
+
+        assert_ne!(serial[0][0], serial[1][0]);
+        assert_eq!(parallel, serial);
+        assert_eq!(parallel_metadata, serial_metadata);
+    }
+
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    fn test_prepare_images_batch_errors_include_input_index(#[case] parallel: bool) {
+        let valid = open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let mut missing_pixels = valid.clone();
+        missing_pixels.remove_element(tags::PIXEL_DATA);
+        let files = vec![valid, missing_pixels];
+
+        let error = Preprocessor::default()
+            .prepare_images_batch(&files, parallel)
+            .unwrap_err();
+
+        assert!(matches!(
+            &error,
+            DicomError::BatchDecodeError { input_index: 1, .. }
+        ));
+        assert!(error.to_string().contains("batch input 1"));
     }
 }

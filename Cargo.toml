@@ -109,5 +109,9 @@ name = "pad"
 harness = false
 
 [[bench]]
+name = "batch_preprocess"
+harness = false
+
+[[bench]]
 name = "image_array"
 harness = false

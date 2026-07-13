@@ -106,6 +106,13 @@ pub enum DicomError {
     #[snafu(display("invalid DICOM series input {}: {}", input_index, reason))]
     InvalidSeriesInput { input_index: usize, reason: String },
 
+    #[snafu(display("failed to decode DICOM batch input {}: {}", input_index, source))]
+    BatchDecodeError {
+        input_index: usize,
+        #[snafu(source)]
+        source: Box<DicomError>,
+    },
+
     #[snafu(display(
         "frame {} is incompatible: expected {}x{} {:?}, got {}x{} {:?}",
         frame_index,

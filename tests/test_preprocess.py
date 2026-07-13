@@ -21,6 +21,28 @@ def test_preprocessor():
     assert isinstance(repr(preprocessor), str)
 
 
+@pytest.mark.parametrize(
+    ("kwargs", "invalid_field"),
+    [
+        ({"size": (0, 32)}, "size"),
+        ({"size": (32, 0)}, "size"),
+        ({"spacing": (0.0, 1.0, None)}, "spacing_mm_x"),
+        ({"spacing": (-1.0, 1.0, None)}, "spacing_mm_x"),
+        ({"spacing": (float("nan"), 1.0, None)}, "spacing_mm_x"),
+        ({"spacing": (1.0, float("inf"), None)}, "spacing_mm_y"),
+        ({"spacing": (1.0, 1.0, 0.0)}, "spacing_mm_z"),
+        ({"target_frames": 0}, "target_frames"),
+        ({"border_frac": -0.1}, "border_frac"),
+        ({"border_frac": float("nan")}, "border_frac"),
+        ({"border_frac": 0.51}, "border_frac"),
+        ({"size": (32, 32), "spacing": (1.0, 1.0, None)}, "size/spacing"),
+    ],
+)
+def test_preprocessor_rejects_invalid_configuration(kwargs, invalid_field):
+    with pytest.raises(ValueError, match=invalid_field):
+        dp.Preprocessor(**kwargs)
+
+
 @pytest.fixture(params=[Path, str])
 def dicom_path(request, tmp_path):
     path = tmp_path / "test.dcm"
@@ -327,7 +349,6 @@ def test_preprocess_slices_with_z_spacing_interpolation(multiple_dicom_paths):
         crop=False,
         spacing=(1.0, 1.0, 5.0),  # Include z-spacing
         volume_handler="keep",
-        size=(32, 32),
     )
 
     results_with_z = dp.preprocess_f32_slices(multiple_dicom_paths, preprocessor_with_z, parallel=False)
@@ -336,8 +357,9 @@ def test_preprocess_slices_with_z_spacing_interpolation(multiple_dicom_paths):
     assert len(results_with_z) > 0
 
     # All outputs should have same spatial dimensions
+    spatial_shape = results_with_z[0].shape[1:3]
     for result in results_with_z:
-        assert result.shape[1:3] == (32, 32)
+        assert result.shape[1:3] == spatial_shape
 
 
 def test_preprocess_stream_slices_combined_volume(multiple_dicom_streams):

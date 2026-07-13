@@ -262,22 +262,25 @@ impl PyPreprocessor {
             }
         });
 
-        Ok(Self {
-            inner: Preprocessor {
-                crop,
-                size,
-                spacing: spacing_config,
-                filter,
-                padding_direction,
-                crop_max,
-                volume_handler,
-                use_components,
-                use_padding,
-                border_frac,
-                target_frames,
-                convert_options,
-            },
-        })
+        let inner = Preprocessor {
+            crop,
+            size,
+            spacing: spacing_config,
+            filter,
+            padding_direction,
+            crop_max,
+            volume_handler,
+            use_components,
+            use_padding,
+            border_frac,
+            target_frames,
+            convert_options,
+        };
+        inner
+            .validate()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+
+        Ok(Self { inner })
     }
 
     fn __repr__(&self) -> PyResult<String> {

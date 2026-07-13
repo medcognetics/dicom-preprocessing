@@ -45,6 +45,7 @@ use std::fmt;
 
 pub const DEFAULT_INTERPOLATE_TARGET_FRAMES: u32 = 32;
 const PARALLEL_MIN_PIXEL_COUNT: usize = 4_096;
+const STREAMING_AGGREGATION_PARALLEL_MIN_PIXEL_COUNT: usize = 1_048_576;
 const PARALLEL_MIN_FRAME_COUNT: usize = 2;
 const PARALLEL_MIN_TARGET_FRAMES: usize = 2;
 const BILATERAL_RADIUS_SIGMA_MULTIPLIER: f32 = 2.0;
@@ -1226,8 +1227,20 @@ impl LaplacianMip {
         pixel_count >= PARALLEL_MIN_PIXEL_COUNT
     }
 
+    fn should_parallelize_streaming_aggregation(pixel_count: usize) -> bool {
+        pixel_count >= STREAMING_AGGREGATION_PARALLEL_MIN_PIXEL_COUNT
+    }
+
     /// Convert DynamicImage to grayscale f32 buffer (normalized to 0-1 range)
     fn to_grayscale_f32(img: &DynamicImage) -> Vec<f32> {
+        if let DynamicImage::ImageLuma16(gray) = img {
+            return gray
+                .as_raw()
+                .iter()
+                .map(|&value| value as f32 / 65535.0)
+                .collect();
+        }
+
         // Use 16-bit to preserve full dynamic range
         let gray = img.to_luma16();
         gray.pixels().map(|p| p.0[0] as f32 / 65535.0).collect()
@@ -1658,7 +1671,8 @@ impl LaplacianMip {
         result
     }
 
-    /// Compute simple MIP across frames
+    /// Compute simple MIP across frames.
+    #[cfg(test)]
     fn compute_mip_serial(frames: &[Vec<f32>], pixel_count: usize) -> Vec<f32> {
         let mut mip = vec![f32::MIN; pixel_count];
         for frame in frames {
@@ -1671,6 +1685,7 @@ impl LaplacianMip {
         mip
     }
 
+    #[cfg(test)]
     fn compute_mip(frames: &[Vec<f32>], width: usize, height: usize) -> Vec<f32> {
         let pixel_count = width.saturating_mul(height);
         if !Self::should_parallelize_pixels(pixel_count) {
@@ -1690,7 +1705,8 @@ impl LaplacianMip {
         mip
     }
 
-    /// Parallel-beam forward projection: sum all slices along z-axis, then normalize to [0, 1]
+    /// Parallel-beam forward projection: sum all slices along z-axis, then normalize to [0, 1].
+    #[cfg(test)]
     fn compute_parallel_projection_serial(
         gray_frames: &[Vec<f32>],
         pixel_count: usize,
@@ -1704,6 +1720,7 @@ impl LaplacianMip {
         projection
     }
 
+    #[cfg(test)]
     fn compute_parallel_projection(gray_frames: &[Vec<f32>], w: usize, h: usize) -> Vec<f32> {
         let pixel_count = w.saturating_mul(h);
         let mut projection = if Self::should_parallelize_pixels(pixel_count) {
@@ -1720,19 +1737,7 @@ impl LaplacianMip {
             Self::compute_parallel_projection_serial(gray_frames, pixel_count)
         };
 
-        if Self::should_parallelize_pixels(pixel_count) {
-            let max_val = projection.par_iter().cloned().reduce(|| 0.0f32, f32::max);
-            if max_val > 0.0 {
-                projection.par_iter_mut().for_each(|p| *p /= max_val);
-            }
-        } else {
-            let max_val = projection.iter().cloned().fold(0.0f32, f32::max);
-            if max_val > 0.0 {
-                for p in &mut projection {
-                    *p /= max_val;
-                }
-            }
-        }
+        Self::normalize_projection(&mut projection);
         projection
     }
 
@@ -1749,6 +1754,137 @@ impl LaplacianMip {
             }
         }
         projection
+    }
+
+    fn normalize_projection(projection: &mut [f32]) {
+        let max_val = if Self::should_parallelize_pixels(projection.len()) {
+            projection.par_iter().cloned().reduce(|| 0.0f32, f32::max)
+        } else {
+            projection.iter().cloned().fold(0.0f32, f32::max)
+        };
+        if max_val <= 0.0 {
+            return;
+        }
+
+        if Self::should_parallelize_pixels(projection.len()) {
+            projection
+                .par_iter_mut()
+                .for_each(|value| *value /= max_val);
+        } else {
+            projection.iter_mut().for_each(|value| *value /= max_val);
+        }
+    }
+
+    fn accumulate_frame(gray_frame: &[f32], mip: &mut [f32], projection: Option<&mut [f32]>) {
+        assert_eq!(
+            gray_frame.len(),
+            mip.len(),
+            "all frames must have equal dimensions"
+        );
+
+        match projection {
+            Some(projection) => {
+                if Self::should_parallelize_streaming_aggregation(mip.len()) {
+                    mip.par_iter_mut()
+                        .zip(projection.par_iter_mut())
+                        .zip(gray_frame.par_iter())
+                        .for_each(|((max_value, sum), &value)| {
+                            *max_value = max_value.max(value);
+                            *sum += value;
+                        });
+                } else {
+                    for ((max_value, sum), &value) in
+                        mip.iter_mut().zip(projection.iter_mut()).zip(gray_frame)
+                    {
+                        *max_value = max_value.max(value);
+                        *sum += value;
+                    }
+                }
+            }
+            None => {
+                if Self::should_parallelize_streaming_aggregation(mip.len()) {
+                    mip.par_iter_mut()
+                        .zip(gray_frame.par_iter())
+                        .for_each(|(max_value, &value)| *max_value = max_value.max(value));
+                } else {
+                    for (max_value, &value) in mip.iter_mut().zip(gray_frame) {
+                        *max_value = max_value.max(value);
+                    }
+                }
+            }
+        }
+    }
+
+    fn aggregate_frames(
+        &self,
+        frames: &[DynamicImage],
+        pixel_count: usize,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let central_index = frames.len() / 2;
+        let mut central_frame = None;
+        let mut projection = match self.projection_mode {
+            ProjectionMode::CentralSlice => None,
+            ProjectionMode::ParallelBeam => Some(vec![0.0f32; pixel_count]),
+        };
+        let mut mip = vec![f32::MIN; pixel_count];
+
+        for (frame_index, frame) in frames.iter().enumerate() {
+            let gray_frame = Self::to_grayscale_f32(frame);
+            Self::accumulate_frame(&gray_frame, &mut mip, projection.as_deref_mut());
+            if frame_index == central_index {
+                central_frame = Some(gray_frame);
+            }
+        }
+
+        let central_frame = match projection {
+            Some(mut projection) => {
+                Self::normalize_projection(&mut projection);
+                projection
+            }
+            None => central_frame.expect("a non-empty frame stack has a central frame"),
+        };
+        (central_frame, mip)
+    }
+
+    fn fuse_projected_frames(
+        &self,
+        central_frame: &[f32],
+        mip_frame: &[f32],
+        width: u32,
+        height: u32,
+    ) -> DynamicImage {
+        let w = width as usize;
+        let h = height as usize;
+        let max_levels = ((w.min(h) as f32).log2().floor() as usize).max(2);
+        let num_levels = self.num_levels.min(max_levels);
+
+        let central_filtered = Self::bilateral_filter(
+            central_frame,
+            w,
+            h,
+            self.bilateral_sigma_s,
+            self.bilateral_sigma_r_frac,
+        );
+        let mip_filtered = Self::bilateral_filter(
+            mip_frame,
+            w,
+            h,
+            self.bilateral_sigma_s,
+            self.bilateral_sigma_r_frac,
+        );
+
+        let central_gaussian = Self::build_gaussian_pyramid(&central_filtered, w, h, num_levels);
+        let mip_gaussian = Self::build_gaussian_pyramid(&mip_filtered, w, h, num_levels);
+        let central_laplacian = Self::build_laplacian_pyramid(&central_gaussian);
+        let mip_laplacian = Self::build_laplacian_pyramid(&mip_gaussian);
+        let reconstructed = self.reconstruct_with_fusion(
+            &central_laplacian,
+            &mip_laplacian,
+            &central_gaussian,
+            num_levels,
+        );
+
+        Self::from_grayscale_f32(&reconstructed, width, height)
     }
 
     /// Project a stack of frames into a single 2D image using Laplacian pyramid + MIP fusion.
@@ -1775,70 +1911,37 @@ impl LaplacianMip {
         }
 
         let (width, height) = frames[0].dimensions();
+        let pixel_count = (width as usize).saturating_mul(height as usize);
+        let (central_frame, mip_frame) = self.aggregate_frames(frames, pixel_count);
+        Ok(self.fuse_projected_frames(&central_frame, &mip_frame, width, height))
+    }
+
+    #[cfg(test)]
+    fn project_laplacian_mip_full_stack_reference(
+        &self,
+        frames: &[DynamicImage],
+    ) -> Result<DynamicImage, DicomError> {
+        if frames.is_empty() {
+            return Err(DicomError::LaplacianMipEmptyInput);
+        }
+        if frames.len() == 1 {
+            return Ok(frames[0].clone());
+        }
+
+        let (width, height) = frames[0].dimensions();
         let w = width as usize;
         let h = height as usize;
-
-        // Determine actual number of levels based on image size (paper uses 7)
-        let max_levels = ((w.min(h) as f32).log2().floor() as usize).max(2);
-        let num_levels = self.num_levels.min(max_levels);
-
-        // Convert all frames to f32 grayscale (normalized 0-1)
-        let pixel_count = w.saturating_mul(h);
-        let gray_frames: Vec<Vec<f32>> = if Self::should_parallelize_pixels(pixel_count) {
-            frames.par_iter().map(Self::to_grayscale_f32).collect()
-        } else {
-            frames.iter().map(Self::to_grayscale_f32).collect()
-        };
-
-        // Get central frame based on projection mode
-        let central_frame_owned: Vec<f32>;
-        let central_frame: &[f32] = match self.projection_mode {
-            ProjectionMode::CentralSlice => {
-                let central_idx = gray_frames.len() / 2;
-                &gray_frames[central_idx]
-            }
+        let gray_frames: Vec<Vec<f32>> = frames.iter().map(Self::to_grayscale_f32).collect();
+        let central_frame_owned;
+        let central_frame = match self.projection_mode {
+            ProjectionMode::CentralSlice => &gray_frames[gray_frames.len() / 2],
             ProjectionMode::ParallelBeam => {
                 central_frame_owned = Self::compute_parallel_projection(&gray_frames, w, h);
                 &central_frame_owned
             }
         };
-
-        // Step 1: Compute MIP across all frames
         let mip_frame = Self::compute_mip(&gray_frames, w, h);
-
-        // Step 2: Apply bilateral filter to reduce noise
-        let central_filtered = Self::bilateral_filter(
-            central_frame,
-            w,
-            h,
-            self.bilateral_sigma_s,
-            self.bilateral_sigma_r_frac,
-        );
-        let mip_filtered = Self::bilateral_filter(
-            &mip_frame,
-            w,
-            h,
-            self.bilateral_sigma_s,
-            self.bilateral_sigma_r_frac,
-        );
-
-        // Step 3: Build Gaussian and Laplacian pyramids for both
-        let central_gaussian = Self::build_gaussian_pyramid(&central_filtered, w, h, num_levels);
-        let mip_gaussian = Self::build_gaussian_pyramid(&mip_filtered, w, h, num_levels);
-
-        let central_laplacian = Self::build_laplacian_pyramid(&central_gaussian);
-        let mip_laplacian = Self::build_laplacian_pyramid(&mip_gaussian);
-
-        // Step 4: Fuse using paper's formula
-        let reconstructed = self.reconstruct_with_fusion(
-            &central_laplacian,
-            &mip_laplacian,
-            &central_gaussian,
-            num_levels,
-        );
-
-        // Convert back to image
-        Ok(Self::from_grayscale_f32(&reconstructed, width, height))
+        Ok(self.fuse_projected_frames(central_frame, &mip_frame, width, height))
     }
 
     fn validate_trimmed_frame_range(
@@ -2614,6 +2717,29 @@ mod tests {
     }
 
     // --- LaplacianMip::project_laplacian_mip standalone tests ---
+
+    #[rstest]
+    #[case(ProjectionMode::CentralSlice)]
+    #[case(ProjectionMode::ParallelBeam)]
+    fn streaming_laplacian_mip_matches_full_stack_reference(#[case] mode: ProjectionMode) {
+        let width = 80;
+        let height = 64;
+        let frames = (0..9)
+            .map(|frame| {
+                DynamicImage::ImageLuma16(ImageBuffer::from_fn(width, height, |x, y| {
+                    image::Luma([((x * 37 + y * 101 + frame * 997) % 65535) as u16])
+                }))
+            })
+            .collect::<Vec<_>>();
+        let mip = LaplacianMip::new(0, 0).with_projection_mode(mode);
+
+        let expected = mip
+            .project_laplacian_mip_full_stack_reference(&frames)
+            .unwrap();
+        let actual = mip.project_laplacian_mip(&frames).unwrap();
+
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn test_project_laplacian_mip_synthetic() {

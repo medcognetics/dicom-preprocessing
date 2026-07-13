@@ -2,6 +2,8 @@ use criterion::{BenchmarkId, Criterion, Throughput};
 use dicom_preprocessing::{InterpolateVolume, LaplacianMip};
 use image::{DynamicImage, ImageBuffer, Luma};
 use std::hint::black_box;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 const INTERPOLATE_SOURCE_FRAMES: usize = 24;
@@ -41,6 +43,52 @@ fn synthetic_luma16_frames(num_frames: usize, width: u32, height: u32) -> Vec<Dy
             DynamicImage::ImageLuma16(image)
         })
         .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn resident_set_bytes() -> Option<u64> {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))?
+        .split_whitespace()
+        .next()?
+        .parse::<u64>()
+        .ok()
+        .map(|kibibytes| kibibytes * 1024)
+}
+
+#[cfg(target_os = "linux")]
+fn report_peak_rss(laplacian_mip: &LaplacianMip, frames: &[DynamicImage]) {
+    let baseline = resident_set_bytes().unwrap_or_default();
+    let peak = AtomicU64::new(baseline);
+    let running = AtomicBool::new(true);
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while running.load(Ordering::Relaxed) {
+                if let Some(resident) = resident_set_bytes() {
+                    peak.fetch_max(resident, Ordering::Relaxed);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        });
+
+        let output = laplacian_mip
+            .project_laplacian_mip(frames)
+            .expect("Laplacian-MIP projection should succeed");
+        if let Some(resident) = resident_set_bytes() {
+            peak.fetch_max(resident, Ordering::Relaxed);
+        }
+        drop(output);
+        running.store(false, Ordering::Relaxed);
+    });
+
+    let peak = peak.load(Ordering::Relaxed);
+    eprintln!(
+        "laplacian_mip_memory: baseline_rss_bytes={baseline}, peak_rss_bytes={peak}, additional_rss_bytes={}",
+        peak.saturating_sub(baseline),
+    );
 }
 
 fn bench_interpolation(c: &mut Criterion) {
@@ -141,6 +189,8 @@ fn bench_laplacian_mip_high_res(c: &mut Criterion) {
         HIGH_RES_LAP_MIP_HEIGHT,
     );
     let laplacian_mip = LaplacianMip::new(0, 0);
+    #[cfg(target_os = "linux")]
+    report_peak_rss(&laplacian_mip, &frames);
     bench_laplacian_case(
         &mut group,
         &laplacian_mip,

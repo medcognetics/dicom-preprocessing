@@ -103,6 +103,13 @@ pub enum DicomError {
     #[snafu(display("cannot project laplacian mip from empty input frames"))]
     LaplacianMipEmptyInput,
 
+    #[snafu(display("failed to decode DICOM batch input {}: {}", input_index, source))]
+    BatchDecodeError {
+        input_index: usize,
+        #[snafu(source)]
+        source: Box<DicomError>,
+    },
+
     #[snafu(display(
         "frame {} is incompatible: expected {}x{} {:?}, got {}x{} {:?}",
         frame_index,

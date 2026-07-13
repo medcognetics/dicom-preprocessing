@@ -235,4 +235,8 @@ workflows:
                     - rust_quality
                     - python_quality
                     - node_quality
-            - windows_node_tests
+            - windows_node_tests:
+                requires:
+                    - rust_quality
+                    - python_quality
+                    - node_quality

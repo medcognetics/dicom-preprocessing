@@ -46,7 +46,7 @@ Python style is formatter-driven:
 - Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
 - Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
 - Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module on Windows Server.
-- Test jobs are gated on both quality jobs passing.
+- Test jobs are gated on all three quality jobs passing.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

@@ -45,6 +45,7 @@ Python style is formatter-driven:
 - Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
 - Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
 - Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
+- Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module on Windows Server.
 - Test jobs are gated on both quality jobs passing.
 
 ## Testing Guidelines

@@ -14,6 +14,7 @@ use tiff::TiffError;
 
 use indicatif::{ProgressBar, ProgressStyle};
 use rust_search::SearchBuilder;
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -21,6 +22,29 @@ pub const DICM_PREFIX: &[u8; 4] = b"DICM";
 pub const DICM_PREFIX_LOCATION: u64 = 128;
 
 type IOResult<T> = Result<T, std::io::Error>;
+
+#[cfg(unix)]
+fn path_file_index(path: &Path) -> IOResult<u64> {
+    Ok(std::fs::metadata(path)?.ino())
+}
+
+#[cfg(windows)]
+fn path_file_index(path: &Path) -> IOResult<u64> {
+    match file_id::get_low_res_file_id(path)? {
+        file_id::FileId::LowRes { file_index, .. } => Ok(file_index),
+        _ => Err(std::io::Error::other(
+            "Windows low-resolution file ID is unavailable",
+        )),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn path_file_index(_path: &Path) -> IOResult<u64> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "file identifiers are unsupported on this platform",
+    ))
+}
 
 pub fn default_bar(len: u64) -> ProgressBar {
     let pb = ProgressBar::new(len);
@@ -60,19 +84,14 @@ pub trait Inode
 where
     Self: AsRef<Path>,
 {
-    /// Get the inode of a path.
+    /// Get the inode or Windows file index of a path.
     fn inode(&self) -> IOResult<u64> {
-        let metadata = std::fs::metadata(self.as_ref())?;
-        Ok(metadata.ino())
+        path_file_index(self.as_ref())
     }
 
-    /// Get the inode of a path, or a default value if an error occurs.
+    /// Get the inode or Windows file index of a path, or a default value on error.
     fn inode_or(&self, value: u64) -> u64 {
-        let metadata = std::fs::metadata(self.as_ref());
-        match metadata {
-            Ok(metadata) => metadata.ino(),
-            Err(_) => value,
-        }
+        self.inode().unwrap_or(value)
     }
 }
 
@@ -471,11 +490,8 @@ mod tests {
         // Verify we got back all files
         assert_eq!(sorted.len(), 3);
 
-        // Verify inode ordering by checking each pair is ordered
-        let inodes: Vec<u64> = sorted
-            .iter()
-            .map(|p| std::fs::metadata(p).unwrap().ino())
-            .collect();
+        // Verify file identifier ordering by checking each pair is ordered
+        let inodes: Vec<u64> = sorted.iter().map(|p| p.inode().unwrap()).collect();
 
         for i in 1..inodes.len() {
             assert!(inodes[i - 1] <= inodes[i]);

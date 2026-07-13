@@ -10,6 +10,7 @@ const SPACING_ABSOLUTE_TOLERANCE_MM: f64 = 1.0e-3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SeriesOrderStrategy {
+    RawPreserved,
     Geometry,
     InstanceNumber,
 }
@@ -60,6 +61,21 @@ pub fn resolve_series_order(
         }
         let actual = compatibility(file, input_index)?;
         validate_compatibility(&reference, &actual, input_index)?;
+    }
+
+    let sampled = files.iter().map(is_sampled).collect::<Vec<_>>();
+    if sampled.iter().any(|sampled| *sampled) {
+        if let Some(input_index) = sampled.iter().position(|sampled| !sampled) {
+            return Err(invalid(
+                input_index,
+                "Volumetric Properties must consistently identify sampled projections",
+            ));
+        }
+        return Ok(SeriesOrderPlan {
+            source_indices: (0..files.len()).collect(),
+            strategy: SeriesOrderStrategy::RawPreserved,
+            z_spacing_mm: None,
+        });
     }
 
     let positions = files
@@ -356,6 +372,23 @@ fn string_value(file: &FileDicomObject<InMemDicomObject>, tag: dicom::core::Tag)
         .map(|value| value.trim().to_string())
 }
 
+fn is_sampled(file: &FileDicomObject<InMemDicomObject>) -> bool {
+    string_value(file, tags::VOLUMETRIC_PROPERTIES)
+        .or_else(|| {
+            file.iter().find_map(|element| {
+                element
+                    .items()
+                    .and_then(|items| items.first())
+                    .and_then(|item| {
+                        item.get(tags::VOLUMETRIC_PROPERTIES)
+                            .and_then(|element| element.to_str().ok())
+                            .map(|value| value.trim().to_string())
+                    })
+            })
+        })
+        .is_some_and(|value| value.eq_ignore_ascii_case("SAMPLED"))
+}
+
 fn int_value(file: &FileDicomObject<InMemDicomObject>, tag: dicom::core::Tag) -> Option<u32> {
     file.get(tag)?.to_int::<u32>().ok()
 }
@@ -482,6 +515,28 @@ mod tests {
 
         assert_eq!(plan.strategy, SeriesOrderStrategy::InstanceNumber);
         assert_eq!(plan.source_indices, vec![1, 2, 0]);
+        assert_eq!(plan.z_spacing_mm, None);
+    }
+
+    #[test]
+    fn sampled_projection_geometry_preserves_input_order() {
+        let mut files = vec![
+            series_file(Some([0.0, 0.0, 2.0]), Some(AXIAL), 3),
+            series_file(Some([0.0, 0.0, 0.0]), Some(AXIAL), 1),
+            series_file(Some([0.0, 0.0, 1.0]), Some(AXIAL), 2),
+        ];
+        for file in &mut files {
+            file.put_element(DataElement::new(
+                tags::VOLUMETRIC_PROPERTIES,
+                VR::CS,
+                "SAMPLED",
+            ));
+        }
+
+        let plan = resolve_series_order(&files).unwrap();
+
+        assert_eq!(plan.strategy, SeriesOrderStrategy::RawPreserved);
+        assert_eq!(plan.source_indices, vec![0, 1, 2]);
         assert_eq!(plan.z_spacing_mm, None);
     }
 

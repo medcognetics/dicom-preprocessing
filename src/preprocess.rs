@@ -247,17 +247,34 @@ impl Preprocessor {
                 if spacing_config.spacing_mm_z.is_some() && res.frames_per_mm.is_some() =>
             {
                 let target_spacing_mm_z = spacing_config.spacing_mm_z.unwrap();
-                let target_frames_per_mm = 1.0 / target_spacing_mm_z;
                 let current_frames_per_mm = res.frames_per_mm.unwrap();
-
-                // Scale factor for frames
-                let scale_z = target_frames_per_mm / current_frames_per_mm;
-
-                // Compute target frame count based on actual current frame count
-                Some((current_frame_count as f32 * scale_z).round() as u32)
+                let source_extent_mm =
+                    current_frame_count.saturating_sub(1) as f32 / current_frames_per_mm;
+                Some((source_extent_mm / target_spacing_mm_z).round() as u32 + 1)
             }
             _ => None,
         }
+    }
+
+    fn update_z_resolution_after_resampling(
+        resolution: &mut Option<Resolution>,
+        source_frame_count: usize,
+        output_frame_count: usize,
+    ) {
+        let Some(resolution) = resolution.as_mut() else {
+            return;
+        };
+        let Some(source_frames_per_mm) = resolution.frames_per_mm else {
+            return;
+        };
+        if source_frame_count <= 1 || output_frame_count <= 1 {
+            return;
+        }
+
+        resolution.frames_per_mm = Some(
+            source_frames_per_mm * (output_frame_count - 1) as f32
+                / (source_frame_count - 1) as f32,
+        );
     }
 
     /// Apply z-direction interpolation to resample frames based on spacing
@@ -433,17 +450,13 @@ impl Preprocessor {
         if let Some(target_frames) = target_frames {
             let original_frame_count = image_data.len();
             image_data = self.interpolate_z_spacing(image_data, target_frames)?;
+            Self::update_z_resolution_after_resampling(
+                &mut resolution,
+                original_frame_count,
+                image_data.len(),
+            );
             if image_data.len() != original_frame_count {
                 frame_plan.display_frames = vec![VolumeFrameSource::Derived; image_data.len()];
-            }
-
-            // Update the z-resolution after interpolation
-            if let Some(ref mut res) = resolution {
-                if let Some(spacing_config) = self.spacing {
-                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
-                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
-                    }
-                }
             }
         }
 
@@ -514,6 +527,8 @@ impl Preprocessor {
         files: &[FileDicomObject<InMemDicomObject>],
         parallel: bool,
     ) -> Result<PreparedSeries, DicomError> {
+        self.validate()?;
+
         let plan = resolve_series_order(files)?;
         let ordered_files = plan
             .source_indices
@@ -565,16 +580,13 @@ impl Preprocessor {
             .or_else(|| self.volume_handler.get_target_frames());
 
         if let Some(target_frames) = target_frames {
+            let original_frame_count = combined_volume.len();
             combined_volume = self.interpolate_z_spacing(combined_volume, target_frames)?;
-
-            // Update the z-resolution after interpolation
-            if let Some(ref mut res) = resolution {
-                if let Some(spacing_config) = self.spacing {
-                    if let Some(target_spacing_mm_z) = spacing_config.spacing_mm_z {
-                        res.frames_per_mm = Some(1.0 / target_spacing_mm_z);
-                    }
-                }
-            }
+            Self::update_z_resolution_after_resampling(
+                &mut resolution,
+                original_frame_count,
+                combined_volume.len(),
+            );
         }
 
         // Use the combined volume for determining common crop bounds
@@ -1881,6 +1893,25 @@ mod tests {
     }
 
     #[test]
+    fn prepare_series_validates_configuration_before_decoding() {
+        let files = vec![geometry_series_slice(0.0, 1)];
+        let preprocessor = Preprocessor {
+            target_frames: 0,
+            ..series_preprocessor(None)
+        };
+
+        let error = preprocessor.prepare_series(&files, false).unwrap_err();
+
+        assert!(matches!(
+            error,
+            DicomError::InvalidPreprocessorConfiguration {
+                field: "target_frames",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn prepare_series_marks_z_interpolated_slices_as_derived() {
         let files = vec![
             geometry_series_slice(0.0, 1),
@@ -1894,8 +1925,8 @@ mod tests {
             .prepare_series(&files, false)
             .unwrap();
 
-        assert_eq!(prepared.image_batches.len(), 6);
-        assert_eq!(prepared.source_indices, vec![None; 6]);
+        assert_eq!(prepared.image_batches.len(), 5);
+        assert_eq!(prepared.source_indices, vec![None; 5]);
         assert_eq!(
             prepared.metadata.resolution.unwrap().frames_per_mm,
             Some(2.0)

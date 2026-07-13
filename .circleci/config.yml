@@ -1,5 +1,8 @@
 version: 2.1
 
+orbs:
+    win: circleci/windows@5.0
+
 jobs:
     rust_quality:
         docker:
@@ -174,6 +177,43 @@ jobs:
                 name: Run Node tests
                 command: make test-node
 
+    windows_node_tests:
+        executor: win/server-2022
+        steps:
+            - checkout
+            - run:
+                  name: Keep public GitHub dependencies on HTTPS
+                  command: |
+                      $rewriteRules = @(git config --global --get-regexp '^url\..*\.insteadof$' 2>$null)
+                      if (($LASTEXITCODE -ne 0) -and ($LASTEXITCODE -ne 1)) {
+                          throw "Unable to inspect global Git URL rewrites"
+                      }
+                      foreach ($rule in $rewriteRules) {
+                          $name, $value = $rule -split '\s+', 2
+                          if ($value -match '^https://github\.com/?$') {
+                              git config --global --unset-all $name
+                              if ($LASTEXITCODE -ne 0) {
+                                  throw "Unable to remove Git URL rewrite '$name'"
+                              }
+                          }
+                      }
+                      exit 0
+            - run:
+                  name: Install Rust
+                  command: |
+                      Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
+                      .\rustup-init.exe -y --default-toolchain stable
+                      $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+                      rustc --version
+                      cargo --version
+            - run:
+                  name: Build and test Node bindings
+                  command: |
+                      $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
+                      npm --prefix bindings/node ci
+                      cargo test -p dicom-preprocessing test_inode_sort
+                      npm --prefix bindings/node run build
+
 workflows:
     build_and_test:
         jobs:
@@ -191,6 +231,11 @@ workflows:
                     - node_quality
             - node_quality
             - node_tests:
+                requires:
+                    - rust_quality
+                    - python_quality
+                    - node_quality
+            - windows_node_tests:
                 requires:
                     - rust_quality
                     - python_quality

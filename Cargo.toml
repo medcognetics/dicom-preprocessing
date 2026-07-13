@@ -37,6 +37,9 @@ arrow = "59.0"
 parquet = "59.0"
 csv = "1.4"
 
+[target.'cfg(windows)'.dependencies]
+file-id = "=0.2.3"
+
 [features]
 python = ["pyo3", "numpy", "pyo3/auto-initialize"]
 

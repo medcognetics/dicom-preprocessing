@@ -1577,9 +1577,9 @@ mod tests {
         // Process the DICOM file
         let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
 
-        // Check that the output frame count matches expected scaling
-        let expected_frame_count =
-            (native_frame_count as f32 * (native_spacing_z / target_spacing_z)).round() as usize;
+        // Preserve the endpoint-defined physical extent while targeting z spacing.
+        let native_extent_z = (native_frame_count - 1) as f32 * native_spacing_z;
+        let expected_frame_count = (native_extent_z / target_spacing_z).round() as usize + 1;
 
         assert_eq!(
             images.len(),
@@ -1594,11 +1594,16 @@ mod tests {
             .map(|f| 1.0 / f)
             .expect("Should have output z-spacing");
 
-        // Allow small floating point error
-        let tolerance = target_spacing_z * 0.05; // 5% tolerance
+        let expected_output_spacing_z = native_extent_z / (expected_frame_count - 1) as f32;
+        let output_extent_z = (images.len() - 1) as f32 * output_spacing_z;
+        let tolerance = f32::EPSILON * native_extent_z;
         assert!(
-            (output_spacing_z - target_spacing_z).abs() < tolerance,
-            "Output spacing Z should be close to target. Got {output_spacing_z} expected {target_spacing_z}"
+            (output_spacing_z - expected_output_spacing_z).abs() < tolerance,
+            "Output spacing Z should describe the realized sampling. Got {output_spacing_z} expected {expected_output_spacing_z}"
+        );
+        assert!(
+            (output_extent_z - native_extent_z).abs() < tolerance,
+            "Output extent Z should preserve source endpoints. Got {output_extent_z} expected {native_extent_z}"
         );
     }
 

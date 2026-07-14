@@ -256,6 +256,21 @@ Python preprocessing converts the resulting image stack directly into one NHWC N
 The `u8`, `u16`, and `f32` entry points use the same numeric conversion semantics as the explicit TIFF-loading APIs, and DICOM pixel decoding and preprocessing release the Python GIL.
 TIFF serialization remains available through the CLI and Rust output APIs when a persistent preprocessed file is desired.
 
+Python exposes typed factories for the same volume handlers as Rust and Node. String names remain available, including `central` as an alias for `central-slice`.
+
+```python
+import dicom_preprocessing as dp
+
+handler = dp.VolumeHandler.laplacian_mip(
+    skip_start=2,
+    skip_end=2,
+    mip_weight=1.5,
+    projection_mode="parallel-beam",
+)
+preprocessor = dp.Preprocessor(crop=False, volume_handler=handler)
+projection = dp.preprocess_f32("/path/to/volume.dcm", preprocessor)
+```
+
 The validator API returns the same report schema as `dicom-validate --format json`.
 Validation blockers are reported in the returned dictionary rather than raised as Python exceptions.
 Runtime errors such as a missing source path still raise exceptions.

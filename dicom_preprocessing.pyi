@@ -98,6 +98,25 @@ class PreprocessingMetadata:
     resolution: Optional[Resolution]
     num_frames: int
 
+class VolumeHandler:
+    """Typed configuration for Rust volume handlers."""
+
+    @staticmethod
+    def keep() -> VolumeHandler: ...
+    @staticmethod
+    def central_slice() -> VolumeHandler: ...
+    @staticmethod
+    def max_intensity(skip_start: int = 0, skip_end: int = 0) -> VolumeHandler: ...
+    @staticmethod
+    def interpolate(target_frames: int) -> VolumeHandler: ...
+    @staticmethod
+    def laplacian_mip(
+        skip_start: int = 0,
+        skip_end: int = 0,
+        mip_weight: float = 1.5,
+        projection_mode: Literal["central-slice", "parallel-beam"] = "parallel-beam",
+    ) -> VolumeHandler: ...
+
 class Preprocessor:
     """Configuration for DICOM preprocessing.
 
@@ -110,10 +129,13 @@ class Preprocessor:
         filter: Interpolation filter for resizing. One of: nearest, triangle, catmull, gaussian, lanczos3
         padding_direction: Direction to pad when aspect ratio doesn't match target. One of: zero, center, edge
         crop_max: Whether to crop to maximum possible size
-        volume_handler: How to handle multi-frame volumes. One of: keep, central, interpolate.
+        volume_handler: How to handle multi-frame volumes. Accepts a `VolumeHandler` configuration or
+            one of: keep, central, central-slice, max-intensity, interpolate, laplacian-mip.
             - keep: Keep all frames
-            - central: Keep the central frame
+            - central / central-slice: Keep the central frame
+            - max-intensity: Compute a maximum-intensity projection
             - interpolate: Interpolate to `target_frames` using linear interpolation along z-axis
+            - laplacian-mip: Compute the default Laplacian-pyramid MIP projection
         use_components: Whether to use color components for cropping
         use_padding: Whether to pad to target size
         border_frac: Optional fraction of border to keep when cropping
@@ -144,7 +166,10 @@ class Preprocessor:
         filter: str = "triangle",
         padding_direction: str = "zero",
         crop_max: bool = True,
-        volume_handler: str = "keep",
+        volume_handler: Union[
+            VolumeHandler,
+            Literal["keep", "central", "central-slice", "max-intensity", "interpolate", "laplacian-mip"],
+        ] = "keep",
         use_components: bool = True,
         use_padding: bool = True,
         border_frac: Optional[float] = None,

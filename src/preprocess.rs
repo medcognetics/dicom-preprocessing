@@ -209,7 +209,11 @@ impl Preprocessor {
 
         target_size.map(|(target_width, target_height)| {
             let first_image = images.first().unwrap();
-            Resize::new(first_image, target_width, target_height, self.filter)
+            if self.size.is_none() && self.spacing.is_some() && resolution.is_some() {
+                Resize::new_exact(first_image, target_width, target_height, self.filter)
+            } else {
+                Resize::new(first_image, target_width, target_height, self.filter)
+            }
         })
     }
 
@@ -1282,6 +1286,7 @@ mod tests {
     #[case("pydicom/CT_small.dcm", 1.0, 1.0)]
     #[case("pydicom/CT_small.dcm", 0.5, 0.5)]
     #[case("pydicom/CT_small.dcm", 2.0, 2.0)]
+    #[case("pydicom/CT_small.dcm", 1.0, 0.5)]
     fn test_spacing_based_resize(
         #[case] dicom_file_path: &str,
         #[case] target_spacing_x: f32,
@@ -1343,6 +1348,15 @@ mod tests {
         let output_resolution = metadata.resolution.unwrap();
         let output_spacing_x = 1.0 / output_resolution.pixels_per_mm_x;
         let output_spacing_y = 1.0 / output_resolution.pixels_per_mm_y;
+        let realized_spacing_x = native_spacing_x * native_width as f32 / output_width as f32;
+        let realized_spacing_y = native_spacing_y * native_height as f32 / output_height as f32;
+
+        assert!((output_spacing_x - realized_spacing_x).abs() < f32::EPSILON);
+        assert!((output_spacing_y - realized_spacing_y).abs() < f32::EPSILON);
+        assert_eq!(
+            output_resolution.frames_per_mm,
+            native_resolution.frames_per_mm
+        );
 
         // Allow small floating point error (tolerance is higher for larger spacing values)
         let tolerance = target_spacing_x.max(target_spacing_y) * 0.02; // 2% tolerance
@@ -1529,8 +1543,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case("pydicom/emri_small.dcm", 10.0)] // Upsample: larger spacing = fewer frames
-    #[case("pydicom/emri_small.dcm", 2.5)] // Downsample: smaller spacing = more frames
+    #[case("pydicom/emri_small.dcm", 10.0)]
+    #[case("pydicom/emri_small.dcm", 4.0)]
+    #[case("pydicom/emri_small.dcm", 2.5)]
     fn test_spacing_based_z_resize(#[case] dicom_file_path: &str, #[case] target_spacing_z: f32) {
         let mut dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
 

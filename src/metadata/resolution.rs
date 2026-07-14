@@ -104,6 +104,14 @@ impl Resolution {
         }
     }
 
+    pub fn scale_xy(&self, scale_x: f32, scale_y: f32) -> Self {
+        Resolution {
+            pixels_per_mm_x: self.pixels_per_mm_x * scale_x,
+            pixels_per_mm_y: self.pixels_per_mm_y * scale_y,
+            frames_per_mm: self.frames_per_mm,
+        }
+    }
+
     pub fn with_frames_per_mm(mut self, frames_per_mm: f32) -> Self {
         self.frames_per_mm = Some(frames_per_mm);
         self

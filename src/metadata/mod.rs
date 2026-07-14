@@ -10,6 +10,9 @@ pub use resolution::*;
 pub mod frame_order;
 pub use frame_order::*;
 
+pub mod series;
+pub use series::*;
+
 pub mod preprocessing;
 pub use preprocessing::*;
 

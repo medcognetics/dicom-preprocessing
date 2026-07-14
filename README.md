@@ -134,7 +134,7 @@ Below are example images demonstrating various volume handling options. Laplacia
 
 The Laplacian MIP handler supports different projection modes for computing the central frame used in pyramid fusion. The default (`parallel-beam`) sums all slices along the z-axis, providing better depth integration. `central-slice` uses the middle slice directly, preserving single-slice sharpness.
 
-For single-file multi-frame inputs, preprocessing now resolves frame order from DICOM metadata before applying any volume handler. The precedence is dimension indices, stack ordinals, and then non-sampled patient geometry. Sampled/projection-style frames such as `TOMO_PROJ` are not slice-sorted from geometry alone, and the `*_slices` APIs still preserve caller input order.
+For single-file multi-frame inputs, preprocessing resolves frame order from DICOM metadata before applying any volume handler. The precedence is dimension indices, stack ordinals, and then non-sampled patient geometry. Sampled/projection-style frames such as `TOMO_PROJ` are not slice-sorted from geometry alone. Multi-file `prepare_images_batch` and Python `*_slices` calls preserve caller order; Rust callers can opt into `Preprocessor::prepare_series` to validate one single-frame series, order it from patient geometry, derive center-to-center z spacing, and receive source-index provenance.
 
 | Parallel Beam (default) | Central Slice |
 |-------------------------|---------------|
@@ -255,6 +255,21 @@ Python bindings are provided via the `pyo3` crate. The following features are su
 Python preprocessing converts the resulting image stack directly into one NHWC NumPy array without creating an intermediate TIFF file.
 The `u8`, `u16`, and `f32` entry points use the same numeric conversion semantics as the explicit TIFF-loading APIs, and DICOM pixel decoding and preprocessing release the Python GIL.
 TIFF serialization remains available through the CLI and Rust output APIs when a persistent preprocessed file is desired.
+
+Python exposes typed factories for the same volume handlers as Rust and Node. String names remain available, including `central` as an alias for `central-slice`.
+
+```python
+import dicom_preprocessing as dp
+
+handler = dp.VolumeHandler.laplacian_mip(
+    skip_start=2,
+    skip_end=2,
+    mip_weight=1.5,
+    projection_mode="parallel-beam",
+)
+preprocessor = dp.Preprocessor(crop=False, volume_handler=handler)
+projection = dp.preprocess_f32("/path/to/volume.dcm", preprocessor)
+```
 
 The validator API returns the same report schema as `dicom-validate --format json`.
 Validation blockers are reported in the returned dictionary rather than raised as Python exceptions.

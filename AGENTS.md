@@ -14,10 +14,10 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 - `make develop`: build/install the Python extension locally via `maturin --release`.
 - `make develop-debug`: build/install the Python extension in debug mode (faster, CI-friendly).
 - `make develop-release`: build/install the Python extension in release mode.
-- `make quality`: run Rust checks plus Python quality checks (`ruff format --check`, `ruff check`, `basedpyright`).
+- `make quality`: run Rust checks plus Python and Node quality checks.
 - `make quality-python`: run Python quality checks only.
 - `make style`: apply auto-fixes (`cargo fix`, `clippy --fix`, `cargo fmt`, `ruff check --fix`, `ruff format`).
-- `make test`: run Rust tests and Python tests.
+- `make test`: run Rust, Python, and Node tests.
 - `make test-python`: run only the Python test suite under `tests/`.
 - `make test-python-ci`: run Python tests against a debug extension build (CI target).
 
@@ -41,12 +41,15 @@ Python style is formatter-driven:
 - Test files use `test_*.py`; test functions use `test_*`.
 
 ## CI Quality Pipeline
-- Rust quality gate: `rust_quality` job (`cargo fmt --check`, `cargo clippy --all-features -- -D warnings`).
+- Rust quality gate: `rust_quality` job (`cargo fmt -- --check`, `cargo clippy --workspace --all-features -- -D warnings`).
 - Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
-- Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
+- Node quality gate: `node_quality` installs Node dependencies and runs TypeScript checks without compiling the native module.
+- Rust runtime tests: `rust_tests` job (`cargo test --workspace --all-features`).
 - Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
-- Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module on Windows Server.
+- Node runtime tests: `node_tests` builds the N-API module in debug mode, type-checks the generated declarations, and runs the JavaScript tests.
+- Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module in debug mode on branches. Exact `vMAJOR.MINOR.PATCH` tags use the release build.
 - Test jobs are gated on all three quality jobs passing.
+- CI caches package-manager downloads per executor. Only `rust_quality` caches `target/`; jobs do not transfer build artifacts through a workspace.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

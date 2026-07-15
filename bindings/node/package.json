@@ -13,8 +13,8 @@
   "scripts": {
     "build": "napi build --release --platform --dts index.d.ts --js index.js",
     "build:debug": "napi build --platform --dts index.d.ts --js index.js",
-    "typecheck": "npm run build && tsc --noEmit",
-    "test": "npm run build:debug && node --test test/*.test.mjs"
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build:debug && npm run typecheck && node --test test/*.test.mjs"
   },
   "napi": {
     "binaryName": "dicom_preprocessing_node",

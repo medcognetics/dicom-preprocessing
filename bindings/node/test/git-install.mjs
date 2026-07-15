@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { npmInvocation } from './git-install-command.mjs'
 import { assertLockedCommit } from './git-install-lock.mjs'
 
 const PACKAGE_NAME = '@medcognetics/dicom-preprocessing'
@@ -36,6 +37,11 @@ function run(command, args, cwd, options = {}) {
 
 function git(args, cwd, options = {}) {
   return run('git', args, cwd, options)
+}
+
+function runNpm(args, cwd) {
+  const invocation = npmInvocation(args)
+  return run(invocation.command, invocation.args, cwd)
 }
 
 function trackedAndUntrackedFiles() {
@@ -128,7 +134,6 @@ assert.ok(expectedBinary, `Unsupported integration-test host: ${process.platform
 const { dependency, sha, snapshot } = dependencySource()
 const consumer = mkdtempSync(join(tmpdir(), 'dicom-preprocessing-git-consumer-'))
 const verificationPath = writeConsumerVerification(consumer, expectedBinary)
-const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm'
 
 try {
   writeFileSync(
@@ -145,12 +150,12 @@ try {
     )}\n`,
   )
 
-  run(npm, ['install', '--omit=optional'], consumer)
+  runNpm(['install', '--omit=optional'], consumer)
   assertConsumerLockedCommit(consumer, dependency, sha)
   run(process.execPath, [verificationPath], consumer)
 
   rmSync(join(consumer, 'node_modules'), { recursive: true, force: true })
-  run(npm, ['ci', '--omit=optional'], consumer)
+  runNpm(['ci', '--omit=optional'], consumer)
   assertConsumerLockedCommit(consumer, dependency, sha)
   run(process.execPath, [verificationPath], consumer)
 } finally {

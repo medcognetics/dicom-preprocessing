@@ -2,6 +2,14 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
 QUALITY_JOBS = {"rust_quality", "python_quality", "node_quality"}
+RUNTIME_JOBS = {
+    "rust_tests",
+    "python_tests",
+    "node_tests",
+    "windows_node_tests",
+    "macos_arm64_node_tests",
+    "macos_x64_node_tests",
+}
 
 
 def workflow_job_requirements(config: str, job_name: str) -> set[str]:
@@ -34,7 +42,8 @@ def workflow_job_requirements(config: str, job_name: str) -> set[str]:
     raise AssertionError(f"Workflow job not found: {job_name}")
 
 
-def test_windows_node_tests_require_quality_jobs() -> None:
+def test_runtime_jobs_require_quality_jobs() -> None:
     config = (REPOSITORY_ROOT / ".circleci" / "config.yml").read_text()
 
-    assert workflow_job_requirements(config, "windows_node_tests") == QUALITY_JOBS
+    for job_name in RUNTIME_JOBS:
+        assert workflow_job_requirements(config, job_name) == QUALITY_JOBS

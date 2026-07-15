@@ -285,7 +285,29 @@ if not report["summary"]["valid"]:
 
 ### Node/TypeScript Bindings
 
-Node bindings are provided under `bindings/node` with NAPI-RS. The package name is `@medcognetics/dicom-preprocessing`, and the viewer path exposes the same frame-plan contract as the Rust `ViewerDicom` API without crop, resize, or pad.
+The repository root is the source-installable `@medcognetics/dicom-preprocessing` Node package. NAPI-RS source and generated entry points remain under `bindings/node`. The viewer path exposes the same frame-plan contract as the Rust `ViewerDicom` API without crop, resize, or pad.
+
+Install an exact repository commit by using its full SHA:
+
+```json
+{
+  "dependencies": {
+    "@medcognetics/dicom-preprocessing": "git+https://github.com/medcognetics/dicom-preprocessing.git#<full-commit-sha>"
+  }
+}
+```
+
+Both initial and lockfile-based installs support omitting optional dependencies:
+
+```shell
+npm install --omit=optional
+```
+
+After removing `node_modules`, the generated lockfile can reproduce the installation with `npm ci --omit=optional`.
+
+npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and one of these Node versions: Node 20.17 or newer in the Node 20 line, Node 22.13 or newer in the Node 22 line, or Node 23.5 or newer. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows.
+
+Supported hosts are Linux x64 GNU, macOS x64, macOS arm64, and Windows x64 MSVC.
 
 ```ts
 import { prepareDicom, renderDisplayFrame, renderFrame } from '@medcognetics/dicom-preprocessing'

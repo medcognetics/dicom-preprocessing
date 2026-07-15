@@ -1,0 +1,40 @@
+{
+  "name": "@medcognetics/dicom-preprocessing",
+  "version": "0.1.2",
+  "description": "Node/TypeScript viewer bindings for dicom-preprocessing",
+  "license": "MIT",
+  "main": "bindings/node/index.js",
+  "types": "bindings/node/index.d.ts",
+  "files": [
+    "bindings/node/index.js",
+    "bindings/node/index.d.ts",
+    "bindings/node/*.node"
+  ],
+  "scripts": {
+    "build": "napi build --release --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --js index.js",
+    "build:debug": "napi build --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --js index.js",
+    "prepare": "npm run build",
+    "typecheck": "npm run build && tsc --noEmit --project bindings/node/tsconfig.json",
+    "test": "npm run build:debug && node --test bindings/node/test/api.test.mjs",
+    "test:git-install": "node bindings/node/test/git-install.mjs"
+  },
+  "engines": {
+    "node": ">=23.5.0 || ^22.13.0 || ^20.17.0",
+    "npm": ">=10"
+  },
+  "napi": {
+    "binaryName": "dicom_preprocessing_node",
+    "dtsHeaderFile": "./bindings/node/src/dts-header.d.ts",
+    "targets": [
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "x86_64-unknown-linux-gnu"
+    ]
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "3.7.2",
+    "@types/node": "24.13.2",
+    "typescript": "6.0.3"
+  }
+}

@@ -5,6 +5,7 @@ Core Rust code lives in `src/`.
 - CLI entry points: `src/main.rs` (`dicom-preprocess`) and `src/bin/*.rs` (manifest, combine, stats, trace, resize).
 - Library modules: `src/transform/`, `src/metadata/`, `src/python/`, `src/errors/`.
 - Python typing stub: `dicom_preprocessing.pyi`.
+- Node package metadata and its lockfile: root `package.json` and `package-lock.json`; NAPI-RS source and generated entry points: `bindings/node/`.
 
 Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/`. Examples are in `examples/`, and documentation images in `docs/`.
 
@@ -14,12 +15,17 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 - `make develop`: build/install the Python extension locally via `maturin --release`.
 - `make develop-debug`: build/install the Python extension in debug mode (faster, CI-friendly).
 - `make develop-release`: build/install the Python extension in release mode.
-- `make quality`: run Rust checks plus Python quality checks (`ruff format --check`, `ruff check`, `basedpyright`).
+- `make init-node`: install locked root Node dependencies without running the package `prepare` build.
+- `make build-node`: build the host N-API module in release mode.
+- `make quality`: run Rust, Python, and Node quality checks.
 - `make quality-python`: run Python quality checks only.
+- `make quality-node`: build and type-check the Node bindings.
 - `make style`: apply auto-fixes (`cargo fix`, `clippy --fix`, `cargo fmt`, `ruff check --fix`, `ruff format`).
-- `make test`: run Rust tests and Python tests.
+- `make test`: run Rust, Python, and Node tests.
 - `make test-python`: run only the Python test suite under `tests/`.
 - `make test-python-ci`: run Python tests against a debug extension build (CI target).
+- `make test-node`: run Node API tests plus the commit-pinned Git-install contract.
+- `make test-node-git-install`: test root package installation in a temporary npm consumer.
 
 ## CLI Binaries
 Run binaries with `cargo run --release --bin <name> -- ...`:
@@ -43,9 +49,10 @@ Python style is formatter-driven:
 ## CI Quality Pipeline
 - Rust quality gate: `rust_quality` job (`cargo fmt --check`, `cargo clippy --all-features -- -D warnings`).
 - Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
+- Node quality gate: `node_quality` job (Node 24; runs `make quality-node`).
 - Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
 - Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
-- Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module on Windows Server.
+- Node runtime gates: Linux x64 GNU, Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 validate commit-pinned npm Git installation and host-native module loading.
 - Test jobs are gated on all three quality jobs passing.
 
 ## Testing Guidelines

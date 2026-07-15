@@ -1,6 +1,7 @@
 version: 2.1
 
 orbs:
+    macos: circleci/macos@2.5.4
     win: circleci/windows@5.0
 
 jobs:
@@ -61,8 +62,8 @@ jobs:
             - checkout
             - restore_cache:
                 keys:
-                  - v1-node-{{ checksum "bindings/node/package-lock.json" }}
-                  - v1-node-
+                  - v2-node-{{ checksum "package-lock.json" }}
+                  - v2-node-
             - run:
                 name: Install Rust
                 command: |
@@ -74,10 +75,10 @@ jobs:
                 name: Install Node dependencies
                 command: make init-node
             - save_cache:
-                key: v1-node-{{ checksum "bindings/node/package-lock.json" }}
+                key: v2-node-{{ checksum "package-lock.json" }}
                 paths:
                   - ~/.npm
-                  - bindings/node/node_modules
+                  - node_modules
             - run:
                 name: Run Node quality checks
                 command: make quality-node
@@ -156,8 +157,8 @@ jobs:
             - checkout
             - restore_cache:
                 keys:
-                  - v1-node-{{ checksum "bindings/node/package-lock.json" }}
-                  - v1-node-
+                  - v2-node-{{ checksum "package-lock.json" }}
+                  - v2-node-
             - run:
                 name: Install Rust
                 command: |
@@ -169,13 +170,16 @@ jobs:
                 name: Install Node dependencies
                 command: make init-node
             - save_cache:
-                key: v1-node-{{ checksum "bindings/node/package-lock.json" }}
+                key: v2-node-{{ checksum "package-lock.json" }}
                 paths:
                   - ~/.npm
-                  - bindings/node/node_modules
+                  - node_modules
             - run:
                 name: Run Node tests
-                command: make test-node
+                command: |
+                    export DICOM_PREPROCESSING_GIT_URL="git+https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
+                    export DICOM_PREPROCESSING_GIT_SHA="$CIRCLE_SHA1"
+                    make test-node
 
     windows_node_tests:
         executor: win/server-2022
@@ -210,9 +214,71 @@ jobs:
                   name: Build and test Node bindings
                   command: |
                       $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-                      npm --prefix bindings/node ci
+                      npm ci --ignore-scripts
                       cargo test -p dicom-preprocessing test_inode_sort
-                      npm --prefix bindings/node run build
+                      npm run build
+                      $env:DICOM_PREPROCESSING_GIT_URL = "git+https://github.com/$env:CIRCLE_PROJECT_USERNAME/$env:CIRCLE_PROJECT_REPONAME.git"
+                      $env:DICOM_PREPROCESSING_GIT_SHA = $env:CIRCLE_SHA1
+                      npm run test:git-install
+
+    macos_arm64_node_tests:
+        macos:
+            xcode: 16.4.0
+        resource_class: m4pro.medium
+        environment:
+            HOMEBREW_NO_AUTO_UPDATE: 1
+        steps:
+            - checkout
+            - run:
+                  name: Install Node and Rust
+                  command: |
+                      nvm install 24.13.0
+                      nvm alias default 24.13.0
+                      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
+                      echo 'export NVM_DIR="$HOME/.nvm"' >> "$BASH_ENV"
+                      echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> "$BASH_ENV"
+                      echo 'nvm use 24.13.0 >/dev/null' >> "$BASH_ENV"
+                      echo 'source "$HOME/.cargo/env"' >> "$BASH_ENV"
+            - run:
+                  name: Test commit-pinned Git installation
+                  command: |
+                      test "$(node -p process.arch)" = arm64
+                      export DICOM_PREPROCESSING_GIT_URL="git+https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
+                      export DICOM_PREPROCESSING_GIT_SHA="$CIRCLE_SHA1"
+                      npm run test:git-install
+
+    macos_x64_node_tests:
+        macos:
+            xcode: 16.4.0
+        resource_class: m4pro.medium
+        environment:
+            HOMEBREW_NO_AUTO_UPDATE: 1
+        steps:
+            - checkout
+            - macos/install-rosetta
+            - run:
+                  name: Install x64 Node and Rust
+                  command: |
+                      arch -x86_64 /bin/bash -lc '
+                        export NVM_DIR="$HOME/.nvm"
+                        source "$NVM_DIR/nvm.sh"
+                        nvm install 24.13.0
+                        nvm alias default 24.13.0
+                        curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0 --default-host x86_64-apple-darwin
+                      '
+            - run:
+                  name: Test x64 commit-pinned Git installation
+                  command: |
+                      arch -x86_64 /bin/bash -lc '
+                        export NVM_DIR="$HOME/.nvm"
+                        source "$NVM_DIR/nvm.sh"
+                        nvm use 24.13.0
+                        source "$HOME/.cargo/env"
+                        test "$(node -p process.arch)" = x64
+                        export DICOM_PREPROCESSING_GIT_URL="git+https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
+                        export DICOM_PREPROCESSING_GIT_SHA="$CIRCLE_SHA1"
+                        npm run test:git-install
+                      '
 
 workflows:
     build_and_test:
@@ -236,6 +302,16 @@ workflows:
                     - python_quality
                     - node_quality
             - windows_node_tests:
+                requires:
+                    - rust_quality
+                    - python_quality
+                    - node_quality
+            - macos_arm64_node_tests:
+                requires:
+                    - rust_quality
+                    - python_quality
+                    - node_quality
+            - macos_x64_node_tests:
                 requires:
                     - rust_quality
                     - python_quality

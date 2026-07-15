@@ -3,6 +3,7 @@ name = "dicom-preprocessing" # the name of the package
 version = "0.1.2"    # the current version, obeying semver
 authors = ["Scott Chase Waggener <chase.waggener@icloud.com>"]
 edition = "2021"
+rust-version = "1.89.0"
 
 [lib]
 name = "dicom_preprocessing"

@@ -9,10 +9,9 @@ MATURIN_FEATURES=-F python -F pyo3/extension-module
 PYTHON=$(UV_RUN) python
 PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
 PYTEST_ARGS=-rs ./tests/
-NODE_PACKAGE=bindings/node
 NPM=npm
 
-.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build-node quality quality-python quality-node style test-python test-python-ci test-python-pdb test-node test
+.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build-node quality quality-python quality-node style test-python test-python-ci test-python-pdb test-node test-node-git-install test
 
 ensure-uv:
 	which $(UV) || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -27,7 +26,7 @@ init-no-project: ensure-uv
 	$(UV_SYNC_ALL_GROUPS) --no-install-project
 
 init-node:
-	$(NPM) --prefix $(NODE_PACKAGE) ci
+	$(NPM) ci --ignore-scripts
 
 develop: develop-release
 
@@ -50,10 +49,10 @@ quality-python:
 	$(UV_NO_PROJECT) basedpyright
 
 build-node:
-	$(NPM) --prefix $(NODE_PACKAGE) run build
+	$(NPM) run build
 
 quality-node: init-node
-	$(NPM) --prefix $(NODE_PACKAGE) run typecheck
+	$(NPM) run typecheck
 
 style:
 	cargo fix --allow-dirty --all-features
@@ -81,7 +80,11 @@ test-node: init-node
 	DICOM_PREPROCESSING_CT_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/CT_small.dcm" \
 	DICOM_PREPROCESSING_MULTIFRAME_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/emri_small.dcm" \
 	DICOM_PREPROCESSING_RGB_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/SC_rgb.dcm" \
-	$(NPM) --prefix $(NODE_PACKAGE) test
+	$(NPM) test
+	$(MAKE) test-node-git-install
+
+test-node-git-install:
+	$(NPM) run test:git-install
 
 # Docs image generation recipe.
 # NOTE: The lesion crop coordinates were manually determined for the specific source DICOM

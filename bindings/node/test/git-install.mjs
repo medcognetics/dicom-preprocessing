@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import { assertLockedCommit } from './git-install-lock.mjs'
+
 const PACKAGE_NAME = '@medcognetics/dicom-preprocessing'
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/u
@@ -115,12 +117,9 @@ console.log(JSON.stringify({ packageRoot, binary: binaries[0], platform: process
   return verificationPath
 }
 
-function assertLockedCommit(consumer, dependency, sha) {
+function assertConsumerLockedCommit(consumer, dependency, sha) {
   const lockfile = JSON.parse(readFileSync(join(consumer, 'package-lock.json'), 'utf8'))
-  assert.equal(lockfile.packages[''].dependencies[PACKAGE_NAME], dependency)
-  const installedPackage = lockfile.packages[`node_modules/${PACKAGE_NAME}`]
-  assert.equal(installedPackage.resolved, dependency)
-  assert.ok(installedPackage.resolved.endsWith(`#${sha}`))
+  assertLockedCommit(lockfile, dependency, sha)
 }
 
 const expectedBinary = EXPECTED_BINARY_BY_HOST[`${process.platform}:${process.arch}`]
@@ -147,12 +146,12 @@ try {
   )
 
   run(npm, ['install', '--omit=optional'], consumer)
-  assertLockedCommit(consumer, dependency, sha)
+  assertConsumerLockedCommit(consumer, dependency, sha)
   run(process.execPath, [verificationPath], consumer)
 
   rmSync(join(consumer, 'node_modules'), { recursive: true, force: true })
   run(npm, ['ci', '--omit=optional'], consumer)
-  assertLockedCommit(consumer, dependency, sha)
+  assertConsumerLockedCommit(consumer, dependency, sha)
   run(process.execPath, [verificationPath], consumer)
 } finally {
   rmSync(consumer, { recursive: true, force: true })

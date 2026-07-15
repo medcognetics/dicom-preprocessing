@@ -47,7 +47,7 @@ Python style is formatter-driven:
 - Rust runtime tests: `rust_tests` job (`cargo test --workspace --all-features`).
 - Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
 - Node runtime tests: `node_tests` builds the N-API module in debug mode, type-checks the generated declarations, and runs the JavaScript tests.
-- Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module in debug mode on branches. Exact `vMAJOR.MINOR.PATCH` tags use the release build.
+- Windows native-binding gate: `windows_node_tests` verifies platform file identifiers and builds the N-API module in debug mode on branches. The Rust test and N-API build share the detected host target so debug artifacts are reused. Exact `vMAJOR.MINOR.PATCH` tags use the release build.
 - Test jobs are gated on all three quality jobs passing.
 - CI caches package-manager downloads per executor. Only `rust_quality` caches `target/`; jobs do not transfer build artifacts through a workspace.
 

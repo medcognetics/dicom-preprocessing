@@ -15,6 +15,7 @@ WORKFLOW_JOBS = (
     "windows_node_tests",
 )
 VERSION_TAG_FILTER = "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
+WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 
 
 def job_definition(config: str, job_name: str) -> str:
@@ -99,13 +100,21 @@ def test_windows_build_mode_depends_on_exact_version_tag() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
     windows_job = job_definition(config, "windows_node_tests")
 
-    assert "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort" in windows_job
+    assert WINDOWS_INODE_TEST_COMMAND in windows_job
     assert f"$env:CIRCLE_TAG -match '{VERSION_TAG_FILTER[1:-1]}'" in windows_job
     assert '"build"' in windows_job
     assert '"build:debug"' in windows_job
     assert "name: Install Node dependencies" in windows_job
     assert "name: Test Windows file identifiers" in windows_job
     assert "name: Build Node bindings" in windows_job
+
+
+def test_windows_rust_test_reuses_node_build_target() -> None:
+    config = CIRCLECI_CONFIG_PATH.read_text()
+    windows_job = job_definition(config, "windows_node_tests")
+
+    assert "$rustTargetLine = rustc -vV | Select-String '^host: '" in windows_job
+    assert f"{WINDOWS_INODE_TEST_COMMAND} --target $rustTarget" in windows_job
 
 
 def test_all_workflow_jobs_accept_exact_version_tags() -> None:

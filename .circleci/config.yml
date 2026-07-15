@@ -200,7 +200,12 @@ jobs:
                   name: Test Windows file identifiers
                   command: |
                       $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-                      cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort
+                      $rustTargetLine = rustc -vV | Select-String '^host: '
+                      if ($null -eq $rustTargetLine) {
+                          throw "Unable to detect the Rust host target"
+                      }
+                      $rustTarget = $rustTargetLine.Line.Substring(6)
+                      cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort --target $rustTarget
             - run:
                   name: Build Node bindings
                   command: |

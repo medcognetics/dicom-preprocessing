@@ -14,8 +14,8 @@
     "build": "napi build --release --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --js index.js",
     "build:debug": "napi build --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --js index.js",
     "prepare": "npm run build",
-    "typecheck": "npm run build && tsc --noEmit --project bindings/node/tsconfig.json",
-    "test": "npm run build:debug && node --test bindings/node/test/api.test.mjs",
+    "typecheck": "tsc --noEmit --project bindings/node/tsconfig.json",
+    "test": "npm run build:debug && npm run typecheck && node --test bindings/node/test/api.test.mjs",
     "test:git-install": "node --test bindings/node/test/git-install-command.test.mjs bindings/node/test/git-install-lock.test.mjs && node bindings/node/test/git-install.mjs"
   },
   "engines": {

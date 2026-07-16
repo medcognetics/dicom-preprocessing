@@ -19,7 +19,7 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 - `make build-node`: build the host N-API module in release mode.
 - `make quality`: run Rust, Python, and Node quality checks.
 - `make quality-python`: run Python quality checks only.
-- `make quality-node`: build and type-check the Node bindings.
+- `make quality-node`: install locked Node dependencies and type-check the generated declarations without compiling the native module.
 - `make style`: apply auto-fixes (`cargo fix`, `clippy --fix`, `cargo fmt`, `ruff check --fix`, `ruff format`).
 - `make test`: run Rust, Python, and Node tests.
 - `make test-python`: run only the Python test suite under `tests/`.
@@ -47,13 +47,14 @@ Python style is formatter-driven:
 - Test files use `test_*.py`; test functions use `test_*`.
 
 ## CI Quality Pipeline
-- Rust quality gate: `rust_quality` job (`cargo fmt --check`, `cargo clippy --all-features -- -D warnings`).
+- Rust quality gate: `rust_quality` job (`cargo fmt -- --check`, `cargo clippy --workspace --all-features -- -D warnings`).
 - Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
-- Node quality gate: `node_quality` job (Node 24; runs `make quality-node`).
-- Rust runtime tests: `rust_tests` job (`cargo test --all-features`).
+- Node quality gate: `node_quality` installs Node dependencies and runs TypeScript checks without compiling the native module.
+- Rust runtime tests: `rust_tests` job (`cargo test --workspace --all-features`).
 - Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
-- Node runtime gates: Linux x64 GNU, Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 validate commit-pinned npm Git installation and host-native module loading.
+- Node runtime gates: Linux x64 GNU, Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 validate commit-pinned npm Git installation and host-native module loading. The Linux job also runs the direct JavaScript API tests against a debug build.
 - Test jobs are gated on all three quality jobs passing.
+- CI caches package-manager downloads per executor. Only `rust_quality` caches `target/`; jobs do not transfer build artifacts through a workspace.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

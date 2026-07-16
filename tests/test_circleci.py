@@ -10,6 +10,7 @@ RUNTIME_JOBS = {
     "macos_arm64_node_tests",
     "macos_x64_node_tests",
 }
+WINDOWS_GIT_INSTALL_NO_OUTPUT_TIMEOUT = "30m"
 
 
 def workflow_job_requirements(config: str, job_name: str) -> set[str]:
@@ -47,3 +48,12 @@ def test_runtime_jobs_require_quality_jobs() -> None:
 
     for job_name in RUNTIME_JOBS:
         assert workflow_job_requirements(config, job_name) == QUALITY_JOBS
+
+
+def test_windows_git_install_allows_silent_source_build() -> None:
+    config = (REPOSITORY_ROOT / ".circleci" / "config.yml").read_text()
+    run_step_header = f"""                  name: Build and test Node bindings
+                  no_output_timeout: {WINDOWS_GIT_INSTALL_NO_OUTPUT_TIMEOUT}
+                  command: |"""
+
+    assert run_step_header in config

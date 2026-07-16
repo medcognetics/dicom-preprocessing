@@ -212,6 +212,7 @@ jobs:
                       cargo --version
             - run:
                   name: Build and test Node bindings
+                  no_output_timeout: 30m
                   command: |
                       $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
                       npm ci --ignore-scripts

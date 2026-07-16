@@ -3,8 +3,16 @@ from pathlib import Path
 
 REPOSITORY_ROOT = Path(__file__).parents[1]
 CIRCLECI_CONFIG_PATH = REPOSITORY_ROOT / ".circleci" / "config.yml"
-NODE_PACKAGE_PATH = REPOSITORY_ROOT / "bindings" / "node" / "package.json"
+NODE_PACKAGE_PATH = REPOSITORY_ROOT / "package.json"
 QUALITY_JOBS = {"rust_quality", "python_quality", "node_quality"}
+RUNTIME_JOBS = {
+    "rust_tests",
+    "python_tests",
+    "node_tests",
+    "windows_node_tests",
+    "macos_arm64_node_tests",
+    "macos_x64_node_tests",
+}
 WORKFLOW_JOBS = (
     "rust_quality",
     "python_quality",
@@ -13,9 +21,12 @@ WORKFLOW_JOBS = (
     "node_quality",
     "node_tests",
     "windows_node_tests",
+    "macos_arm64_node_tests",
+    "macos_x64_node_tests",
 )
 VERSION_TAG_FILTER = "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
+WINDOWS_GIT_INSTALL_NO_OUTPUT_TIMEOUT = "30m"
 
 
 def job_definition(config: str, job_name: str) -> str:
@@ -77,17 +88,20 @@ def workflow_job_requirements(config: str, job_name: str) -> set[str]:
     return set()
 
 
-def test_windows_node_tests_require_quality_jobs() -> None:
+def test_runtime_jobs_require_quality_jobs() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
 
-    assert workflow_job_requirements(config, "windows_node_tests") == QUALITY_JOBS
+    for job_name in RUNTIME_JOBS:
+        assert workflow_job_requirements(config, job_name) == QUALITY_JOBS
 
 
 def test_node_validation_uses_debug_builds() -> None:
     package = json.loads(NODE_PACKAGE_PATH.read_text())
 
-    assert package["scripts"]["typecheck"] == "tsc --noEmit"
-    assert package["scripts"]["test"] == "npm run build:debug && npm run typecheck && node --test test/*.test.mjs"
+    assert package["scripts"]["typecheck"] == "tsc --noEmit --project bindings/node/tsconfig.json"
+    assert package["scripts"]["test"] == (
+        "npm run build:debug && npm run typecheck && node --test bindings/node/test/api.test.mjs"
+    )
 
 
 def test_node_quality_does_not_install_rust() -> None:
@@ -96,25 +110,18 @@ def test_node_quality_does_not_install_rust() -> None:
     assert "Install Rust" not in job_definition(config, "node_quality")
 
 
-def test_windows_build_mode_depends_on_exact_version_tag() -> None:
+def test_windows_runs_commit_pinned_git_install_contract() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
     windows_job = job_definition(config, "windows_node_tests")
 
     assert WINDOWS_INODE_TEST_COMMAND in windows_job
-    assert f"$env:CIRCLE_TAG -match '{VERSION_TAG_FILTER[1:-1]}'" in windows_job
-    assert '"build"' in windows_job
-    assert '"build:debug"' in windows_job
     assert "name: Install Node dependencies" in windows_job
     assert "name: Test Windows file identifiers" in windows_job
-    assert "name: Build Node bindings" in windows_job
-
-
-def test_windows_rust_test_reuses_node_build_target() -> None:
-    config = CIRCLECI_CONFIG_PATH.read_text()
-    windows_job = job_definition(config, "windows_node_tests")
-
-    assert "$rustTargetLine = rustc -vV | Select-String '^host: '" in windows_job
-    assert f"{WINDOWS_INODE_TEST_COMMAND} --target $rustTarget" in windows_job
+    assert "name: Test commit-pinned Git installation" in windows_job
+    assert "npm ci --ignore-scripts" in windows_job
+    assert "npm run test:git-install" in windows_job
+    assert f"no_output_timeout: {WINDOWS_GIT_INSTALL_NO_OUTPUT_TIMEOUT}" in windows_job
+    assert "--prefix bindings/node" not in windows_job
 
 
 def test_all_workflow_jobs_accept_exact_version_tags() -> None:
@@ -134,6 +141,7 @@ def test_ci_avoids_cross_executor_build_artifacts() -> None:
     assert "v3-rust-tests" not in config
     assert "~/.rustup" not in config
     assert "bindings/node/node_modules" not in config
+    assert "bindings/node/package-lock.json" not in config
 
     assert "v4-rust-deps-" in job_definition(config, "rust_tests")
     assert "v4-python-rust-deps-" in job_definition(config, "python_tests")

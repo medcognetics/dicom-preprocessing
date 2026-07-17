@@ -47,14 +47,15 @@ Python style is formatter-driven:
 - Test files use `test_*.py`; test functions use `test_*`.
 
 ## CI Quality Pipeline
-- Rust quality gate: `rust_quality` job (`cargo fmt -- --check`, `cargo clippy --workspace --all-features -- -D warnings`).
-- Python quality gate: `python_quality` job (Python 3.13; runs `make init-no-project` then `make quality-python`).
-- Node quality gate: `node_quality` installs Node dependencies and runs TypeScript checks without compiling the native module.
-- Rust runtime tests: `rust_tests` job (`cargo test --workspace --all-features`).
-- Python runtime tests: `python_tests` job (`make test-python-ci`, which uses a debug extension build).
-- Node runtime gates: Linux x64 GNU, Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 validate commit-pinned npm Git installation and host-native module loading. The Linux job also runs the direct JavaScript API tests against a debug build.
-- Test jobs are gated on all three quality jobs passing.
-- CI caches package-manager downloads per executor. Only `rust_quality` caches `target/`; jobs do not transfer build artifacts through a workspace.
+- GitHub Actions owns Linux CI on the self-hosted `beryl` runner. The `Linux / Rust`, `Linux / Python`, and `Linux / Node` jobs combine each language's quality and runtime checks so setup and build caches are reused within the job.
+- Linux CI runs for same-repository pull requests targeting `master`, pushes to `master`, exact semantic-version tags, manual dispatches, and nightly at `06:17 UTC`. Pull-request jobs test GitHub's synthetic merge result; the Node Git-install contract separately uses the remotely available pull-request head SHA. Fork pull requests are skipped; move trusted fork commits to a repository branch before running CI.
+- The Rust job runs `cargo fmt -- --check`, Clippy with all workspace features and warnings denied, and Rust tests with all workspace features.
+- The Python 3.13 job runs `make init-no-project`, `make quality-python`, and `make test-python-ci` with a debug extension build.
+- The Node 24.13 job runs `make quality-node` and `make test-node`, including the debug JavaScript API tests and commit-pinned npm Git-install contract.
+- CircleCI temporarily owns Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 Node validation. Migrate these jobs to GitHub Actions when suitable runners are available.
+- CircleCI cross-platform jobs run automatically only for exact semantic-version tags. For an on-demand run, use **Trigger Pipeline** on the intended branch and set the Boolean pipeline parameter `run_cross_platform` to `true`.
+- The required CircleCI schedule trigger is `weekly-cross-platform-master`: run every Sunday at `05:00 UTC` against `master`, with `run_cross_platform=true` and the scheduling system as actor. Ordinary pull requests and branch pushes run no CircleCI jobs.
+- CI caches are lockfile-scoped and local to each runner or executor; jobs do not transfer build artifacts through a workspace.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

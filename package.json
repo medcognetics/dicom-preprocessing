@@ -16,7 +16,8 @@
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit --project bindings/node/tsconfig.json",
     "test": "npm run build:debug && npm run typecheck && node --test bindings/node/test/api.test.mjs",
-    "test:git-install": "node --test bindings/node/test/git-install-command.test.mjs bindings/node/test/git-install-lock.test.mjs && node bindings/node/test/git-install.mjs"
+    "test:git-install": "node --test bindings/node/test/git-install-command.test.mjs bindings/node/test/git-install-lock.test.mjs && node bindings/node/test/git-install.mjs",
+    "test:package-install": "node bindings/node/test/git-install.mjs"
   },
   "engines": {
     "node": ">=23.5.0 || ^22.13.0 || ^20.17.0",

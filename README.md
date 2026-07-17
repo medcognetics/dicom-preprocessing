@@ -2,6 +2,16 @@
 
 Implements a tool that preprocesses DICOM files into TIFF images. The primary motivation is to prepare DICOM images for use in computer vision tasks, with a focus on efficient storage and minimization of decode processing time.
 
+### Building Distributable Artifacts
+
+Run `make build` to create release artifacts for all supported Linux package surfaces:
+
+- an executable-preserving archive of the Rust command-line binaries under `dist/rust/`
+- a Python wheel under `dist/python/`
+- a Node package tarball under `dist/node/`
+
+Run `make test-build` afterward to smoke-test the Rust binaries, install the Python wheel and Node tarball in clean environments, and verify the full commit-pinned Node Git-install pathway. GitHub Actions performs this complete build nightly on the `beryl` self-hosted runner and retains the verified artifacts for 14 days.
+
 ### Transformation Sequence
 
 Depending on the options used, the following transformations are applied to the DICOM image:

@@ -15,6 +15,7 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 - `make develop`: build/install the Python extension locally via `maturin --release`.
 - `make develop-debug`: build/install the Python extension in debug mode (faster, CI-friendly).
 - `make develop-release`: build/install the Python extension in release mode.
+- `make build`: build an archive of release Rust binaries, a Python wheel, and a Node package tarball under `dist/`.
 - `make init-node`: install locked root Node dependencies without running the package `prepare` build.
 - `make build-node`: build the host N-API module in release mode.
 - `make quality`: run Rust, Python, and Node quality checks.
@@ -24,8 +25,10 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 - `make test`: run Rust, Python, and Node tests.
 - `make test-python`: run only the Python test suite under `tests/`.
 - `make test-python-ci`: run Python tests against a debug extension build (CI target).
-- `make test-node`: run Node API tests plus the commit-pinned Git-install contract.
+- `make test-node-direct`: build the debug Node binding and run its Rust fixture, type, and JavaScript API tests.
+- `make test-node`: run direct Node tests plus the commit-pinned Git-install contract.
 - `make test-node-git-install`: test root package installation in a temporary npm consumer.
+- `make test-build`: verify artifacts previously created by `make build`, including the full Node Git-install contract.
 
 ## CLI Binaries
 Run binaries with `cargo run --release --bin <name> -- ...`:
@@ -48,14 +51,16 @@ Python style is formatter-driven:
 
 ## CI Quality Pipeline
 - GitHub Actions owns Linux CI on the self-hosted `beryl` runner. The `Linux / Rust`, `Linux / Python`, and `Linux / Node` jobs combine each language's quality and runtime checks so setup and build caches are reused within the job.
-- Linux CI runs for same-repository pull requests targeting `master`, pushes to `master`, exact semantic-version tags, manual dispatches, and nightly at `06:17 UTC`. Pull-request jobs test GitHub's synthetic merge result; the Node Git-install contract separately uses the remotely available pull-request head SHA. Fork pull requests are skipped; move trusted fork commits to a repository branch before running CI.
+- Linux CI runs for same-repository pull requests targeting `master`, pushes to `master`, exact semantic-version tags, and manual dispatches. Pull-request jobs test GitHub's synthetic merge result. Fork pull requests are skipped; move trusted fork commits to a repository branch before running CI.
+- `Linux / Python` and `Linux / Node` both require `Linux / Rust` to pass. The Python and Node jobs may proceed independently after the Rust gate when multiple matching runners are available.
 - The Rust job runs `cargo fmt -- --check`, Clippy with all workspace features and warnings denied, and Rust tests with all workspace features.
 - The Python 3.13 job runs `make init-no-project`, `make quality-python`, and `make test-python-ci` with a debug extension build.
-- The Node 24.13 job runs `make quality-node` and `make test-node`, including the debug JavaScript API tests and commit-pinned npm Git-install contract.
+- The Node 24.13 job runs `make quality-node` and `make test-node-direct`. Regular CI does not run the commit-pinned Git-install contract.
+- The separate `Nightly Build` workflow runs at `06:17 UTC` and supports manual dispatch. Its single `Nightly / Build` job runs `make build`, verifies the Rust binaries, Python wheel, and Node tarball with `make test-build`, exercises the full commit-pinned npm `install` and `ci` pathways, and uploads the contents of `dist/` for 14 days.
 - CircleCI temporarily owns Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 Node validation. Migrate these jobs to GitHub Actions when suitable runners are available.
 - CircleCI cross-platform jobs run automatically only for exact semantic-version tags. For an on-demand run, use **Trigger Pipeline** on the intended branch and set the Boolean pipeline parameter `run_cross_platform` to `true`.
 - The required CircleCI schedule trigger is `weekly-cross-platform-master`: run every Sunday at `05:00 UTC` against `master`, with `run_cross_platform=true` and the scheduling system as actor. Ordinary pull requests and branch pushes run no CircleCI jobs.
-- CI caches are lockfile-scoped and local to each runner or executor; jobs do not transfer build artifacts through a workspace.
+- CI caches are lockfile-scoped and local to each runner or executor. Regular jobs do not transfer build artifacts; the nightly workflow uploads its verified `dist/` output as a workflow artifact.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

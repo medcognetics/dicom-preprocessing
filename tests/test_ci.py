@@ -5,6 +5,8 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).parents[1]
 CIRCLECI_CONFIG_PATH = REPOSITORY_ROOT / ".circleci" / "config.yml"
 GITHUB_ACTIONS_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "linux-ci.yml"
+NIGHTLY_BUILD_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "nightly-build.yml"
+MAKEFILE_PATH = REPOSITORY_ROOT / "Makefile"
 NODE_PACKAGE_PATH = REPOSITORY_ROOT / "package.json"
 
 CROSS_PLATFORM_JOBS = (
@@ -69,8 +71,14 @@ def test_linux_workflow_uses_expected_triggers() -> None:
     assert "  push:\n    branches: [master]" in config
     assert f"      - {GITHUB_VERSION_TAG_FILTER}" in config
     assert "  workflow_dispatch:" in config
+    assert "  schedule:" not in config
+
+
+def test_nightly_build_uses_expected_triggers() -> None:
+    config = NIGHTLY_BUILD_CONFIG_PATH.read_text()
+
     assert f"    - cron: {NIGHTLY_CRON}" in config
-    assert "GIT_INSTALL_SHA: ${{ github.event.pull_request.head.sha || github.sha }}" in config
+    assert "  workflow_dispatch:" in config
 
 
 def test_linux_jobs_use_beryl_and_skip_fork_pull_requests() -> None:
@@ -87,11 +95,17 @@ def test_linux_jobs_test_pull_request_merge_result() -> None:
     config = GITHUB_ACTIONS_CONFIG_PATH.read_text()
 
     assert "CI_SHA:" not in config
+    assert "GIT_INSTALL_SHA:" not in config
     for job_name in GITHUB_ACTIONS_JOBS:
         assert "ref:" not in github_job_definition(config, job_name)
 
-    node_job = github_job_definition(config, "node")
-    assert "DICOM_PREPROCESSING_GIT_SHA: ${{ env.GIT_INSTALL_SHA }}" in node_job
+
+def test_python_and_node_require_rust() -> None:
+    config = GITHUB_ACTIONS_CONFIG_PATH.read_text()
+
+    assert "needs:" not in github_job_definition(config, "rust")
+    for job_name in ("python", "node"):
+        assert "needs: rust" in github_job_definition(config, job_name)
 
 
 def test_linux_jobs_consolidate_quality_and_runtime_checks_by_language() -> None:
@@ -111,9 +125,47 @@ def test_linux_jobs_consolidate_quality_and_runtime_checks_by_language() -> None
     node_job = github_job_definition(config, "node")
     assert 'node-version: "24.13.0"' in node_job
     assert "make quality-node" in node_job
-    assert "make test-node" in node_job
-    assert "DICOM_PREPROCESSING_GIT_URL" in node_job
-    assert "DICOM_PREPROCESSING_GIT_SHA" in node_job
+    assert "make test-node-direct" in node_job
+    assert "make test-node-git-install" not in node_job
+    assert "DICOM_PREPROCESSING_GIT_URL" not in node_job
+    assert "DICOM_PREPROCESSING_GIT_SHA" not in node_job
+
+
+def test_nightly_build_creates_and_verifies_all_artifacts() -> None:
+    config = NIGHTLY_BUILD_CONFIG_PATH.read_text()
+    build_job = github_job_definition(config, "build")
+
+    assert "runs-on: [self-hosted, linux, x64, beryl]" in build_job
+    assert 'python-version: "3.13"' in build_job
+    assert 'node-version: "24.13.0"' in build_job
+    assert "make build" in build_job
+    assert "make test-build" in build_job
+    assert "DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git" in build_job
+    assert "DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}" in build_job
+    assert "path: dist/" in build_job
+    assert "if-no-files-found: error" in build_job
+
+
+def test_makefile_builds_and_verifies_distributable_artifacts() -> None:
+    config = MAKEFILE_PATH.read_text()
+
+    assert "build: build-rust build-python build-node-package" in config
+    assert "test-node: test-node-direct test-node-git-install" in config
+    assert "test-build: test-rust-artifacts test-python-wheel test-node-package-install test-node-git-install" in config
+    assert "RUST_RELEASE_DIR=target/$(RUST_TARGET)/release" in config
+    assert "RUST_PACKAGE=dicom-preprocessing-cli-$(RUST_TARGET).tar.gz" in config
+    assert "PYTHON_BUILD_VERSION?=3.13" in config
+    assert "--interpreter $(PYTHON_BUILD_INTERPRETER)" in config
+    assert "rm -f $(PYTHON_ARTIFACT_DIR)/*.whl" in config
+    assert "cargo build --locked --workspace --release --target $(RUST_TARGET)" in config
+    assert "tar -czf $(RUST_ARTIFACT_DIR)/$(RUST_PACKAGE)" in config
+    assert 'tar -xzf "$$archive" -C "$$test_env"' in config
+    assert (
+        "$(MATURIN) build --locked $(MATURIN_FEATURES) --release --target $(RUST_TARGET) "
+        "--interpreter $(PYTHON_BUILD_INTERPRETER) --out $(PYTHON_ARTIFACT_DIR)"
+    ) in config
+    assert "maturin" in config
+    assert "$(NPM) pack --ignore-scripts" in config
 
 
 def test_rust_tests_link_against_setup_python_tool_cache() -> None:
@@ -124,12 +176,17 @@ def test_rust_tests_link_against_setup_python_tool_cache() -> None:
 
 
 def test_linux_workflow_minimizes_permissions_and_pins_actions() -> None:
-    config = GITHUB_ACTIONS_CONFIG_PATH.read_text()
+    configs = (GITHUB_ACTIONS_CONFIG_PATH.read_text(), NIGHTLY_BUILD_CONFIG_PATH.read_text())
 
-    assert "permissions:\n  contents: read" in config
-    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in config
+    assert "permissions:\n  contents: read" in configs[0]
+    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in configs[0]
 
-    action_references = [line.strip().removeprefix("- uses: ") for line in config.splitlines() if "- uses: " in line]
+    action_references = [
+        line.strip().removeprefix("- uses: ")
+        for config in configs
+        for line in config.splitlines()
+        if "- uses: " in line
+    ]
     assert action_references
     assert all(SHA_PINNED_ACTION_PATTERN.fullmatch(reference) for reference in action_references)
 

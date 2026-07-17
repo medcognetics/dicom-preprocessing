@@ -51,7 +51,11 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-features -- -D warnings
       - name: Run Rust tests
-        run: cargo test --workspace --all-features
+        run: |
+          # PyO3 reads the build-time Python prefix, which may differ from a
+          # self-hosted runner's tool cache path.
+          export LIBRARY_PATH="${pythonLocation}/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          cargo test --workspace --all-features
 
   python:
     name: Linux / Python

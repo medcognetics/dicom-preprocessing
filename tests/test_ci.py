@@ -116,6 +116,13 @@ def test_linux_jobs_consolidate_quality_and_runtime_checks_by_language() -> None
     assert "DICOM_PREPROCESSING_GIT_SHA" in node_job
 
 
+def test_rust_tests_link_against_setup_python_tool_cache() -> None:
+    config = GITHUB_ACTIONS_CONFIG_PATH.read_text()
+    rust_job = github_job_definition(config, "rust")
+
+    assert 'export LIBRARY_PATH="${pythonLocation}/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"' in rust_job
+
+
 def test_linux_workflow_minimizes_permissions_and_pins_actions() -> None:
     config = GITHUB_ACTIONS_CONFIG_PATH.read_text()
 

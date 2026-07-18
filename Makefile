@@ -10,8 +10,18 @@ PYTHON=$(UV_RUN) python
 PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
 PYTEST_ARGS=-rs ./tests/
 NPM=npm
+ARTIFACT_DIR?=dist
+RUST_ARTIFACT_DIR=$(ARTIFACT_DIR)/rust
+PYTHON_ARTIFACT_DIR=$(ARTIFACT_DIR)/python
+NODE_ARTIFACT_DIR=$(ARTIFACT_DIR)/node
+RUST_TARGET?=$(shell rustc -vV | sed -n 's/^host: //p')
+RUST_RELEASE_DIR=target/$(RUST_TARGET)/release
+RUST_PACKAGE=dicom-preprocessing-cli-$(RUST_TARGET).tar.gz
+PYTHON_BUILD_VERSION?=3.13
+PYTHON_BUILD_INTERPRETER?=$(shell $(UV) python find $(PYTHON_BUILD_VERSION))
+RUST_BINARIES=dicom-preprocess dicom-manifest dicom-voilut dicom-validate dicom-traces tiff-combine tiff-stats resize
 
-.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build-node quality quality-python quality-node style test-python test-python-ci test-python-pdb test-node test-node-git-install test
+.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build build-rust build-python build-node build-node-package quality quality-python quality-node style test-python test-python-ci test-python-pdb test-node test-node-direct test-node-package-install test-node-git-install test-build test-rust-artifacts test-python-wheel test
 
 ensure-uv:
 	which $(UV) || curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -36,6 +46,19 @@ develop-debug: $(MATURIN)
 develop-release: $(MATURIN)
 	$(MATURIN) develop --uv $(MATURIN_FEATURES) --release
 
+build: build-rust build-python build-node-package
+
+build-rust:
+	mkdir -p $(RUST_ARTIFACT_DIR)
+	rm -f $(RUST_ARTIFACT_DIR)/*.tar.gz
+	cargo build --locked --workspace --release --target $(RUST_TARGET)
+	tar -czf $(RUST_ARTIFACT_DIR)/$(RUST_PACKAGE) -C $(RUST_RELEASE_DIR) $(RUST_BINARIES)
+
+build-python: $(MATURIN)
+	mkdir -p $(PYTHON_ARTIFACT_DIR)
+	rm -f $(PYTHON_ARTIFACT_DIR)/*.whl
+	$(MATURIN) build --locked $(MATURIN_FEATURES) --release --target $(RUST_TARGET) --interpreter $(PYTHON_BUILD_INTERPRETER) --out $(PYTHON_ARTIFACT_DIR)
+
 quality:
 	cargo fmt -- --check
 	cargo check --workspace --all-features
@@ -50,6 +73,11 @@ quality-python:
 
 build-node:
 	$(NPM) run build
+
+build-node-package: init-node
+	mkdir -p $(NODE_ARTIFACT_DIR)
+	$(NPM) run build
+	$(NPM) pack --ignore-scripts --pack-destination $(NODE_ARTIFACT_DIR)
 
 quality-node: init-node
 	$(NPM) run typecheck
@@ -75,16 +103,43 @@ test:
 	$(MAKE) test-python
 	$(MAKE) test-node
 
-test-node: init-node
+test-node: test-node-direct test-node-git-install
+
+test-node-direct: init-node
 	cargo test -p dicom-preprocessing-node ensure_node_fixtures
 	DICOM_PREPROCESSING_CT_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/CT_small.dcm" \
 	DICOM_PREPROCESSING_MULTIFRAME_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/emri_small.dcm" \
 	DICOM_PREPROCESSING_RGB_FIXTURE="$(CURDIR)/target/dicom_test_files/pydicom/SC_rgb.dcm" \
 	$(NPM) test
-	$(MAKE) test-node-git-install
+
+test-node-package-install:
+	@package="$$(find "$(NODE_ARTIFACT_DIR)" -maxdepth 1 -type f -name '*.tgz' -print -quit)"; \
+	test -n "$$package"; \
+	DICOM_PREPROCESSING_PACKAGE_PATH="$$package" $(NPM) run test:package-install
 
 test-node-git-install:
 	$(NPM) run test:git-install
+
+test-build: test-rust-artifacts test-python-wheel test-node-package-install test-node-git-install
+
+test-rust-artifacts:
+	@archive="$$(find "$(RUST_ARTIFACT_DIR)" -maxdepth 1 -type f -name '*.tar.gz' -print -quit)"; \
+	test -n "$$archive"; \
+	test_env="$$(mktemp -d)"; \
+	trap 'rm -rf "$$test_env"' EXIT; \
+	tar -xzf "$$archive" -C "$$test_env"; \
+	for binary in $(RUST_BINARIES); do \
+		"$$test_env/$$binary" --help >/dev/null; \
+	done
+
+test-python-wheel:
+	@wheel="$$(find "$(PYTHON_ARTIFACT_DIR)" -maxdepth 1 -type f -name '*.whl' -print -quit)"; \
+	test -n "$$wheel"; \
+	test_env="$$(mktemp -d)"; \
+	trap 'rm -rf "$$test_env"' EXIT; \
+	$(UV) venv --python 3.13 "$$test_env"; \
+	$(UV) pip install --python "$$test_env/bin/python" "$$wheel"; \
+	"$$test_env/bin/python" -c 'import dicom_preprocessing'
 
 # Docs image generation recipe.
 # NOTE: The lesion crop coordinates were manually determined for the specific source DICOM

@@ -1,168 +1,17 @@
 version: 2.1
 
+# Windows and macOS remain here temporarily. Migrate these jobs to GitHub
+# Actions when suitable runners are available.
+parameters:
+    run_cross_platform:
+        type: boolean
+        default: false
+
 orbs:
     macos: circleci/macos@2.5.4
     win: circleci/windows@5.0
 
 jobs:
-    rust_quality:
-        docker:
-            - image: rust:latest
-        steps:
-            - checkout
-            - restore_cache:
-                keys:
-                  - v4-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v4-rust-deps-{{ arch }}-
-            - restore_cache:
-                keys:
-                  - v4-rust-quality-target-{{ arch }}-{{ checksum "Cargo.lock" }}
-            - run:
-                name: Install dependencies
-                command: rustup component add rustfmt clippy
-            - run:
-                name: Check formatting
-                command: cargo fmt -- --check
-            - run:
-                name: Clippy check
-                command: cargo clippy --workspace --all-features -- -D warnings
-            - save_cache:
-                key: v4-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                paths:
-                  - ~/.cargo/registry
-                  - ~/.cargo/git
-            - save_cache:
-                key: v4-rust-quality-target-{{ arch }}-{{ checksum "Cargo.lock" }}
-                paths:
-                  - ./target
-
-    python_quality:
-        docker:
-            - image: cimg/python:3.13
-        steps:
-            - checkout
-            - restore_cache:
-                keys:
-                  - v3-py-{{ checksum "uv.lock" }}
-                  - v3-py-
-            - run:
-                name: Install dependencies
-                command: make init-no-project
-            - save_cache:
-                key: v3-py-{{ checksum "uv.lock" }}
-                paths:
-                  - ~/.cache/pip
-                  - ~/.cache/uv
-            - run:
-                name: Run Python quality checks
-                command: make quality-python
-
-    node_quality:
-        docker:
-            - image: cimg/node:24.13
-        steps:
-            - checkout
-            - restore_cache:
-                keys:
-                  - v2-node-{{ checksum "package-lock.json" }}
-                  - v2-node-
-            - run:
-                name: Install Node dependencies
-                command: make init-node
-            - save_cache:
-                key: v2-node-{{ checksum "package-lock.json" }}
-                paths:
-                  - ~/.npm
-            - run:
-                name: Run Node quality checks
-                command: make quality-node
-
-    rust_tests:
-        docker:
-            - image: rust:latest
-        steps:
-            - checkout
-            - restore_cache:
-                keys:
-                  - v4-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v4-rust-deps-{{ arch }}-
-            - run:
-                name: Install Python runtime for pyo3 tests
-                command: apt-get update && apt-get install -y python3-dev
-            - run:
-                name: Run Rust tests
-                command: cargo test --workspace --all-features
-
-    python_tests:
-        docker:
-            - image: cimg/python:3.13
-        steps:
-            - checkout
-            - restore_cache:
-                keys:
-                  - v4-python-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v4-python-rust-deps-{{ arch }}-
-            - restore_cache:
-                keys:
-                  - v3-py-{{ checksum "uv.lock" }}
-                  - v3-py-
-            - run:
-                name: Install Rust
-                command: |
-                    if [ ! -f "$HOME/.cargo/env" ]; then
-                        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                    fi
-                    echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
-            - run:
-                name: Version information
-                command: rustc --version; cargo --version; rustup --version; uv --version
-            - run:
-                name: Install dependencies
-                command: make init-no-project
-            - run:
-                name: Run Python tests
-                command: make test-python-ci
-            - save_cache:
-                key: v4-python-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                paths:
-                  - ~/.cargo/registry
-                  - ~/.cargo/git
-
-    node_tests:
-        docker:
-            - image: cimg/node:24.13
-        steps:
-            - checkout
-            - restore_cache:
-                keys:
-                  - v2-node-{{ checksum "package-lock.json" }}
-                  - v2-node-
-            - restore_cache:
-                keys:
-                  - v4-node-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  - v4-node-rust-deps-{{ arch }}-
-            - run:
-                name: Install Rust
-                command: |
-                    if [ ! -f "$HOME/.cargo/env" ]; then
-                        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-                    fi
-                    echo 'source "$HOME/.cargo/env"' >> $BASH_ENV
-            - run:
-                name: Install Node dependencies
-                command: make init-node
-            - run:
-                name: Run Node tests
-                command: |
-                    export DICOM_PREPROCESSING_GIT_URL="git+https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
-                    export DICOM_PREPROCESSING_GIT_SHA="$CIRCLE_SHA1"
-                    make test-node
-            - save_cache:
-                key: v4-node-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                paths:
-                  - ~/.cargo/registry
-                  - ~/.cargo/git
-
     windows_node_tests:
         executor: win/server-2022
         steps:
@@ -284,49 +133,22 @@ jobs:
                       '
 
 workflows:
-    build_and_test:
+    cross_platform:
+        when: << pipeline.parameters.run_cross_platform >>
         jobs:
-            - rust_quality:
+            - windows_node_tests
+            - macos_arm64_node_tests
+            - macos_x64_node_tests
+
+    release_cross_platform:
+        jobs:
+            - windows_node_tests:
                 filters: &version_tags
+                    branches:
+                        ignore: /.*/
                     tags:
                         only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
-            - python_quality:
-                filters: *version_tags
-            - rust_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-                    - node_quality
-                filters: *version_tags
-            - python_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-                    - node_quality
-                filters: *version_tags
-            - node_quality:
-                filters: *version_tags
-            - node_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-                    - node_quality
-                filters: *version_tags
-            - windows_node_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-                    - node_quality
-                filters: *version_tags
             - macos_arm64_node_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-                    - node_quality
                 filters: *version_tags
             - macos_x64_node_tests:
-                requires:
-                    - rust_quality
-                    - python_quality
-                    - node_quality
                 filters: *version_tags

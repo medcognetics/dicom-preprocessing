@@ -89,6 +89,13 @@ function snapshotRepository() {
 }
 
 function dependencySource() {
+  const packagePath = process.env.DICOM_PREPROCESSING_PACKAGE_PATH
+  if (packagePath) {
+    const resolvedPackagePath = resolve(packagePath)
+    assert.ok(existsSync(resolvedPackagePath), `Package artifact does not exist: ${resolvedPackagePath}`)
+    return { dependency: pathToFileURL(resolvedPackagePath).href, sha: undefined, snapshot: undefined }
+  }
+
   const repositoryUrl = process.env.DICOM_PREPROCESSING_GIT_URL
   if (!repositoryUrl) {
     return snapshotRepository()
@@ -151,12 +158,16 @@ try {
   )
 
   runNpm(['install', '--omit=optional'], consumer)
-  assertConsumerLockedCommit(consumer, dependency, sha)
+  if (sha) {
+    assertConsumerLockedCommit(consumer, dependency, sha)
+  }
   run(process.execPath, [verificationPath], consumer)
 
   rmSync(join(consumer, 'node_modules'), { recursive: true, force: true })
   runNpm(['ci', '--omit=optional'], consumer)
-  assertConsumerLockedCommit(consumer, dependency, sha)
+  if (sha) {
+    assertConsumerLockedCommit(consumer, dependency, sha)
+  }
   run(process.execPath, [verificationPath], consumer)
 } finally {
   rmSync(consumer, { recursive: true, force: true })

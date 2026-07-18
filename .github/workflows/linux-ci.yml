@@ -1,0 +1,121 @@
+name: Linux CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-ci-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  rust:
+    name: Linux / Rust
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, beryl]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      # actions/setup-python v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+      # dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: linux-rust
+      - name: Check formatting
+        run: cargo fmt -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+      - name: Run Rust tests
+        run: |
+          # PyO3 reads the build-time Python prefix, which may differ from a
+          # self-hosted runner's tool cache path.
+          export LIBRARY_PATH="${pythonLocation}/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          cargo test --workspace --all-features
+
+  python:
+    name: Linux / Python
+    needs: rust
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, beryl]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      # actions/setup-python v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+      # astral-sh/setup-uv v7
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: "0.11.18"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      # dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: linux-python
+      - name: Install Python dependencies
+        run: make init-no-project
+      - name: Run Python quality checks
+        run: make quality-python
+      - name: Run Python tests
+        run: make test-python-ci
+
+  node:
+    name: Linux / Node
+    needs: rust
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64, beryl]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      # actions/setup-node v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: linux-node
+      - name: Run Node quality checks
+        run: make quality-node
+      - name: Run direct Node tests
+        run: make test-node-direct

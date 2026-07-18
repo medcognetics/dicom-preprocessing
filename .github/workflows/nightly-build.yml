@@ -1,0 +1,61 @@
+name: Nightly Build
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Nightly / Build
+    runs-on: [self-hosted, linux, x64, beryl]
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      # actions/setup-python v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.13"
+      # actions/setup-node v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # astral-sh/setup-uv v7
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: "0.11.18"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      # dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: nightly-build
+      - name: Build distributable artifacts
+        run: make build
+      - name: Verify artifacts and Git installation
+        env:
+          DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
+          DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}
+        run: make test-build
+      # actions/upload-artifact v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: linux-build-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14

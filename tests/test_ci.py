@@ -6,13 +6,14 @@ REPOSITORY_ROOT = Path(__file__).parents[1]
 CIRCLECI_CONFIG_PATH = REPOSITORY_ROOT / ".circleci" / "config.yml"
 GITHUB_ACTIONS_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "linux-ci.yml"
 NIGHTLY_BUILD_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "nightly-build.yml"
+WEEKLY_CROSS_PLATFORM_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "workflows" / "weekly-cross-platform.yml"
 MAKEFILE_PATH = REPOSITORY_ROOT / "Makefile"
 NODE_PACKAGE_PATH = REPOSITORY_ROOT / "package.json"
 
-CROSS_PLATFORM_JOBS = (
+CIRCLECI_JOBS = ("macos_x64_node_tests",)
+MIGRATED_CIRCLECI_JOBS = (
     "windows_node_tests",
     "macos_arm64_node_tests",
-    "macos_x64_node_tests",
 )
 LINUX_CIRCLECI_JOBS = (
     "rust_quality",
@@ -23,11 +24,12 @@ LINUX_CIRCLECI_JOBS = (
     "node_tests",
 )
 GITHUB_ACTIONS_JOBS = ("rust", "python", "node")
+GITHUB_CROSS_PLATFORM_JOBS = ("windows", "macos_arm64")
 VERSION_TAG_FILTER = "/^v[0-9]+\\.[0-9]+\\.[0-9]+$/"
 GITHUB_VERSION_TAG_FILTER = '"v[0-9]+.[0-9]+.[0-9]+"'
 NIGHTLY_CRON = '"17 6 * * *"'
+WEEKLY_CRON = '"17 5 * * 0"'
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
-WINDOWS_GIT_INSTALL_NO_OUTPUT_TIMEOUT = "30m"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
 
 
@@ -79,6 +81,16 @@ def test_nightly_build_uses_expected_triggers() -> None:
 
     assert f"    - cron: {NIGHTLY_CRON}" in config
     assert "  workflow_dispatch:" in config
+
+
+def test_weekly_cross_platform_uses_expected_triggers() -> None:
+    config = WEEKLY_CROSS_PLATFORM_CONFIG_PATH.read_text()
+
+    assert f"    - cron: {WEEKLY_CRON}" in config
+    assert "  workflow_dispatch:" in config
+    assert f"      - {GITHUB_VERSION_TAG_FILTER}" in config
+    assert "  pull_request:" not in config
+    assert "    branches:" not in config
 
 
 def test_linux_jobs_use_beryl_and_skip_fork_pull_requests() -> None:
@@ -146,6 +158,34 @@ def test_nightly_build_creates_and_verifies_all_artifacts() -> None:
     assert "if-no-files-found: error" in build_job
 
 
+def test_weekly_cross_platform_uses_public_github_runners() -> None:
+    config = WEEKLY_CROSS_PLATFORM_CONFIG_PATH.read_text()
+
+    assert "runs-on: windows-2022" in github_job_definition(config, "windows")
+    assert "runs-on: macos-15" in github_job_definition(config, "macos_arm64")
+    for job_name in GITHUB_CROSS_PLATFORM_JOBS:
+        assert "self-hosted" not in github_job_definition(config, job_name)
+
+
+def test_weekly_cross_platform_validates_native_git_installs() -> None:
+    config = WEEKLY_CROSS_PLATFORM_CONFIG_PATH.read_text()
+
+    for job_name in GITHUB_CROSS_PLATFORM_JOBS:
+        job = github_job_definition(config, job_name)
+        assert 'node-version: "24.13.0"' in job
+        assert "npm ci --ignore-scripts" in job
+        assert "DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git" in job
+        assert "DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}" in job
+        assert "npm run test:git-install" in job
+
+    windows_job = github_job_definition(config, "windows")
+    assert WINDOWS_INODE_TEST_COMMAND in windows_job
+    assert "rustc -vV" in windows_job
+
+    macos_job = github_job_definition(config, "macos_arm64")
+    assert 'test "$(node -p process.arch)" = arm64' in macos_job
+
+
 def test_makefile_builds_and_verifies_distributable_artifacts() -> None:
     config = MAKEFILE_PATH.read_text()
 
@@ -176,7 +216,11 @@ def test_rust_tests_link_against_setup_python_tool_cache() -> None:
 
 
 def test_linux_workflow_minimizes_permissions_and_pins_actions() -> None:
-    configs = (GITHUB_ACTIONS_CONFIG_PATH.read_text(), NIGHTLY_BUILD_CONFIG_PATH.read_text())
+    configs = (
+        GITHUB_ACTIONS_CONFIG_PATH.read_text(),
+        NIGHTLY_BUILD_CONFIG_PATH.read_text(),
+        WEEKLY_CROSS_PLATFORM_CONFIG_PATH.read_text(),
+    )
 
     assert "permissions:\n  contents: read" in configs[0]
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in configs[0]
@@ -191,33 +235,36 @@ def test_linux_workflow_minimizes_permissions_and_pins_actions() -> None:
     assert all(SHA_PINNED_ACTION_PATTERN.fullmatch(reference) for reference in action_references)
 
 
-def test_circleci_only_defines_cross_platform_jobs() -> None:
+def test_circleci_only_defines_macos_x64_job() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
 
-    for job_name in CROSS_PLATFORM_JOBS:
+    for job_name in CIRCLECI_JOBS:
         assert circleci_job_definition(config, job_name)
+    for job_name in MIGRATED_CIRCLECI_JOBS:
+        assert f"    {job_name}:" not in config
     for job_name in LINUX_CIRCLECI_JOBS:
         assert f"    {job_name}:" not in config
+    assert "circleci/windows" not in config
 
 
-def test_circleci_cross_platform_jobs_are_opt_in_and_parallel() -> None:
+def test_circleci_macos_x64_job_is_opt_in() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
 
     assert "run_cross_platform:\n        type: boolean\n        default: false" in config
     workflow = circleci_workflow_definition(config, "cross_platform")
     assert "when: << pipeline.parameters.run_cross_platform >>" in workflow
-    for job_name in CROSS_PLATFORM_JOBS:
+    for job_name in CIRCLECI_JOBS:
         assert f"            - {job_name}" in workflow
     assert "requires:" not in workflow
 
 
-def test_circleci_cross_platform_jobs_run_for_exact_version_tags() -> None:
+def test_circleci_macos_x64_job_runs_for_exact_version_tags() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
     workflow = circleci_workflow_definition(config, "release_cross_platform")
 
     assert VERSION_TAG_FILTER in workflow
     assert "branches:\n                        ignore: /.*/" in workflow
-    for job_name in CROSS_PLATFORM_JOBS:
+    for job_name in CIRCLECI_JOBS:
         assert f"            - {job_name}:" in workflow
 
 
@@ -230,27 +277,10 @@ def test_node_validation_uses_debug_builds() -> None:
     )
 
 
-def test_windows_runs_commit_pinned_git_install_contract() -> None:
+def test_circleci_macos_x64_validates_native_architecture_and_git_install() -> None:
     config = CIRCLECI_CONFIG_PATH.read_text()
-    windows_job = circleci_job_definition(config, "windows_node_tests")
-
-    assert WINDOWS_INODE_TEST_COMMAND in windows_job
-    assert "name: Install Node dependencies" in windows_job
-    assert "name: Test Windows file identifiers" in windows_job
-    assert "name: Test commit-pinned Git installation" in windows_job
-    assert "npm ci --ignore-scripts" in windows_job
-    assert "npm run test:git-install" in windows_job
-    assert f"no_output_timeout: {WINDOWS_GIT_INSTALL_NO_OUTPUT_TIMEOUT}" in windows_job
-    assert "--prefix bindings/node" not in windows_job
-
-
-def test_macos_jobs_validate_native_architectures_and_git_install() -> None:
-    config = CIRCLECI_CONFIG_PATH.read_text()
-    arm64_job = circleci_job_definition(config, "macos_arm64_node_tests")
     x64_job = circleci_job_definition(config, "macos_x64_node_tests")
 
-    assert 'test "$(node -p process.arch)" = arm64' in arm64_job
-    assert "npm run test:git-install" in arm64_job
     assert "macos/install-rosetta" in x64_job
     assert 'test "$(node -p process.arch)" = x64' in x64_job
     assert "npm run test:git-install" in x64_job
@@ -264,5 +294,3 @@ def test_circleci_avoids_cross_executor_build_artifacts() -> None:
     assert "~/.rustup" not in config
     assert "bindings/node/node_modules" not in config
     assert "bindings/node/package-lock.json" not in config
-    assert "v4-windows-rust-deps-" in circleci_job_definition(config, "windows_node_tests")
-    assert "./target" not in circleci_job_definition(config, "windows_node_tests")

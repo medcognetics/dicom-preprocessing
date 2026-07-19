@@ -1,7 +1,7 @@
 version: 2.1
 
-# Windows and macOS remain here temporarily. Migrate these jobs to GitHub
-# Actions when suitable runners are available.
+# macOS x64 remains here temporarily. Migrate it separately to a native Intel
+# GitHub-hosted runner.
 parameters:
     run_cross_platform:
         type: boolean
@@ -9,96 +9,8 @@ parameters:
 
 orbs:
     macos: circleci/macos@2.5.4
-    win: circleci/windows@5.0
 
 jobs:
-    windows_node_tests:
-        executor: win/server-2022
-        steps:
-            - checkout
-            - run:
-                  name: Keep public GitHub dependencies on HTTPS
-                  command: |
-                      $rewriteRules = @(git config --global --get-regexp '^url\..*\.insteadof$' 2>$null)
-                      if (($LASTEXITCODE -ne 0) -and ($LASTEXITCODE -ne 1)) {
-                          throw "Unable to inspect global Git URL rewrites"
-                      }
-                      foreach ($rule in $rewriteRules) {
-                          $name, $value = $rule -split '\s+', 2
-                          if ($value -match '^https://github\.com/?$') {
-                              git config --global --unset-all $name
-                              if ($LASTEXITCODE -ne 0) {
-                                  throw "Unable to remove Git URL rewrite '$name'"
-                              }
-                          }
-                      }
-                      exit 0
-            - restore_cache:
-                  keys:
-                    - v4-windows-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                    - v4-windows-rust-deps-{{ arch }}-
-            - run:
-                  name: Install Rust
-                  command: |
-                      Invoke-WebRequest https://win.rustup.rs/x86_64 -OutFile rustup-init.exe
-                      .\rustup-init.exe -y --default-toolchain stable
-                      $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-                      rustc --version
-                      cargo --version
-            - run:
-                  name: Install Node dependencies
-                  command: |
-                      npm ci --ignore-scripts
-            - run:
-                  name: Test Windows file identifiers
-                  command: |
-                      $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-                      $rustTargetLine = rustc -vV | Select-String '^host: '
-                      if ($null -eq $rustTargetLine) {
-                          throw "Unable to detect the Rust host target"
-                      }
-                      $rustTarget = $rustTargetLine.Line.Substring(6)
-                      cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort --target $rustTarget
-            - run:
-                  name: Test commit-pinned Git installation
-                  no_output_timeout: 30m
-                  command: |
-                      $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path"
-                      $env:DICOM_PREPROCESSING_GIT_URL = "git+https://github.com/$env:CIRCLE_PROJECT_USERNAME/$env:CIRCLE_PROJECT_REPONAME.git"
-                      $env:DICOM_PREPROCESSING_GIT_SHA = $env:CIRCLE_SHA1
-                      npm run test:git-install
-            - save_cache:
-                  key: v4-windows-rust-deps-{{ arch }}-{{ checksum "Cargo.lock" }}
-                  paths:
-                    - 'C:\Users\circleci\.cargo\registry'
-                    - 'C:\Users\circleci\.cargo\git'
-
-    macos_arm64_node_tests:
-        macos:
-            xcode: 16.4.0
-        resource_class: m4pro.medium
-        environment:
-            HOMEBREW_NO_AUTO_UPDATE: 1
-        steps:
-            - checkout
-            - run:
-                  name: Install Node and Rust
-                  command: |
-                      nvm install 24.13.0
-                      nvm alias default 24.13.0
-                      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain 1.89.0
-                      echo 'export NVM_DIR="$HOME/.nvm"' >> "$BASH_ENV"
-                      echo '[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"' >> "$BASH_ENV"
-                      echo 'nvm use 24.13.0 >/dev/null' >> "$BASH_ENV"
-                      echo 'source "$HOME/.cargo/env"' >> "$BASH_ENV"
-            - run:
-                  name: Test commit-pinned Git installation
-                  command: |
-                      test "$(node -p process.arch)" = arm64
-                      export DICOM_PREPROCESSING_GIT_URL="git+https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}.git"
-                      export DICOM_PREPROCESSING_GIT_SHA="$CIRCLE_SHA1"
-                      npm run test:git-install
-
     macos_x64_node_tests:
         macos:
             xcode: 16.4.0
@@ -136,19 +48,13 @@ workflows:
     cross_platform:
         when: << pipeline.parameters.run_cross_platform >>
         jobs:
-            - windows_node_tests
-            - macos_arm64_node_tests
             - macos_x64_node_tests
 
     release_cross_platform:
         jobs:
-            - windows_node_tests:
-                filters: &version_tags
+            - macos_x64_node_tests:
+                filters:
                     branches:
                         ignore: /.*/
                     tags:
                         only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
-            - macos_arm64_node_tests:
-                filters: *version_tags
-            - macos_x64_node_tests:
-                filters: *version_tags

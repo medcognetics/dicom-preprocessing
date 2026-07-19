@@ -57,9 +57,11 @@ Python style is formatter-driven:
 - The Python 3.13 job runs `make init-no-project`, `make quality-python`, and `make test-python-ci` with a debug extension build.
 - The Node 24.13 job runs `make quality-node` and `make test-node-direct`. Regular CI does not run the commit-pinned Git-install contract.
 - The separate `Nightly Build` workflow runs at `06:17 UTC` and supports manual dispatch. Its single `Nightly / Build` job runs `make build`, verifies the Rust binaries, Python wheel, and Node tarball with `make test-build`, exercises the full commit-pinned npm `install` and `ci` pathways, and uploads the contents of `dist/` for 14 days.
-- CircleCI temporarily owns Windows x64 MSVC, macOS arm64, and Rosetta-backed macOS x64 Node validation. Migrate these jobs to GitHub Actions when suitable runners are available.
-- CircleCI cross-platform jobs run automatically only for exact semantic-version tags. For an on-demand run, use **Trigger Pipeline** on the intended branch and set the Boolean pipeline parameter `run_cross_platform` to `true`.
-- The required CircleCI schedule trigger is `weekly-cross-platform-master`: run every Sunday at `05:00 UTC` against `master`, with `run_cross_platform=true` and the scheduling system as actor. Ordinary pull requests and branch pushes run no CircleCI jobs.
+- The `Cross-platform CI` workflow runs Windows x64 on `windows-2022` and native macOS arm64 on `macos-15`. It runs every Sunday at `05:17 UTC`, for exact semantic-version tags, and by manual dispatch; ordinary pull requests and branch pushes do not trigger it.
+- Both GitHub-hosted cross-platform jobs install Node 24.13 and run the full commit-pinned npm `install` and `ci` contract. Windows also runs the focused file-identifier test, while macOS verifies that Node is running natively as arm64.
+- CircleCI temporarily owns only Rosetta-backed macOS x64 Node validation. Migrate it separately to a native Intel GitHub-hosted runner.
+- CircleCI macOS x64 validation runs automatically only for exact semantic-version tags. For an on-demand run, use **Trigger Pipeline** on the intended branch and set the Boolean pipeline parameter `run_cross_platform` to `true`.
+- The required CircleCI schedule trigger remains `weekly-cross-platform-master`: run every Sunday at `05:00 UTC` against `master`, with `run_cross_platform=true` and the scheduling system as actor. It now runs only the macOS x64 job.
 - CI caches are lockfile-scoped and local to each runner or executor. Regular jobs do not transfer build artifacts; the nightly workflow uploads its verified `dist/` output as a workflow artifact.
 
 ## Testing Guidelines

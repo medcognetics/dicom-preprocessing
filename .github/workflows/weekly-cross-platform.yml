@@ -1,0 +1,89 @@
+name: Cross-platform CI
+
+on:
+  schedule:
+    - cron: "17 5 * * 0"
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-platform-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Cross-platform / Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      # actions/setup-node v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: windows-node
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Test Windows file identifiers
+        run: |
+          $rustTargetLine = rustc -vV | Select-String '^host: '
+          if ($null -eq $rustTargetLine) {
+            throw "Unable to detect the Rust host target"
+          }
+          $rustTarget = $rustTargetLine.Line.Substring(6)
+          cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort --target $rustTarget
+      - name: Test commit-pinned Git installation
+        env:
+          DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
+          DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}
+        run: npm run test:git-install
+
+  macos_arm64:
+    name: Cross-platform / macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      # actions/checkout v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          persist-credentials: false
+      # actions/setup-node v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: "24.13.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      # dtolnay/rust-toolchain stable
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+        with:
+          toolchain: stable
+      # Swatinem/rust-cache v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
+        with:
+          shared-key: macos-arm64-node
+      - name: Verify native architecture
+        run: test "$(node -p process.arch)" = arm64
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Test commit-pinned Git installation
+        env:
+          DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
+          DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}
+        run: npm run test:git-install

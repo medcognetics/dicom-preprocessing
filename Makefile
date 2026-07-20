@@ -1,33 +1,34 @@
 UV=uv
 UV_RUN=$(UV) run
 UV_NO_PROJECT=$(UV) run --no-project
-UV_SYNC_ALL_GROUPS=$(UV) sync --all-groups
+UV_SYNC_ALL_GROUPS=$(UV) sync --locked --all-groups
 VENV=.venv
 VENV_BIN=$(VENV)/bin
 MATURIN=$(VENV_BIN)/maturin
 MATURIN_FEATURES=-F python -F pyo3/extension-module
 PYTHON=$(UV_RUN) python
-PYTHON_QUALITY_TARGETS=tests examples dicom_preprocessing.pyi
+PYTHON_QUALITY_TARGETS=tests examples scripts/ci dicom_preprocessing.pyi
 PYTEST_ARGS=-rs ./tests/
 NPM=npm
 ARTIFACT_DIR?=dist
 RUST_ARTIFACT_DIR=$(ARTIFACT_DIR)/rust
 PYTHON_ARTIFACT_DIR=$(ARTIFACT_DIR)/python
 NODE_ARTIFACT_DIR=$(ARTIFACT_DIR)/node
+CARGO_TARGET_DIR?=target
 RUST_TARGET?=$(shell rustc -vV | sed -n 's/^host: //p')
-RUST_RELEASE_DIR=target/$(RUST_TARGET)/release
+RUST_RELEASE_DIR=$(CARGO_TARGET_DIR)/$(RUST_TARGET)/release
 RUST_PACKAGE=dicom-preprocessing-cli-$(RUST_TARGET).tar.gz
-PYTHON_BUILD_VERSION?=3.13
+PYTHON_BUILD_VERSION?=3.14
 PYTHON_BUILD_INTERPRETER?=$(shell $(UV) python find $(PYTHON_BUILD_VERSION))
 RUST_BINARIES=dicom-preprocess dicom-manifest dicom-voilut dicom-validate dicom-traces tiff-combine tiff-stats resize
 
-.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build build-rust build-python build-node build-node-package quality quality-python quality-node style test-python test-python-ci test-python-pdb test-node test-node-direct test-node-package-install test-node-git-install test-build test-rust-artifacts test-python-wheel test
+.PHONY: init init-no-project init-node ensure-uv develop develop-debug develop-release build build-rust build-python build-node build-node-package quality quality-rust quality-python quality-node style test-rust test-python test-python-ci test-python-pdb test-node test-node-direct test-node-package-install test-node-git-install test-build test-rust-artifacts test-python-wheel test
 
 ensure-uv:
 	which $(UV) || curl -LsSf https://astral.sh/uv/install.sh | sh
 
 $(MATURIN): pyproject.toml uv.lock | ensure-uv
-	$(UV_SYNC_ALL_GROUPS)
+	$(UV_SYNC_ALL_GROUPS) --no-install-project
 
 init: ensure-uv
 	$(UV_SYNC_ALL_GROUPS)
@@ -59,12 +60,12 @@ build-python: $(MATURIN)
 	rm -f $(PYTHON_ARTIFACT_DIR)/*.whl
 	$(MATURIN) build --locked $(MATURIN_FEATURES) --release --target $(RUST_TARGET) --interpreter $(PYTHON_BUILD_INTERPRETER) --out $(PYTHON_ARTIFACT_DIR)
 
-quality:
+quality: quality-rust quality-python quality-node
+
+quality-rust:
 	cargo fmt -- --check
-	cargo check --workspace --all-features
-	cargo clippy --workspace --all-features -- -D warnings
-	$(MAKE) quality-python
-	$(MAKE) quality-node
+	cargo check --locked --workspace --all-features
+	cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 
 quality-python:
 	$(UV_NO_PROJECT) ruff format --check $(PYTHON_QUALITY_TARGETS)
@@ -98,10 +99,10 @@ test-python-ci: develop-debug
 test-python-pdb: develop
 	$(PYTHON) -m pytest $(PYTEST_ARGS) --pdb
 
-test:
-	cargo test --workspace
-	$(MAKE) test-python
-	$(MAKE) test-node
+test: test-rust test-python test-node
+
+test-rust:
+	cargo test --locked --workspace --all-features
 
 test-node: test-node-direct test-node-git-install
 
@@ -137,7 +138,7 @@ test-python-wheel:
 	test -n "$$wheel"; \
 	test_env="$$(mktemp -d)"; \
 	trap 'rm -rf "$$test_env"' EXIT; \
-	$(UV) venv --python 3.13 "$$test_env"; \
+	$(UV) venv --python $(PYTHON_BUILD_VERSION) "$$test_env"; \
 	$(UV) pip install --python "$$test_env/bin/python" "$$wheel"; \
 	"$$test_env/bin/python" -c 'import dicom_preprocessing'
 

@@ -11,8 +11,8 @@
     "bindings/node/*.node"
   ],
   "scripts": {
-    "build": "napi build --release --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --js index.js",
-    "build:debug": "napi build --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --js index.js",
+    "build": "napi build --release --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --no-js",
+    "build:debug": "napi build --platform --manifest-path bindings/node/Cargo.toml --package-json-path package.json --output-dir bindings/node --dts index.d.ts --no-js",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit --project bindings/node/tsconfig.json",
     "test": "npm run build:debug && npm run typecheck && node --test bindings/node/test/api.test.mjs",
@@ -20,14 +20,13 @@
     "test:package-install": "node bindings/node/test/git-install.mjs"
   },
   "engines": {
-    "node": ">=23.5.0 || ^22.13.0 || ^20.17.0",
+    "node": "^22.13.0 || ^24.0.0 || ^26.0.0",
     "npm": ">=10"
   },
   "napi": {
     "binaryName": "dicom_preprocessing_node",
     "dtsHeaderFile": "./bindings/node/src/dts-header.d.ts",
     "targets": [
-      "x86_64-apple-darwin",
       "aarch64-apple-darwin",
       "x86_64-pc-windows-msvc",
       "x86_64-unknown-linux-gnu"

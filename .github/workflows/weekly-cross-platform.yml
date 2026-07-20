@@ -1,0 +1,107 @@
+name: Cross-platform CI
+
+on:
+  schedule:
+    - cron: "17 5 * * 0"
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-platform-ci-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Cross-platform / Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 75
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          clean: true
+      # actions/setup-node v7.0.0
+      - name: Set up trusted Node cache
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # zizmor: ignore[cache-poisoning] schedule, tag, and manual events only
+        with:
+          node-version: "26.5.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify native architecture
+        shell: bash
+        run: test "$(node -p process.arch)" = x64
+      - name: Install Rust 1.97.1
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+      # Swatinem/rust-cache v2.9.1
+      - name: Cache trusted Cargo downloads
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # zizmor: ignore[cache-poisoning] schedule, tag, and manual events only
+        with:
+          shared-key: cross-platform-${{ runner.os }}-${{ runner.arch }}-rust-1.97.1-node-26.5.0
+          cache-targets: false
+          cache-bin: false
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Test Windows file identifiers
+        run: |
+          $rustTargetLine = rustc -vV | Select-String '^host: '
+          if ($null -eq $rustTargetLine) {
+            throw "Unable to detect the Rust host target"
+          }
+          $rustTarget = $rustTargetLine.Line.Substring(6)
+          cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort --target $rustTarget
+      - name: Test commit-pinned Git installation
+        env:
+          DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
+          DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}
+        run: npm run test:git-install
+
+  macos_arm64:
+    name: Cross-platform / macOS arm64
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          clean: true
+      # actions/setup-node v7.0.0
+      - name: Set up trusted Node cache
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # zizmor: ignore[cache-poisoning] schedule, tag, and manual events only
+        with:
+          node-version: "26.5.0"
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify native architecture
+        run: test "$(node -p process.arch)" = arm64
+      - name: Install Rust 1.97.1
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+      # Swatinem/rust-cache v2.9.1
+      - name: Cache trusted Cargo downloads
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # zizmor: ignore[cache-poisoning] schedule, tag, and manual events only
+        with:
+          shared-key: cross-platform-${{ runner.os }}-${{ runner.arch }}-rust-1.97.1-node-26.5.0
+          cache-targets: false
+          cache-bin: false
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Test commit-pinned Git installation
+        env:
+          DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
+          DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}
+        run: npm run test:git-install

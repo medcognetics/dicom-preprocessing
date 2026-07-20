@@ -315,9 +315,9 @@ npm install --omit=optional
 
 After removing `node_modules`, the generated lockfile can reproduce the installation with `npm ci --omit=optional`.
 
-npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and one of these Node versions: Node 20.17 or newer in the Node 20 line, Node 22.13 or newer in the Node 22 line, or Node 23.5 or newer. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows.
+npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and a supported Node release: Node 22.13 or newer in the Node 22 line, Node 24, or Node 26. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows.
 
-Supported hosts are Linux x64 GNU, macOS x64, macOS arm64, and Windows x64 MSVC.
+Supported hosts are Linux x64 GNU, macOS arm64, and Windows x64 MSVC.
 
 ```ts
 import { prepareDicom, renderDisplayFrame, renderFrame } from '@medcognetics/dicom-preprocessing'

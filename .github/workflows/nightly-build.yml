@@ -3,6 +3,9 @@ name: Nightly Build
 on:
   schedule:
     - cron: "17 6 * * *"
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
   workflow_dispatch:
 
 permissions:
@@ -14,48 +17,55 @@ concurrency:
 
 jobs:
   build:
-    name: Nightly / Build
-    runs-on: [self-hosted, linux, x64, beryl]
+    name: Nightly / Build and install
+    runs-on: [self-hosted, linux, x64, beryl] # zizmor: ignore[self-hosted-runner] one-job ephemeral trusted events only
+    timeout-minutes: 60
+    env:
+      UV_PYTHON: "3.14"
     steps:
-      # actions/checkout v6
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-python v6
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+          clean: true
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.13"
-      # actions/setup-node v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+          python-version: "3.14"
+      # actions/setup-node v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "24.13.0"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      # astral-sh/setup-uv v7
-      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+          node-version: "26.5.0"
+          package-manager-cache: false
+      # astral-sh/setup-uv v8.3.2
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
         with:
           version: "0.11.18"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      # dtolnay/rust-toolchain stable
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: stable
-      # Swatinem/rust-cache v2
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          shared-key: nightly-build
+          enable-cache: false
+      - name: Install Rust 1.97.1
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
       - name: Build distributable artifacts
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/dicom-preprocessing-${{ github.run_id }}-${{ github.run_attempt }}/dist
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dicom-preprocessing-${{ github.run_id }}-${{ github.run_attempt }}/target
+          PYTHON_BUILD_VERSION: "3.14"
         run: make build
       - name: Verify artifacts and Git installation
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/dicom-preprocessing-${{ github.run_id }}-${{ github.run_attempt }}/dist
+          CARGO_TARGET_DIR: ${{ runner.temp }}/dicom-preprocessing-${{ github.run_id }}-${{ github.run_attempt }}/target
+          PYTHON_BUILD_VERSION: "3.14"
           DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
           DICOM_PREPROCESSING_GIT_SHA: ${{ github.sha }}
         run: make test-build
-      # actions/upload-artifact v7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: linux-build-${{ github.sha }}
-          path: dist/
-          if-no-files-found: error
-          retention-days: 14

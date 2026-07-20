@@ -21,7 +21,6 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../
 const FULL_COMMIT_SHA = /^[0-9a-f]{40}$/u
 const EXPECTED_BINARY_BY_HOST = {
   'darwin:arm64': 'dicom_preprocessing_node.darwin-arm64.node',
-  'darwin:x64': 'dicom_preprocessing_node.darwin-x64.node',
   'linux:x64': 'dicom_preprocessing_node.linux-x64-gnu.node',
   'win32:x64': 'dicom_preprocessing_node.win32-x64-msvc.node',
 }

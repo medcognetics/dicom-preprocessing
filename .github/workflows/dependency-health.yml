@@ -1,0 +1,82 @@
+name: Dependency Health
+
+on:
+  schedule:
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-health-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  security_audit:
+    name: Dependency Health / Security Audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          clean: true
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      # actions/setup-node v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "26.5.0"
+          package-manager-cache: false
+      # astral-sh/setup-uv v8.3.2
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        with:
+          version: "0.11.18"
+          enable-cache: false
+      - name: Install Rust and Cargo Audit
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo install cargo-audit --version 0.22.1 --locked
+      - name: Verify zizmor version
+        run: uvx --from zizmor==1.27.0 zizmor --version
+      - name: Run security audit
+        run: python scripts/ci/dependency_health.py security
+
+  deprecation_report:
+    name: Dependency Health / Deprecation Report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          clean: true
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+      # actions/setup-node v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "26.5.0"
+          package-manager-cache: false
+      # astral-sh/setup-uv v8.3.2
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        with:
+          version: "0.11.18"
+          enable-cache: false
+      - name: Install Rust and Cargo Audit
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          cargo install cargo-audit --version 0.22.1 --locked
+      - name: Install Node dependency graph
+        run: npm ci --ignore-scripts
+      - name: Run deprecation report
+        run: python scripts/ci/dependency_health.py deprecation

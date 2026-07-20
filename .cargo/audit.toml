@@ -1,0 +1,7 @@
+# Repository maintainers own this exception. RUSTSEC-2026-0151 affects 32-bit
+# jxl-grid builds, while this repository supports only x86_64 and aarch64 and
+# the locked crate is inactive in all supported build trees. Review this ignore
+# before adding 32-bit or JPEG XL support, or after changing the DICOM/JXL stack.
+[advisories]
+ignore = ["RUSTSEC-2026-0151"]
+informational_warnings = ["unmaintained", "unsound", "notice"]

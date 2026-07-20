@@ -6,6 +6,7 @@ Core Rust code lives in `src/`.
 - Library modules: `src/transform/`, `src/metadata/`, `src/python/`, `src/errors/`.
 - Python typing stub: `dicom_preprocessing.pyi`.
 - Node package metadata and its lockfile: root `package.json` and `package-lock.json`; NAPI-RS source and generated entry points: `bindings/node/`.
+- Dependency-health command and parsers: `scripts/ci/dependency_health.py`.
 
 Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/`. Examples are in `examples/`, and documentation images in `docs/`.
 
@@ -17,7 +18,7 @@ Tests are in `tests/` (pytest for Python bindings). Benchmarks live in `benches/
 - `make develop-release`: build/install the Python extension in release mode.
 - `make build`: build an archive of release Rust binaries, a Python wheel, and a Node package tarball under `dist/`.
 - `make init-node`: install locked root Node dependencies without running the package `prepare` build.
-- `make build-node`: build the host N-API module in release mode.
+- `make build-node`: build the host N-API module in release mode without regenerating the checked-in supported-platform loader.
 - `make quality`: run Rust, Python, and Node quality checks.
 - `make quality-python`: run Python quality checks only.
 - `make quality-node`: install locked Node dependencies and type-check the generated declarations without compiling the native module.
@@ -45,24 +46,22 @@ Run binaries with `cargo run --release --bin <name> -- ...`:
 Use Rust 2021 defaults and keep code `rustfmt`/`clippy` clean (`-D warnings` in CI). Prefer snake_case for functions/modules and descriptive CLI flag names.
 
 Python style is formatter-driven:
-- Ruff is the formatter/import sorter and is configured in `pyproject.toml` (`line-length = 120`, `target-version = "py313"`).
-- basedpyright type checking is configured in `pyproject.toml` (`pythonVersion = "3.13"`, `typeCheckingMode = "basic"`).
+- Ruff is the formatter/import sorter and is configured in `pyproject.toml` (`line-length = 120`, `target-version = "py310"`).
+- basedpyright type checking is configured in `pyproject.toml` (`pythonVersion = "3.10"`, `typeCheckingMode = "basic"`).
 - Test files use `test_*.py`; test functions use `test_*`.
 
 ## CI Quality Pipeline
-- GitHub Actions owns Linux CI on the self-hosted `beryl` runner. The `Linux / Rust`, `Linux / Python`, and `Linux / Node` jobs combine each language's quality and runtime checks so setup and build caches are reused within the job.
-- Linux CI runs for same-repository pull requests targeting `master`, pushes to `master`, exact semantic-version tags, and manual dispatches. Pull-request jobs test GitHub's synthetic merge result. Fork pull requests are skipped; move trusted fork commits to a repository branch before running CI.
-- `Linux / Python` and `Linux / Node` both require `Linux / Rust` to pass. The Python and Node jobs may proceed independently after the Rust gate when multiple matching runners are available.
-- The Rust job runs `cargo fmt -- --check`, Clippy with all workspace features and warnings denied, and Rust tests with all workspace features.
-- The Python 3.13 job runs `make init-no-project`, `make quality-python`, and `make test-python-ci` with a debug extension build.
-- The Node 24.13 job runs `make quality-node` and `make test-node-direct`. Regular CI does not run the commit-pinned Git-install contract.
-- The separate `Nightly Build` workflow runs at `06:17 UTC` and supports manual dispatch. Its single `Nightly / Build` job runs `make build`, verifies the Rust binaries, Python wheel, and Node tarball with `make test-build`, exercises the full commit-pinned npm `install` and `ci` pathways, and uploads the contents of `dist/` for 14 days.
-- The `Cross-platform CI` workflow runs Windows x64 on `windows-2022` and native macOS arm64 on `macos-15`. It runs every Sunday at `05:17 UTC`, for exact semantic-version tags, and by manual dispatch; ordinary pull requests and branch pushes do not trigger it.
-- Both GitHub-hosted cross-platform jobs install Node 24.13 and run the full commit-pinned npm `install` and `ci` contract. Windows also runs the focused file-identifier test, while macOS verifies that Node is running natively as arm64.
-- CircleCI temporarily owns only Rosetta-backed macOS x64 Node validation. Migrate it separately to a native Intel GitHub-hosted runner.
-- CircleCI macOS x64 validation runs automatically only for exact semantic-version tags. For an on-demand run, use **Trigger Pipeline** on the intended branch and set the Boolean pipeline parameter `run_cross_platform` to `true`.
-- The required CircleCI schedule trigger remains `weekly-cross-platform-master`: run every Sunday at `05:00 UTC` against `master`, with `run_cross_platform=true` and the scheduling system as actor. It now runs only the macOS x64 job.
-- CI caches are lockfile-scoped and local to each runner or executor. Regular jobs do not transfer build artifacts; the nightly workflow uploads its verified `dist/` output as a workflow artifact.
+- GitHub Actions owns all CI. CircleCI is retired.
+- Linux CI runs for pull requests targeting `master`, pushes to `master`, exact semantic-version tags, and manual dispatches. Pull-request jobs test GitHub's synthetic merge result.
+- Same-repository Linux jobs use the `[self-hosted, linux, x64, beryl]` runner labels. `beryl` provisions one Ubuntu x64 CPU node at a time, assigns exactly one job, and destroys the node and local storage afterward. Jobs must install every toolchain and dependency they use and must not rely on prior runner state.
+- Fork pull requests use `ubuntu-24.04` instead of `beryl`, preserving the same required-check names without exposing self-hosted infrastructure.
+- `Linux / Python`, `Linux / Node`, and the hosted `Linux / Minimum versions` job require `Linux / Rust`. With one `beryl` node, Python and Node queue independently after Rust; the hosted minimum-version job may run concurrently.
+- `Linux / Rust` uses Rust 1.97.1 and runs `make quality-rust` and `make test-rust`. `Linux / Python` tests Python 3.14 with NumPy 2.4.6. `Linux / Node` tests Node 24.18 and 26.5, with quality checks on Node 26.5.
+- `Linux / Minimum versions` runs on `ubuntu-24.04` and tests Rust 1.89.0, Python 3.10 with NumPy 2.2.6, and Node 22.13. Regular CI uses direct tests and does not run the commit-pinned Git-install contract.
+- The `Nightly Build` workflow runs daily at `06:17 UTC`, for exact semantic-version tags, and by manual dispatch. Its `Nightly / Build and install` job uses `beryl`, runs `make build` and `make test-build`, and verifies the full commit-pinned npm `install` and `ci` pathways. Artifacts and the clean job-scoped Cargo target live only under the ephemeral runner's temporary directory, and no output is uploaded.
+- The `Cross-platform CI` workflow runs Windows x64 on `windows-2022` and native macOS arm64 on `macos-15` every Sunday at `05:17 UTC`, for exact semantic-version tags, and by manual dispatch. It tests Node 26.5 and the full Git-install contract; Windows also runs the focused file-identifier test.
+- The independent `Dependency Health` workflow runs every Monday at `07:17 UTC` and by manual dispatch. `Dependency Health / Security Audit` fails on unsuppressed Rust, Python, Node, or workflow-security findings and on incomplete scans. `Dependency Health / Deprecation Report` reports unmaintained, yanked, deprecated, future-incompatible, and runtime-lifecycle findings without failing on findings; command or parse failures still fail the job.
+- Linux and nightly jobs do not use Actions caches. Scheduled hosted cross-platform jobs cache only lockfile-scoped npm and Cargo downloads, never Rust build targets. No workflow uploads retained artifacts.
 
 ## Testing Guidelines
 Add or update tests when behavior changes in preprocessing, manifest generation, TIFF I/O, or Python bindings.

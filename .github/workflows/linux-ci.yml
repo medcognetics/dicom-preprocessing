@@ -13,77 +13,86 @@ permissions:
   contents: read
 
 concurrency:
-  group: linux-ci-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  group: linux-ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   rust:
     name: Linux / Rust
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, beryl]
+    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04
+      ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","beryl"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 20
     steps:
-      # actions/checkout v6
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-python v6
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+          clean: true
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.13"
-      # dtolnay/rust-toolchain stable
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: stable
-          components: clippy, rustfmt
-      # Swatinem/rust-cache v2
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          shared-key: linux-rust
-      - name: Check formatting
-        run: cargo fmt -- --check
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-features -- -D warnings
+          python-version: "3.14"
+      - name: Install Rust 1.97.1
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal --component clippy,rustfmt
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+      - name: Run Rust quality checks
+        run: make quality-rust
       - name: Run Rust tests
         run: |
-          # PyO3 reads the build-time Python prefix, which may differ from a
-          # self-hosted runner's tool cache path.
           export LIBRARY_PATH="${pythonLocation}/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
-          cargo test --workspace --all-features
+          make test-rust
 
   python:
     name: Linux / Python
     needs: rust
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, beryl]
+    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04
+      ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","beryl"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 20
+    env:
+      UV_PYTHON: "3.14"
     steps:
-      # actions/checkout v6
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-python v6
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+          clean: true
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.13"
-      # astral-sh/setup-uv v7
-      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+          python-version: "3.14"
+      # astral-sh/setup-uv v8.3.2
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
         with:
           version: "0.11.18"
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      # dtolnay/rust-toolchain stable
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
-        with:
-          toolchain: stable
-      # Swatinem/rust-cache v2
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          shared-key: linux-python
+          enable-cache: false
+      - name: Install Rust 1.97.1
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
       - name: Install Python dependencies
         run: make init-no-project
+      - name: Verify Python dependency boundary
+        run: >-
+          ./.venv/bin/python -c 'import numpy, sys; assert sys.version_info[:2] == (3, 14); assert numpy.__version__ == "2.4.6", numpy.__version__'
       - name: Run Python quality checks
         run: make quality-python
       - name: Run Python tests
@@ -92,30 +101,89 @@ jobs:
   node:
     name: Linux / Node
     needs: rust
-    if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: [self-hosted, linux, x64, beryl]
+    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04
+      ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","beryl"]' || '["ubuntu-24.04"]') }}
+    timeout-minutes: 20
     steps:
-      # actions/checkout v6
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      # actions/setup-node v6
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+          clean: true
+      - name: Install Rust 1.97.1
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+          rustc --version
+          cargo --version
+      # actions/setup-node v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "24.13.0"
-          cache: npm
-          cache-dependency-path: package-lock.json
-      # dtolnay/rust-toolchain stable
-      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4
+          node-version: "24.18.0"
+          package-manager-cache: false
+      - name: Run direct Node 24 tests
+        run: make test-node-direct
+      # actions/setup-node v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          toolchain: stable
-      # Swatinem/rust-cache v2
-      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae
-        with:
-          shared-key: linux-node
-      - name: Run Node quality checks
+          node-version: "26.5.0"
+          package-manager-cache: false
+      - name: Run Node 26 quality checks
         run: make quality-node
-      - name: Run direct Node tests
+      - name: Run direct Node 26 tests
+        run: make test-node-direct
+
+  minimum_versions:
+    name: Linux / Minimum versions
+    needs: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      UV_PYTHON: "3.10"
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          clean: true
+      # actions/setup-python v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.10"
+      # astral-sh/setup-uv v8.3.2
+      - uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        with:
+          version: "0.11.18"
+          enable-cache: false
+      - name: Install Rust 1.89.0
+        shell: bash
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup default 1.89.0
+          rustc --version
+          cargo --version
+      - name: Run minimum Rust tests
+        run: |
+          export LIBRARY_PATH="${pythonLocation}/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
+          make test-rust
+      - name: Install Python dependencies
+        run: make init-no-project
+      - name: Verify Python dependency boundary
+        run: >-
+          ./.venv/bin/python -c 'import numpy, sys; assert sys.version_info[:2] == (3, 10); assert numpy.__version__ == "2.2.6", numpy.__version__'
+      - name: Run minimum Python tests
+        run: make test-python-ci
+      # actions/setup-node v7.0.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: "22.13.0"
+          package-manager-cache: false
+      - name: Run minimum Node tests
         run: make test-node-direct

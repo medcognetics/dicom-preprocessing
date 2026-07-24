@@ -229,6 +229,7 @@ dicom-manifest /path/to/preprocessed/dataset/images /path/to/preprocessed/datase
 
 Rust callers can use `ViewerDicom` and `VolumeHandler` when they need display-frame planning without committing to the TIFF preprocessing output path.
 The viewer path uses the same frame ordering, volume handling, and DICOM sanitation logic as preprocessing, including empty `VOILUTFunction` cleanup.
+Public methods that accept or return DICOM object or conversion types use dicom-rs 0.10, so downstream Rust crates should use a compatible `dicom` 0.10 dependency.
 
 ```rust
 use dicom_preprocessing::{ViewerDicom, VolumeFrameSource, VolumeHandler};

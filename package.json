@@ -1,6 +1,6 @@
 {
   "name": "@medcognetics/dicom-preprocessing",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Node/TypeScript viewer bindings for dicom-preprocessing",
   "license": "MIT",
   "main": "bindings/node/index.js",

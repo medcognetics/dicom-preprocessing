@@ -261,14 +261,12 @@ def test_circleci_is_retired() -> None:
     assert not CIRCLECI_CONFIG_PATH.exists()
 
 
-def test_cargo_audit_exception_is_narrow_and_documented() -> None:
+def test_cargo_audit_has_no_advisory_exceptions() -> None:
     config = CARGO_AUDIT_CONFIG_PATH.read_text()
 
-    assert 'ignore = ["RUSTSEC-2026-0151"]' in config
-    assert set(re.findall(r"RUSTSEC-\d{4}-\d{4}", config)) == {"RUSTSEC-2026-0151"}
-    assert "32-bit" in config
-    assert "jxl-grid" in config
-    assert "JPEG XL" in config
+    assert "ignore =" not in config
+    assert not re.findall(r"RUSTSEC-\d{4}-\d{4}", config)
+    assert 'informational_warnings = ["unmaintained", "unsound", "notice"]' in config
 
 
 def test_makefile_exposes_locked_ci_targets() -> None:
@@ -291,6 +289,7 @@ def test_makefile_exposes_locked_ci_targets() -> None:
 
 def test_node_support_contract_matches_ci_platforms() -> None:
     package = json.loads(NODE_PACKAGE_PATH.read_text())
+    loader = NODE_LOADER_PATH.read_text()
 
     assert package["engines"]["node"] == "^22.13.0 || ^24.0.0 || ^26.0.0"
     assert package["napi"]["targets"] == [
@@ -298,7 +297,9 @@ def test_node_support_contract_matches_ci_platforms() -> None:
         "x86_64-pc-windows-msvc",
         "x86_64-unknown-linux-gnu",
     ]
-    assert "darwin-x64" not in NODE_LOADER_PATH.read_text()
+    assert set(re.findall(r"bindingPackageVersion !== '([^']+)'", loader)) == {package["version"]}
+    assert set(re.findall(r"version mismatch, expected (\d+\.\d+\.\d+)", loader)) == {package["version"]}
+    assert "darwin-x64" not in loader
     assert "darwin:x64" not in NODE_GIT_INSTALL_PATH.read_text()
 
 

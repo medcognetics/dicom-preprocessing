@@ -13,7 +13,7 @@ use crate::preprocess::Preprocessor;
 use crate::transform::volume::{
     DecodedStoredFrame, PreparedVolume, VolumeFramePlan, VolumeFrameSource, VolumeHandler,
 };
-use crate::transform::{inverse_standard_dbt_flip, Transform};
+use crate::transform::{standard_dbt_orientation_flip, Flip, Transform};
 
 #[derive(Debug, Clone)]
 pub struct ViewerDicom {
@@ -64,6 +64,11 @@ impl ViewerDicom {
         &self.frame_plan
     }
 
+    /// Return the in-plane orientation correction applied by display rendering.
+    pub fn display_orientation_flip(&self, width: u32, height: u32) -> Option<Flip> {
+        standard_dbt_orientation_flip(&self.file, width, height)
+    }
+
     pub fn prepare_volume_with_options(
         &self,
         options: &ConvertOptions,
@@ -110,7 +115,7 @@ impl ViewerDicom {
             .context(PixelDataSnafu)?
             .to_dynamic_image_with_options(0, options)
             .context(PixelDataSnafu)?;
-        if let Some(flip) = inverse_standard_dbt_flip(&self.file, std::slice::from_ref(&image)) {
+        if let Some(flip) = self.display_orientation_flip(image.width(), image.height()) {
             return Ok(flip.apply(&image));
         }
         Ok(image)

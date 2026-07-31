@@ -732,6 +732,8 @@ mod tests {
         patient_orientation: &str,
     ) -> FileDicomObject<InMemDicomObject> {
         let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        dicom.meta_mut().media_storage_sop_class_uid =
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE.to_string();
         put_str_element(
             &mut dicom,
             tags::SOP_CLASS_UID,
@@ -871,9 +873,18 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_inverse_standard_dbt_orientation_metadata_records_flip() {
-        let dicom_file = dbt_volume("L", "CC", "P\\L");
+    #[rstest]
+    #[case("R", "CC", "P\\L", true, false)]
+    #[case("R", "CC", "A\\R", false, true)]
+    #[case("L", "CC", "P\\L", true, true)]
+    fn test_dbt_orientation_metadata_records_axis_specific_flip(
+        #[case] laterality: &str,
+        #[case] view_position: &str,
+        #[case] patient_orientation: &str,
+        #[case] horizontal: bool,
+        #[case] vertical: bool,
+    ) {
+        let dicom_file = dbt_volume(laterality, view_position, patient_orientation);
         let preprocessor = Preprocessor {
             crop: false,
             size: None,
@@ -890,11 +901,11 @@ mod tests {
         };
 
         let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
-        let flip = Flip::both_from_image(&images[0]);
+        let flip = Flip::new(images[0].width(), images[0].height(), horizontal, vertical);
         assert_eq!(metadata.flip, Some(flip));
         assert_eq!(
             metadata.apply(&Coord::new(0, 0)),
-            Coord::new(flip.width - 1, flip.height - 1)
+            flip.apply(&Coord::new(0, 0))
         );
     }
 

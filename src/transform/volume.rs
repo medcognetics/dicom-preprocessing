@@ -468,23 +468,87 @@ fn normalized_dicom_code(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_ascii_uppercase())
 }
 
-fn normalized_element_parts(
-    file: &FileDicomObject<InMemDicomObject>,
-    tag: Tag,
-) -> Option<Vec<String>> {
-    let parts: Vec<String> = file
+fn normalized_element_parts(object: &InMemDicomObject, tag: Tag) -> Option<Vec<String>> {
+    let parts: Option<Vec<String>> = object
         .get(tag)?
         .to_str()
         .ok()?
         .split('\\')
-        .filter_map(normalized_dicom_code)
+        .map(normalized_dicom_code)
         .collect();
+    let parts = parts?;
 
     (!parts.is_empty()).then_some(parts)
 }
 
-fn normalized_element_value(file: &FileDicomObject<InMemDicomObject>, tag: Tag) -> Option<String> {
-    normalized_element_parts(file, tag).and_then(|parts| parts.into_iter().next())
+fn normalized_element_value(object: &InMemDicomObject, tag: Tag) -> Option<String> {
+    let [value] = normalized_element_parts(object, tag)?.try_into().ok()?;
+    Some(value)
+}
+
+fn single_sequence_item(object: &InMemDicomObject, tag: Tag) -> Option<&InMemDicomObject> {
+    let [item] = object.get(tag)?.items()? else {
+        return None;
+    };
+    Some(item)
+}
+
+fn consensus_value(values: Vec<String>) -> Option<String> {
+    let mut values = values.into_iter();
+    let first = values.next()?;
+    values.all(|value| value == first).then_some(first)
+}
+
+const SRT_CODING_SCHEME: &str = "SRT";
+const SNM3_CODING_SCHEME: &str = "SNM3";
+const SRT_MAMMOGRAPHY_CC_CODE: &str = "R-10242";
+const SRT_MAMMOGRAPHY_MLO_CODE: &str = "R-10226";
+
+fn standard_mammography_laterality(file: &FileDicomObject<InMemDicomObject>) -> Option<String> {
+    let mut values = Vec::new();
+    for tag in [tags::IMAGE_LATERALITY, tags::LATERALITY] {
+        if file.get(tag).is_some() {
+            values.push(normalized_element_value(file, tag)?);
+        }
+    }
+
+    if file.get(tags::SHARED_FUNCTIONAL_GROUPS_SEQUENCE).is_some() {
+        let shared_functional_groups =
+            single_sequence_item(file, tags::SHARED_FUNCTIONAL_GROUPS_SEQUENCE)?;
+        if shared_functional_groups
+            .get(tags::FRAME_ANATOMY_SEQUENCE)
+            .is_some()
+        {
+            let frame_anatomy =
+                single_sequence_item(shared_functional_groups, tags::FRAME_ANATOMY_SEQUENCE)?;
+            values.push(normalized_element_value(
+                frame_anatomy,
+                tags::FRAME_LATERALITY,
+            )?);
+        }
+    }
+
+    consensus_value(values).filter(|value| matches!(value.as_str(), "L" | "R"))
+}
+
+fn standard_mammography_view_position(file: &FileDicomObject<InMemDicomObject>) -> Option<String> {
+    let mut values = Vec::new();
+    if file.get(tags::VIEW_POSITION).is_some() {
+        values.push(normalized_element_value(file, tags::VIEW_POSITION)?);
+    }
+    if file.get(tags::VIEW_CODE_SEQUENCE).is_some() {
+        let view = single_sequence_item(file, tags::VIEW_CODE_SEQUENCE)?;
+        let coding_scheme = normalized_element_value(view, tags::CODING_SCHEME_DESIGNATOR)?;
+        let code = normalized_element_value(view, tags::CODE_VALUE)?;
+        let view_position = match (coding_scheme.as_str(), code.as_str()) {
+            (SRT_CODING_SCHEME | SNM3_CODING_SCHEME, SRT_MAMMOGRAPHY_CC_CODE) => "CC",
+            (SRT_CODING_SCHEME | SNM3_CODING_SCHEME, SRT_MAMMOGRAPHY_MLO_CODE) => "MLO",
+            _ => return None,
+        };
+        values.push(view_position.to_string());
+    }
+
+    consensus_value(values).filter(|value| matches!(value.as_str(), "CC" | "MLO"))
 }
 
 fn inverse_patient_orientation_direction(direction: char) -> Option<char> {
@@ -499,11 +563,16 @@ fn inverse_patient_orientation_direction(direction: char) -> Option<char> {
     }
 }
 
-fn is_inverse_patient_orientation_component(component: &str, inverse_component: &str) -> bool {
-    component
+fn patient_orientation_component_flip(expected: &str, observed: &str) -> Option<bool> {
+    if expected == observed {
+        return Some(false);
+    }
+
+    expected
         .chars()
         .map(inverse_patient_orientation_direction)
-        .eq(inverse_component.chars().map(Some))
+        .eq(observed.chars().map(Some))
+        .then_some(true)
 }
 
 fn expected_standard_mammography_orientation(
@@ -521,54 +590,48 @@ fn expected_standard_mammography_orientation(
 
 fn has_breast_tomosynthesis_sop_class(file: &FileDicomObject<InMemDicomObject>) -> bool {
     let meta_sop_class = trim_dicom_code(file.meta().media_storage_sop_class_uid());
-    if meta_sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE {
-        return true;
-    }
+    let dataset_sop_class = normalized_element_value(file, tags::SOP_CLASS_UID);
 
-    normalized_element_value(file, tags::SOP_CLASS_UID)
-        .is_some_and(|sop_class| sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE)
+    dataset_sop_class.is_some_and(|dataset_sop_class| {
+        meta_sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE
+            && dataset_sop_class == uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE
+    })
 }
 
-fn should_flip_inverse_standard_dbt_orientation(file: &FileDicomObject<InMemDicomObject>) -> bool {
+fn standard_dbt_orientation_flip_flags(
+    file: &FileDicomObject<InMemDicomObject>,
+) -> Option<(bool, bool)> {
     if !has_breast_tomosynthesis_sop_class(file) {
-        return false;
+        return None;
     }
 
-    let laterality = normalized_element_value(file, tags::IMAGE_LATERALITY)
-        .or_else(|| normalized_element_value(file, tags::LATERALITY));
-    let view_position = normalized_element_value(file, tags::VIEW_POSITION);
+    let laterality = standard_mammography_laterality(file);
+    let view_position = standard_mammography_view_position(file);
     let observed_orientation = normalized_element_parts(file, tags::PATIENT_ORIENTATION);
 
-    let Some(laterality) = laterality else {
-        return false;
-    };
-    let Some(view_position) = view_position else {
-        return false;
-    };
-    let Some(observed_orientation) = observed_orientation else {
-        return false;
-    };
-    let Some(expected) = expected_standard_mammography_orientation(&laterality, &view_position)
-    else {
-        return false;
-    };
-    observed_orientation.len() == expected.len()
-        && expected.iter().zip(observed_orientation.iter()).all(
-            |(expected_component, observed_component)| {
-                is_inverse_patient_orientation_component(expected_component, observed_component)
-            },
-        )
+    let expected = expected_standard_mammography_orientation(&laterality?, &view_position?)?;
+    let [observed_horizontal, observed_vertical] = observed_orientation?.try_into().ok()?;
+    let horizontal = patient_orientation_component_flip(expected[0], &observed_horizontal)?;
+    let vertical = patient_orientation_component_flip(expected[1], &observed_vertical)?;
+    Some((horizontal, vertical))
+}
+
+pub(crate) fn standard_dbt_orientation_flip(
+    file: &FileDicomObject<InMemDicomObject>,
+    width: u32,
+    height: u32,
+) -> Option<Flip> {
+    let (horizontal, vertical) = standard_dbt_orientation_flip_flags(file)?;
+    (horizontal || vertical).then(|| Flip::new(width, height, horizontal, vertical))
 }
 
 pub(crate) fn inverse_standard_dbt_flip(
     file: &FileDicomObject<InMemDicomObject>,
     frames: &[DynamicImage],
 ) -> Option<Flip> {
-    if should_flip_inverse_standard_dbt_orientation(file) {
-        frames.first().map(Flip::both_from_image)
-    } else {
-        None
-    }
+    frames
+        .first()
+        .and_then(|frame| standard_dbt_orientation_flip(file, frame.width(), frame.height()))
 }
 
 fn apply_orientation_flip(frames: Vec<DynamicImage>, flip: Option<Flip>) -> Vec<DynamicImage> {
@@ -2024,6 +2087,7 @@ mod tests {
     use super::*;
     use crate::metadata::preprocessing::FrameCount;
 
+    use dicom::core::value::DataSetSequence;
     use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;
@@ -2041,18 +2105,19 @@ mod tests {
         dicom.put_element(DataElement::new(tag, vr, PrimitiveValue::from(value)));
     }
 
-    fn dbt_volume(
+    fn sequence_element(tag: Tag, items: Vec<InMemDicomObject>) -> DataElement<InMemDicomObject> {
+        DataElement::new(tag, VR::SQ, DataSetSequence::from(items))
+    }
+
+    fn mammography_volume(
+        sop_class_uid: &str,
         laterality: &str,
         view_position: &str,
         patient_orientation: &str,
     ) -> FileDicomObject<InMemDicomObject> {
         let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
-        put_str_element(
-            &mut dicom,
-            tags::SOP_CLASS_UID,
-            VR::UI,
-            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
-        );
+        dicom.meta_mut().media_storage_sop_class_uid = sop_class_uid.to_string();
+        put_str_element(&mut dicom, tags::SOP_CLASS_UID, VR::UI, sop_class_uid);
         put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, laterality);
         put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, view_position);
         put_str_element(
@@ -2061,6 +2126,50 @@ mod tests {
             VR::CS,
             patient_orientation,
         );
+        dicom
+    }
+
+    fn dbt_volume(
+        laterality: &str,
+        view_position: &str,
+        patient_orientation: &str,
+    ) -> FileDicomObject<InMemDicomObject> {
+        mammography_volume(
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
+            laterality,
+            view_position,
+            patient_orientation,
+        )
+    }
+
+    fn enhanced_dbt_volume(
+        laterality: &str,
+        coding_scheme: &str,
+        view_code: &str,
+        patient_orientation: &str,
+    ) -> FileDicomObject<InMemDicomObject> {
+        let mut dicom = dbt_volume("R", "CC", patient_orientation);
+        dicom.remove_element(tags::IMAGE_LATERALITY);
+        dicom.remove_element(tags::LATERALITY);
+        dicom.remove_element(tags::VIEW_POSITION);
+        dicom.put_element(sequence_element(
+            tags::VIEW_CODE_SEQUENCE,
+            vec![InMemDicomObject::from_element_iter([
+                DataElement::new(tags::CODE_VALUE, VR::SH, view_code),
+                DataElement::new(tags::CODING_SCHEME_DESIGNATOR, VR::SH, coding_scheme),
+            ])],
+        ));
+        dicom.put_element(sequence_element(
+            tags::SHARED_FUNCTIONAL_GROUPS_SEQUENCE,
+            vec![InMemDicomObject::from_element_iter([sequence_element(
+                tags::FRAME_ANATOMY_SEQUENCE,
+                vec![InMemDicomObject::from_element_iter([DataElement::new(
+                    tags::FRAME_LATERALITY,
+                    VR::CS,
+                    laterality,
+                )])],
+            )])],
+        ));
         dicom
     }
 
@@ -2368,6 +2477,223 @@ mod tests {
         let actual = KeepVolume.decode_volume(&dicom).unwrap();
 
         assert_images_match(&expected, &actual);
+    }
+
+    #[rstest]
+    #[case("R", "CC", "P\\L", true, false)]
+    #[case("R", "CC", "A\\R", false, true)]
+    fn test_keep_volume_flips_single_axis_dbt_orientation(
+        #[case] laterality: &str,
+        #[case] view_position: &str,
+        #[case] patient_orientation: &str,
+        #[case] horizontal: bool,
+        #[case] vertical: bool,
+        #[values(false, true)] use_parallel: bool,
+    ) {
+        let dicom = dbt_volume(laterality, view_position, patient_orientation);
+        let expected: Vec<DynamicImage> = raw_ordered_frames(&dicom)
+            .iter()
+            .map(|frame| {
+                Flip::new(frame.width(), frame.height(), horizontal, vertical).apply(frame)
+            })
+            .collect();
+
+        let actual = if use_parallel {
+            KeepVolume.par_decode_volume(&dicom).unwrap()
+        } else {
+            KeepVolume.decode_volume(&dicom).unwrap()
+        };
+
+        assert_images_match(&expected, &actual);
+    }
+
+    #[rstest]
+    #[case("L", "CC", "A\\R", None)]
+    #[case("L", "CC", "P\\R", Some((true, false)))]
+    #[case("L", "CC", "A\\L", Some((false, true)))]
+    #[case("L", "CC", "P\\L", Some((true, true)))]
+    #[case("R", "CC", "A\\L", None)]
+    #[case("R", "CC", "P\\L", Some((true, false)))]
+    #[case("R", "CC", "A\\R", Some((false, true)))]
+    #[case("R", "CC", "P\\R", Some((true, true)))]
+    #[case("L", "MLO", "A\\FR", None)]
+    #[case("L", "MLO", "P\\FR", Some((true, false)))]
+    #[case("L", "MLO", "A\\HL", Some((false, true)))]
+    #[case("L", "MLO", "P\\HL", Some((true, true)))]
+    #[case("R", "MLO", "A\\FL", None)]
+    #[case("R", "MLO", "P\\FL", Some((true, false)))]
+    #[case("R", "MLO", "A\\HR", Some((false, true)))]
+    #[case("R", "MLO", "P\\HR", Some((true, true)))]
+    fn test_standard_dbt_orientation_relationships(
+        #[case] laterality: &str,
+        #[case] view_position: &str,
+        #[case] patient_orientation: &str,
+        #[case] expected: Option<(bool, bool)>,
+    ) {
+        const FRAME_WIDTH: u32 = 3;
+        const FRAME_HEIGHT: u32 = 2;
+        let dicom = dbt_volume(laterality, view_position, patient_orientation);
+
+        let actual = standard_dbt_orientation_flip(&dicom, FRAME_WIDTH, FRAME_HEIGHT)
+            .map(|flip| (flip.horizontal, flip.vertical));
+
+        assert_eq!(actual, expected);
+    }
+
+    #[rstest]
+    #[case(SRT_CODING_SCHEME, SRT_MAMMOGRAPHY_CC_CODE, "P\\L")]
+    #[case(SRT_CODING_SCHEME, SRT_MAMMOGRAPHY_MLO_CODE, "P\\FL")]
+    #[case(SNM3_CODING_SCHEME, SRT_MAMMOGRAPHY_CC_CODE, "P\\L")]
+    #[case(SNM3_CODING_SCHEME, SRT_MAMMOGRAPHY_MLO_CODE, "P\\FL")]
+    fn test_enhanced_dbt_orientation_uses_functional_group_laterality_and_coded_view(
+        #[case] coding_scheme: &str,
+        #[case] view_code: &str,
+        #[case] patient_orientation: &str,
+    ) {
+        const FRAME_WIDTH: u32 = 3;
+        const FRAME_HEIGHT: u32 = 2;
+        let dicom = enhanced_dbt_volume("R", coding_scheme, view_code, patient_orientation);
+
+        let actual = standard_dbt_orientation_flip(&dicom, FRAME_WIDTH, FRAME_HEIGHT)
+            .map(|flip| (flip.horizontal, flip.vertical));
+
+        assert_eq!(actual, Some((true, false)));
+    }
+
+    #[rstest]
+    #[case(Some("L"), None, SRT_MAMMOGRAPHY_CC_CODE)]
+    #[case(None, Some("MLO"), SRT_MAMMOGRAPHY_CC_CODE)]
+    #[case(None, None, "unsupported")]
+    fn test_ambiguous_or_unsupported_enhanced_dbt_metadata_does_not_flip(
+        #[case] top_level_laterality: Option<&str>,
+        #[case] top_level_view: Option<&str>,
+        #[case] view_code: &str,
+    ) {
+        const FRAME_WIDTH: u32 = 3;
+        const FRAME_HEIGHT: u32 = 2;
+        let mut dicom = enhanced_dbt_volume("R", SRT_CODING_SCHEME, view_code, "P\\L");
+        if let Some(laterality) = top_level_laterality {
+            put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, laterality);
+        }
+        if let Some(view) = top_level_view {
+            put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, view);
+        }
+
+        assert_eq!(
+            standard_dbt_orientation_flip(&dicom, FRAME_WIDTH, FRAME_HEIGHT),
+            None
+        );
+    }
+
+    #[test]
+    fn test_invalid_or_incomplete_dbt_orientation_does_not_flip() {
+        const FRAME_WIDTH: u32 = 3;
+        const FRAME_HEIGHT: u32 = 2;
+        for (laterality, view_position, patient_orientation) in [
+            ("R", "CC", "P"),
+            ("R", "CC", "P\\\\L"),
+            ("R", "CC", "P\\L\\A"),
+            ("R", "CC", "H\\L"),
+            ("U", "CC", "P\\L"),
+            ("R", "XCC", "P\\L"),
+        ] {
+            let dicom = dbt_volume(laterality, view_position, patient_orientation);
+            assert_eq!(
+                standard_dbt_orientation_flip(&dicom, FRAME_WIDTH, FRAME_HEIGHT),
+                None
+            );
+        }
+
+        let mut missing = dbt_volume("R", "CC", "P\\L");
+        missing.remove_element(tags::PATIENT_ORIENTATION);
+        assert_eq!(
+            standard_dbt_orientation_flip(&missing, FRAME_WIDTH, FRAME_HEIGHT),
+            None
+        );
+    }
+
+    #[test]
+    fn test_derived_ffdm_with_stale_orientation_does_not_flip() {
+        const FRAME_WIDTH: u32 = 3;
+        const FRAME_HEIGHT: u32 = 2;
+        let dicom = mammography_volume(
+            uids::DIGITAL_MAMMOGRAPHY_X_RAY_IMAGE_STORAGE_FOR_PRESENTATION,
+            "R",
+            "CC",
+            "P\\L",
+        );
+
+        assert_eq!(
+            standard_dbt_orientation_flip(&dicom, FRAME_WIDTH, FRAME_HEIGHT),
+            None
+        );
+    }
+
+    #[rstest]
+    #[case(
+        uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
+        uids::DIGITAL_MAMMOGRAPHY_X_RAY_IMAGE_STORAGE_FOR_PRESENTATION
+    )]
+    #[case(
+        uids::DIGITAL_MAMMOGRAPHY_X_RAY_IMAGE_STORAGE_FOR_PRESENTATION,
+        uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE
+    )]
+    fn test_conflicting_sop_class_metadata_does_not_flip(
+        #[case] meta_sop_class_uid: &str,
+        #[case] dataset_sop_class_uid: &str,
+    ) {
+        const FRAME_WIDTH: u32 = 3;
+        const FRAME_HEIGHT: u32 = 2;
+        let mut dicom = dbt_volume("R", "CC", "P\\L");
+        dicom.meta_mut().media_storage_sop_class_uid = meta_sop_class_uid.to_string();
+        put_str_element(
+            &mut dicom,
+            tags::SOP_CLASS_UID,
+            VR::UI,
+            dataset_sop_class_uid,
+        );
+
+        assert_eq!(
+            standard_dbt_orientation_flip(&dicom, FRAME_WIDTH, FRAME_HEIGHT),
+            None
+        );
+    }
+
+    #[test]
+    fn test_volume_handlers_apply_horizontal_dbt_orientation() {
+        let corrected = dbt_volume("R", "CC", "P\\L");
+        let expected_orientation = dbt_volume("R", "CC", "A\\L");
+        let handlers = [
+            VolumeHandler::keep(),
+            VolumeHandler::central_slice(),
+            VolumeHandler::max_intensity(0, 0),
+            VolumeHandler::interpolate(3),
+            VolumeHandler::laplacian_mip(0, 0),
+        ];
+
+        for handler in handlers {
+            let expected = handler
+                .prepare_volume_with_options(
+                    &expected_orientation,
+                    &ConvertOptions::default(),
+                    false,
+                )
+                .unwrap();
+            let actual = handler
+                .prepare_volume_with_options(&corrected, &ConvertOptions::default(), false)
+                .unwrap();
+            let expected: Vec<DynamicImage> = expected
+                .images
+                .iter()
+                .map(|frame| Flip::horizontal_from_image(frame).apply(frame))
+                .collect();
+
+            assert_eq!(
+                actual.orientation_flip,
+                actual.images.first().map(Flip::horizontal_from_image)
+            );
+            assert_images_match(&expected, &actual.images);
+        }
     }
 
     #[test]

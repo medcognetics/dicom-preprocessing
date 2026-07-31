@@ -28,6 +28,17 @@ function frameByteLength(rendered) {
   return rendered.width * rendered.height * rendered.samplesPerPixel * bytesPerSample
 }
 
+function identityCoordinateTransform(width, height) {
+  return {
+    sourceDimensions: { width, height },
+    displayDimensions: { width, height },
+    sourceToDisplay: [1, 0, 0, 1, 0, 0],
+    displayToSource: [1, 0, 0, 1, 0, 0],
+    validSourceRect: { left: 0, top: 0, width, height },
+    validDisplayRect: { left: 0, top: 0, width, height },
+  }
+}
+
 test('prepareDicom accepts a file path and renders raw monochrome pixels', () => {
   const prepared = prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') })
   const rendered = prepared.renderFrame(0)
@@ -40,6 +51,7 @@ test('prepareDicom accepts a file path and renders raw monochrome pixels', () =>
   assert.match(rendered.dtype, /^u?int(8|16)$/)
   assert.equal(Buffer.isBuffer(rendered.data), true)
   assert.equal(rendered.data.length, frameByteLength(rendered))
+  assert.deepEqual(rendered.coordinateTransform, identityCoordinateTransform(rendered.width, rendered.height))
 })
 
 test('prepareDicom accepts bytes with parity against path input', () => {
@@ -51,6 +63,7 @@ test('prepareDicom accepts bytes with parity against path input', () => {
   assert.equal(fromBytes.height, fromPath.height)
   assert.equal(fromBytes.dtype, fromPath.dtype)
   assert.deepEqual(fromBytes.source, fromPath.source)
+  assert.deepEqual(fromBytes.coordinateTransform, fromPath.coordinateTransform)
   assert.deepEqual(fromBytes.data, fromPath.data)
 })
 
@@ -78,6 +91,7 @@ test('renderFrame returns RGB metadata for RGB DICOM input', () => {
   assert.equal(rendered.photometricInterpretation, 'RGB')
   assert.equal(rendered.dtype, 'uint8')
   assert.equal(rendered.data.length, rendered.width * rendered.height * rendered.samplesPerPixel)
+  assert.deepEqual(rendered.coordinateTransform, identityCoordinateTransform(rendered.width, rendered.height))
 })
 
 test('renderDisplayFrame matches raw rendering for stored display frames', () => {
@@ -123,6 +137,7 @@ test('renderDisplayFrame renders derived laplacian mip output', () => {
   assert.equal(rendered.windowCenter, undefined)
   assert.equal(rendered.windowWidth, undefined)
   assert.equal(rendered.data.length, frameByteLength(rendered))
+  assert.deepEqual(rendered.coordinateTransform, identityCoordinateTransform(rendered.width, rendered.height))
   assert.deepEqual(topLevelRendered, rendered)
 })
 
@@ -136,6 +151,7 @@ test('renderDisplayFrame has path and byte parity for derived frames', () => {
   assert.equal(fromBytes.height, fromPath.height)
   assert.equal(fromBytes.dtype, fromPath.dtype)
   assert.deepEqual(fromBytes.source, fromPath.source)
+  assert.deepEqual(fromBytes.coordinateTransform, fromPath.coordinateTransform)
   assert.deepEqual(fromBytes.data, fromPath.data)
 })
 

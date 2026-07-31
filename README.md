@@ -16,12 +16,14 @@ Run `make test-build` afterward to smoke-test the Rust binaries, install the Pyt
 
 Depending on the options used, the following transformations are applied to the DICOM image:
 
-1. **Cropping** - if the `--crop` option is used, the image or volume is cropped such that all-zero rows and columns are removed
+1. **DBT orientation correction** - original Breast Tomosynthesis Image Storage objects with standard mammography metadata are corrected independently along each axis when `PatientOrientation` is the exact inverse of the expected direction. Laterality and view may come from their top-level attributes or the standard enhanced-image functional-group and coded-view attributes; conflicting, incomplete, or unsupported values do not trigger a correction.
+2. **Cropping** - if the `--crop` option is used, the image or volume is cropped such that all-zero rows and columns are removed
 from the edges of the image.
-2. **Resizing** - the image is resized to the target size, preserving the aspect ratio.
-3. **Padding** - if the aspect ratio does not match the target size, the image is padded in the direction specified by the `--padding` option.
+3. **Resizing** - the image is resized to the target size, preserving the aspect ratio.
+4. **Padding** - if the aspect ratio does not match the target size, the image is padded in the direction specified by the `--padding` option.
 
 To enable mapping coordinates from the original image to the output image, the following TIFF tags will be set:
+- `PreprocessingFlip` - source dimensions and horizontal/vertical correction flags
 - `DefaultCropOrigin` - the origin of the initial cropping step as `(x, y)`
 - `DefaultCropSize` - the size of the initial cropping step as `(width, height)`
 - `DefaultScale` - the floating point scale of the resizing step as `(x, y)`
@@ -254,6 +256,9 @@ fn main() -> Result<(), dicom_preprocessing::DicomError> {
 
 `StoredFrame` entries are safe to use for frame-specific overlays such as GSPS, SR, or Parametric Map references.
 `Derived` entries identify synthesized outputs such as interpolation, MIP, or Laplacian MIP where exact stored-frame overlays should not be drawn directly.
+`ViewerDicom::display_orientation_flip` reports the in-plane correction used by display rendering without decoding another frame. Raw stored-frame decoding remains unmodified.
+
+Rust callers that run the full preprocessing path can construct `CoordinateTransform` from `PreprocessingMetadata`. The transform composes flip, crop, resize, and padding, reports valid source and display rectangles, and provides forward and inverse Canvas-style affine matrices.
 
 ### Python Bindings
 
@@ -326,11 +331,17 @@ import { prepareDicom, renderDisplayFrame, renderFrame } from '@medcognetics/dic
 const prepared = prepareDicom({ path: '/path/to/image.dcm' })
 const raw = renderFrame(prepared, 0)
 const display = renderDisplayFrame(prepared, 0)
-console.log(display.width, display.height, display.dtype, display.source)
+const [a, b, c, d, e, f] = display.coordinateTransform.sourceToDisplay
+const sourceX = 10
+const sourceY = 20
+const displayX = a * sourceX + c * sourceY + e
+const displayY = b * sourceX + d * sourceY + f
+console.log(display.width, display.height, displayX, displayY)
 ```
 
-`renderFrame` returns raw stored-frame bytes and rejects derived display frames because they have no exact stored-frame source.
-`renderDisplayFrame` returns the display-frame pixels, including derived volume-handler outputs such as `laplacian-mip`.
+`renderFrame` returns raw stored-frame bytes with an identity coordinate transform and rejects derived display frames because they have no exact stored-frame source.
+`renderDisplayFrame` returns the display-frame pixels and their applied coordinate transform, including DBT orientation corrections and derived volume-handler outputs such as `laplacian-mip`.
+The six-element matrices use Canvas order `[a, b, c, d, e, f]`, where `x' = a*x + c*y + e` and `y' = b*x + d*y + f`. Integer coordinates identify pixel centers. Valid rectangles are half-open and use pixel-edge coordinates.
 Frame data is returned as a Node `Buffer`. NAPI-RS can transfer Rust-owned buffers without copying in standard Node runtimes, but Electron may copy buffers because of V8 memory-cage constraints.
 
 

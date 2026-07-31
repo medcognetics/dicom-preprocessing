@@ -3,8 +3,8 @@ use std::io::Cursor;
 use dicom::object::from_reader;
 use dicom::pixeldata::ConvertOptions;
 use dicom_preprocessing::{
-    metadata::pixel_spacing_mm, DicomError, FrameOrderStrategy, ViewerDicom, VolumeFrameSource,
-    VolumeHandler,
+    metadata::pixel_spacing_mm, CoordinateTransform, DicomError, Flip, FrameOrderStrategy,
+    PixelDimensions, PixelRect, ViewerDicom, VolumeFrameSource, VolumeHandler,
 };
 use napi::bindgen_prelude::{Buffer, Object, Uint8Array, Unknown};
 use napi::{Error, JsValue, ValueType};
@@ -36,9 +36,39 @@ pub struct NodeFramePlan {
 }
 
 #[napi(object)]
+#[derive(Clone)]
+pub struct NodePixelDimensions {
+    pub width: u32,
+    pub height: u32,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NodePixelRect {
+    pub left: u32,
+    pub top: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[napi(object)]
+#[derive(Clone)]
+pub struct NodeCoordinateTransform {
+    pub source_dimensions: NodePixelDimensions,
+    pub display_dimensions: NodePixelDimensions,
+    #[napi(ts_type = "[number, number, number, number, number, number]")]
+    pub source_to_display: Vec<f64>,
+    #[napi(ts_type = "[number, number, number, number, number, number]")]
+    pub display_to_source: Vec<f64>,
+    pub valid_source_rect: NodePixelRect,
+    pub valid_display_rect: NodePixelRect,
+}
+
+#[napi(object)]
 pub struct NodeRenderedFrame {
     pub display_frame_index: u32,
     pub source: NodeFrameSource,
+    pub coordinate_transform: NodeCoordinateTransform,
     pub data: Buffer,
     pub width: u32,
     pub height: u32,
@@ -146,11 +176,25 @@ fn render_raw_prepared_frame(
         .viewer
         .decode_raw_display_frame(frame_index as usize)
         .map_err(map_dicom_render_error)?;
+    let coordinate_transform = CoordinateTransform::identity(raw.width, raw.height)
+        .map_err(map_coordinate_transform_error)?;
+
+    node_rendered_raw_frame(prepared, frame_index, source, raw, coordinate_transform)
+}
+
+fn node_rendered_raw_frame(
+    prepared: &PreparedDicom,
+    frame_index: u32,
+    source: VolumeFrameSource,
+    raw: dicom_preprocessing::DecodedStoredFrame,
+    coordinate_transform: CoordinateTransform,
+) -> std::result::Result<NodeRenderedFrame, Error<String>> {
     let dtype = dtype_for_frame(raw.bits_allocated, raw.pixel_representation_signed)?;
 
     Ok(NodeRenderedFrame {
         display_frame_index: frame_index,
         source: node_frame_source(source),
+        coordinate_transform: node_coordinate_transform(coordinate_transform),
         data: raw.data.into(),
         width: raw.width,
         height: raw.height,
@@ -171,9 +215,39 @@ fn render_prepared_display_frame(
 ) -> std::result::Result<NodeRenderedFrame, Error<String>> {
     let source = display_frame_source(prepared, frame_index)?;
     match source {
-        VolumeFrameSource::StoredFrame { .. } => render_raw_prepared_frame(prepared, frame_index),
+        VolumeFrameSource::StoredFrame { .. } => {
+            render_stored_display_frame(prepared, frame_index, source)
+        }
         VolumeFrameSource::Derived => render_derived_display_frame(prepared, frame_index, source),
     }
+}
+
+fn render_stored_display_frame(
+    prepared: &PreparedDicom,
+    frame_index: u32,
+    source: VolumeFrameSource,
+) -> std::result::Result<NodeRenderedFrame, Error<String>> {
+    let mut raw = prepared
+        .viewer
+        .decode_raw_display_frame(frame_index as usize)
+        .map_err(map_dicom_render_error)?;
+    let flip = prepared
+        .viewer
+        .display_orientation_flip(raw.width, raw.height);
+    if let Some(flip) = flip {
+        raw.data = flip_frame_data(
+            raw.data,
+            raw.width,
+            raw.height,
+            raw.samples_per_pixel,
+            raw.bits_allocated,
+            flip,
+        )?;
+    }
+    let coordinate_transform =
+        CoordinateTransform::from_flip(PixelDimensions::new(raw.width, raw.height), flip)
+            .map_err(map_coordinate_transform_error)?;
+    node_rendered_raw_frame(prepared, frame_index, source, raw, coordinate_transform)
 }
 
 fn render_derived_display_frame(
@@ -187,6 +261,11 @@ fn render_derived_display_frame(
         .map_err(map_dicom_render_error)?;
     let width = image.width();
     let height = image.height();
+    let coordinate_transform = CoordinateTransform::from_flip(
+        PixelDimensions::new(width, height),
+        prepared.viewer.display_orientation_flip(width, height),
+    )
+    .map_err(map_coordinate_transform_error)?;
     let color = image.color();
     let (data, dtype, samples_per_pixel, photometric_interpretation) =
         match (color.channel_count(), color.bits_per_pixel()) {
@@ -222,6 +301,7 @@ fn render_derived_display_frame(
     Ok(NodeRenderedFrame {
         display_frame_index: frame_index,
         source: node_frame_source(source),
+        coordinate_transform: node_coordinate_transform(coordinate_transform),
         data: data.into(),
         width,
         height,
@@ -234,6 +314,89 @@ fn render_derived_display_frame(
         window_center: None,
         window_width: None,
     })
+}
+
+fn flip_frame_data(
+    data: Vec<u8>,
+    width: u32,
+    height: u32,
+    samples_per_pixel: u16,
+    bits_allocated: u16,
+    flip: Flip,
+) -> std::result::Result<Vec<u8>, Error<String>> {
+    const BITS_PER_BYTE: u16 = 8;
+    if !bits_allocated.is_multiple_of(BITS_PER_BYTE) {
+        return Err(js_error(
+            CODE_UNSUPPORTED_IMAGE_LAYOUT,
+            format!("cannot flip pixels with BitsAllocated={bits_allocated}"),
+        ));
+    }
+    let bytes_per_pixel = usize::from(samples_per_pixel)
+        .checked_mul(usize::from(bits_allocated / BITS_PER_BYTE))
+        .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "pixel stride overflow"))?;
+    let width = width as usize;
+    let height = height as usize;
+    let expected_len = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(bytes_per_pixel))
+        .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "frame size overflow"))?;
+    if data.len() != expected_len {
+        return Err(js_error(
+            CODE_UNSUPPORTED_IMAGE_LAYOUT,
+            format!(
+                "decoded frame length {} does not match expected length {expected_len}",
+                data.len()
+            ),
+        ));
+    }
+
+    let mut output = vec![0_u8; data.len()];
+    for output_y in 0..height {
+        let input_y = if flip.vertical {
+            height - 1 - output_y
+        } else {
+            output_y
+        };
+        for output_x in 0..width {
+            let input_x = if flip.horizontal {
+                width - 1 - output_x
+            } else {
+                output_x
+            };
+            let input_offset = (input_y * width + input_x) * bytes_per_pixel;
+            let output_offset = (output_y * width + output_x) * bytes_per_pixel;
+            output[output_offset..output_offset + bytes_per_pixel]
+                .copy_from_slice(&data[input_offset..input_offset + bytes_per_pixel]);
+        }
+    }
+    Ok(output)
+}
+
+fn node_coordinate_transform(transform: CoordinateTransform) -> NodeCoordinateTransform {
+    NodeCoordinateTransform {
+        source_dimensions: node_pixel_dimensions(transform.source_dimensions),
+        display_dimensions: node_pixel_dimensions(transform.display_dimensions),
+        source_to_display: transform.source_to_display.to_vec(),
+        display_to_source: transform.display_to_source.to_vec(),
+        valid_source_rect: node_pixel_rect(transform.valid_source_rect),
+        valid_display_rect: node_pixel_rect(transform.valid_display_rect),
+    }
+}
+
+fn node_pixel_dimensions(dimensions: PixelDimensions) -> NodePixelDimensions {
+    NodePixelDimensions {
+        width: dimensions.width,
+        height: dimensions.height,
+    }
+}
+
+fn node_pixel_rect(rect: PixelRect) -> NodePixelRect {
+    NodePixelRect {
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+    }
 }
 
 fn node_pixel_spacing(viewer: &ViewerDicom) -> Option<Vec<f64>> {
@@ -493,6 +656,10 @@ fn map_napi_invalid_input(error: napi::Error) -> Error<String> {
     js_error(CODE_INVALID_INPUT, error.reason)
 }
 
+fn map_coordinate_transform_error(error: impl std::fmt::Display) -> Error<String> {
+    js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, error.to_string())
+}
+
 fn js_error(code: impl Into<String>, message: impl Into<String>) -> Error<String> {
     Error::new(code.into(), message.into())
 }
@@ -500,7 +667,37 @@ fn js_error(code: impl Into<String>, message: impl Into<String>) -> Error<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
+    use dicom::dictionary_std::{tags, uids};
     use dicom::object::open_file;
+    use dicom::object::{FileDicomObject, InMemDicomObject};
+
+    const MULTI_FRAME_FIXTURE: &str = "pydicom/emri_small.dcm";
+
+    fn put_str_element(
+        dicom: &mut FileDicomObject<InMemDicomObject>,
+        tag: Tag,
+        vr: VR,
+        value: &str,
+    ) {
+        dicom.put_element(DataElement::new(tag, vr, PrimitiveValue::from(value)));
+    }
+
+    fn horizontal_only_dbt_volume() -> FileDicomObject<InMemDicomObject> {
+        let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_FIXTURE).unwrap()).unwrap();
+        dicom.meta_mut().media_storage_sop_class_uid =
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE.to_string();
+        put_str_element(
+            &mut dicom,
+            tags::SOP_CLASS_UID,
+            VR::UI,
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
+        );
+        put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, "R");
+        put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, "CC");
+        put_str_element(&mut dicom, tags::PATIENT_ORIENTATION, VR::CS, "P\\L");
+        dicom
+    }
 
     #[test]
     fn dtype_maps_supported_native_frames() {
@@ -536,6 +733,77 @@ mod tests {
         assert_eq!(node_plan.display_frames.len(), 1);
         assert_eq!(node_plan.stored_frame_order, vec![0]);
         assert_eq!(node_plan.frame_order_strategy, "raw-preserved");
+    }
+
+    #[test]
+    fn frame_data_flip_preserves_pixel_bytes_for_each_axis() {
+        const WIDTH: u32 = 3;
+        const HEIGHT: u32 = 2;
+        let source = vec![1, 2, 3, 4, 5, 6];
+        for (flip, expected) in [
+            (
+                Flip::new(WIDTH, HEIGHT, true, false),
+                vec![3, 2, 1, 6, 5, 4],
+            ),
+            (
+                Flip::new(WIDTH, HEIGHT, false, true),
+                vec![4, 5, 6, 1, 2, 3],
+            ),
+            (Flip::new(WIDTH, HEIGHT, true, true), vec![6, 5, 4, 3, 2, 1]),
+        ] {
+            assert_eq!(
+                flip_frame_data(source.clone(), WIDTH, HEIGHT, 1, 8, flip).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn stored_display_frame_returns_applied_horizontal_transform() {
+        let viewer =
+            ViewerDicom::from_object(horizontal_only_dbt_volume(), VolumeHandler::keep()).unwrap();
+        let frame_plan = node_frame_plan(viewer.frame_plan());
+        let prepared = PreparedDicom { viewer, frame_plan };
+        let raw = render_raw_prepared_frame(&prepared, 0).unwrap();
+        let source = display_frame_source(&prepared, 0).unwrap();
+        let display = render_stored_display_frame(&prepared, 0, source).unwrap();
+        let bytes_per_pixel = usize::try_from(raw.samples_per_pixel).unwrap()
+            * if raw.dtype.ends_with('8') { 1 } else { 2 };
+        let last_pixel_offset = (usize::try_from(raw.width).unwrap() - 1) * bytes_per_pixel;
+
+        assert_eq!(
+            display.coordinate_transform.source_to_display,
+            vec![-1.0, 0.0, 0.0, 1.0, f64::from(raw.width - 1), 0.0]
+        );
+        assert_eq!(
+            &display.data[..bytes_per_pixel],
+            &raw.data[last_pixel_offset..last_pixel_offset + bytes_per_pixel]
+        );
+        assert_eq!(
+            raw.coordinate_transform.source_to_display,
+            vec![1.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+        );
+    }
+
+    #[test]
+    fn derived_display_frame_returns_applied_horizontal_transform() {
+        let viewer = ViewerDicom::from_object(
+            horizontal_only_dbt_volume(),
+            VolumeHandler::laplacian_mip(0, 0),
+        )
+        .unwrap();
+        let frame_plan = node_frame_plan(viewer.frame_plan());
+        let prepared = PreparedDicom { viewer, frame_plan };
+        let source = display_frame_source(&prepared, 0).unwrap();
+
+        let display = render_derived_display_frame(&prepared, 0, source).unwrap();
+
+        assert_eq!(
+            display.coordinate_transform.source_to_display,
+            vec![-1.0, 0.0, 0.0, 1.0, f64::from(display.width - 1), 0.0]
+        );
+        assert_eq!(display.coordinate_transform.valid_source_rect.left, 0);
+        assert_eq!(display.coordinate_transform.valid_display_rect.left, 0);
     }
 
     #[test]

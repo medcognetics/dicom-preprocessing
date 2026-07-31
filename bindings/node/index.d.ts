@@ -29,6 +29,35 @@ export interface FramePlan {
   zSpacingMm?: number
 }
 
+/** Canvas-style affine matrix `[a, b, c, d, e, f]`. */
+export type AffineMatrix2D = [number, number, number, number, number, number]
+
+export interface PixelDimensions {
+  width: number
+  height: number
+}
+
+/** Half-open rectangle in pixel-edge coordinates. */
+export interface PixelRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * Maps between source-DICOM and rendered pixel coordinates.
+ * Integer coordinates identify pixel centers.
+ */
+export interface CoordinateTransform {
+  sourceDimensions: PixelDimensions
+  displayDimensions: PixelDimensions
+  sourceToDisplay: AffineMatrix2D
+  displayToSource: AffineMatrix2D
+  validSourceRect: PixelRect
+  validDisplayRect: PixelRect
+}
+
 export interface FrameMetadata {
   width: number
   height: number
@@ -45,12 +74,22 @@ export interface FrameMetadata {
 export interface RenderedFrame extends FrameMetadata {
   displayFrameIndex: number
   source: FrameSource
+  coordinateTransform: CoordinateTransform
   data: Buffer
 }
 export declare class PreparedDicom {
   get framePlan(): FramePlan
   renderFrame(frameIndex: number): RenderedFrame
   renderDisplayFrame(frameIndex: number): RenderedFrame
+}
+
+export interface NodeCoordinateTransform {
+  sourceDimensions: NodePixelDimensions
+  displayDimensions: NodePixelDimensions
+  sourceToDisplay: [number, number, number, number, number, number]
+  displayToSource: [number, number, number, number, number, number]
+  validSourceRect: NodePixelRect
+  validDisplayRect: NodePixelRect
 }
 
 export interface NodeFramePlan {
@@ -65,9 +104,22 @@ export interface NodeFrameSource {
   storedFrameIndex?: number
 }
 
+export interface NodePixelDimensions {
+  width: number
+  height: number
+}
+
+export interface NodePixelRect {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
 export interface NodeRenderedFrame {
   displayFrameIndex: number
   source: NodeFrameSource
+  coordinateTransform: NodeCoordinateTransform
   data: Buffer
   width: number
   height: number

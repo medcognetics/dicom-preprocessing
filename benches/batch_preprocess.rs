@@ -1,6 +1,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput};
 use dicom::object::{open_file, FileDicomObject, InMemDicomObject};
-use dicom_preprocessing::{FilterType, KeepVolume, PaddingDirection, Preprocessor, VolumeHandler};
+use dicom_preprocessing::{
+    FilterType, FlipOptions, KeepVolume, PaddingDirection, Preprocessor, VolumeHandler,
+};
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -27,6 +29,7 @@ fn preprocessor(with_transforms: bool) -> Preprocessor {
         border_frac: None,
         target_frames: 32,
         convert_options: Default::default(),
+        flip: FlipOptions::default(),
     }
 }
 

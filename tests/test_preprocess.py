@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
+import pydicom
 import pytest
 from pydicom.data import get_testdata_file
 
@@ -667,6 +668,9 @@ def test_metadata_classes_exist():
     assert hasattr(dp, "Resize")
     assert hasattr(dp, "Padding")
     assert hasattr(dp, "Resolution")
+    assert hasattr(dp, "PixelDimensions")
+    assert hasattr(dp, "PixelRect")
+    assert hasattr(dp, "CoordinateTransform")
     assert hasattr(dp, "PreprocessingMetadata")
 
 
@@ -683,6 +687,129 @@ def test_preprocess_with_metadata_basic(dicom_path):
     assert isinstance(metadata, dp.PreprocessingMetadata)
     assert metadata.num_frames == 1
     assert metadata.crop is not None or metadata.resize is not None or metadata.padding is not None
+    assert isinstance(metadata.coordinate_transform, dp.CoordinateTransform)
+    assert metadata.coordinate_transform.display_dimensions.width == result.shape[2]
+    assert metadata.coordinate_transform.display_dimensions.height == result.shape[1]
+
+
+@pytest.mark.parametrize(
+    "flip_horizontal,flip_vertical",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_explicit_flips_update_pixels_metadata_and_affine(dicom_path, flip_horizontal, flip_vertical):
+    baseline_preprocessor = dp.Preprocessor(crop=False, use_padding=False)
+    baseline = dp.preprocess_f32(dicom_path, baseline_preprocessor, parallel=False)
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        use_padding=False,
+        flip_horizontal=flip_horizontal,
+        flip_vertical=flip_vertical,
+    )
+
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+
+    expected = baseline
+    if flip_horizontal:
+        expected = np.flip(expected, axis=2)
+    if flip_vertical:
+        expected = np.flip(expected, axis=1)
+    assert np.array_equal(result, expected)
+    if flip_horizontal or flip_vertical:
+        assert metadata.flip is not None
+        assert metadata.flip.horizontal is flip_horizontal
+        assert metadata.flip.vertical is flip_vertical
+    else:
+        assert metadata.flip is None
+
+    transform = metadata.coordinate_transform
+    width = transform.source_dimensions.width
+    height = transform.source_dimensions.height
+    assert transform.source_to_display == [
+        -1.0 if flip_horizontal else 1.0,
+        0.0,
+        0.0,
+        -1.0 if flip_vertical else 1.0,
+        float(width - 1) if flip_horizontal else 0.0,
+        float(height - 1) if flip_vertical else 0.0,
+    ]
+    display_point = transform.map_source_to_display(0.0, 0.0)
+    assert transform.map_display_to_source(*display_point) == pytest.approx((0.0, 0.0))
+
+
+def test_coordinate_transform_composes_flip_crop_resize_and_padding(dicom_path):
+    preprocessor = dp.Preprocessor(
+        crop=True,
+        size=(101, 37),
+        use_padding=True,
+        padding_direction="center",
+        flip_horizontal=True,
+        flip_vertical=True,
+    )
+
+    result, metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    transform = metadata.coordinate_transform
+
+    assert metadata.flip is not None
+    assert metadata.crop is not None
+    assert metadata.resize is not None
+    assert metadata.padding is not None
+    assert transform.display_dimensions.width == result.shape[2]
+    assert transform.display_dimensions.height == result.shape[1]
+    assert transform.valid_display_rect.left == metadata.padding.left
+    assert transform.valid_display_rect.top == metadata.padding.top
+    assert transform.valid_display_rect.width == (result.shape[2] - metadata.padding.left - metadata.padding.right)
+    assert transform.valid_display_rect.height == (result.shape[1] - metadata.padding.top - metadata.padding.bottom)
+
+    source = transform.valid_source_rect
+    source_point = (float(source.left), float(source.top))
+    display_point = transform.map_source_to_display(*source_point)
+    assert transform.map_display_to_source(*display_point) == pytest.approx(source_point)
+
+    width = transform.source_dimensions.width
+    height = transform.source_dimensions.height
+    x = float(width - 1) - source_point[0]
+    y = float(height - 1) - source_point[1]
+    x -= metadata.crop.left
+    y -= metadata.crop.top
+    scale_x = transform.valid_display_rect.width / metadata.crop.width
+    scale_y = transform.valid_display_rect.height / metadata.crop.height
+    x = (x + 0.5) * scale_x - 0.5 + metadata.padding.left
+    y = (y + 0.5) * scale_y - 0.5 + metadata.padding.top
+    assert display_point == pytest.approx((x, y))
+
+
+def test_explicit_flip_and_transform_match_across_python_input_apis(dicom_path, dicom_stream):
+    preprocessor = dp.Preprocessor(
+        crop=False,
+        use_padding=False,
+        flip_horizontal=True,
+    )
+    path_result, path_metadata = dp.preprocess_f32_with_metadata(dicom_path, preprocessor, parallel=False)
+    stream_result, stream_metadata = dp.preprocess_stream_f32_with_metadata(dicom_stream, preprocessor, parallel=False)
+    slice_results, slice_metadata = dp.preprocess_f32_slices_with_metadata([dicom_path], preprocessor, parallel=False)
+    stream_slice_results, stream_slice_metadata = dp.preprocess_stream_f32_slices_with_metadata(
+        [dicom_stream], preprocessor, parallel=False
+    )
+
+    for result in [stream_result, slice_results[0], stream_slice_results[0]]:
+        assert np.array_equal(result, path_result)
+    for metadata in [stream_metadata, slice_metadata, stream_slice_metadata]:
+        assert metadata.coordinate_transform.source_to_display == path_metadata.coordinate_transform.source_to_display
+        assert metadata.coordinate_transform.display_to_source == path_metadata.coordinate_transform.display_to_source
+
+
+def test_slice_metadata_requires_a_common_source_grid(multiple_dicom_paths, tmp_path):
+    mismatched_path = tmp_path / "mismatched.dcm"
+    mismatched = pydicom.dcmread(multiple_dicom_paths[1])
+    mismatched.Rows += 1
+    mismatched.save_as(mismatched_path)
+
+    with pytest.raises(RuntimeError, match="expected .* for a shared coordinate transform"):
+        dp.preprocess_f32_slices_with_metadata(
+            [multiple_dicom_paths[0], mismatched_path],
+            dp.Preprocessor(crop=False),
+            parallel=False,
+        )
 
 
 def test_preprocess_with_metadata_crop(dicom_path):

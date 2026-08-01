@@ -13,12 +13,31 @@ use crate::preprocess::Preprocessor;
 use crate::transform::volume::{
     DecodedStoredFrame, PreparedVolume, VolumeFramePlan, VolumeFrameSource, VolumeHandler,
 };
-use crate::transform::{inverse_standard_dbt_flip, Transform};
+use crate::transform::{Flip, FlipOptions, Transform};
+
+/// Configuration for display-frame rendering.
+#[derive(Debug, Clone, Default)]
+pub struct ViewerOptions {
+    /// Projection or frame-selection behavior for the display frame plan.
+    pub volume_handler: VolumeHandler,
+    /// Caller-selected flip axes for display rendering.
+    pub flip: FlipOptions,
+}
+
+impl ViewerOptions {
+    pub const fn new(volume_handler: VolumeHandler, flip: FlipOptions) -> Self {
+        Self {
+            volume_handler,
+            flip,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct ViewerDicom {
     file: FileDicomObject<InMemDicomObject>,
     volume_handler: VolumeHandler,
+    flip: FlipOptions,
     frame_plan: VolumeFramePlan,
 }
 
@@ -27,27 +46,48 @@ impl ViewerDicom {
         path: P,
         volume_handler: VolumeHandler,
     ) -> Result<Self, DicomError> {
+        Self::open_with_options(
+            path,
+            ViewerOptions::new(volume_handler, FlipOptions::default()),
+        )
+    }
+
+    pub fn open_with_options<P: AsRef<Path>>(
+        path: P,
+        options: ViewerOptions,
+    ) -> Result<Self, DicomError> {
         let mut file = open_file(path.as_ref()).context(ReadSnafu)?;
         Preprocessor::sanitize_dicom(&mut file);
-        Self::from_sanitized_object(file, volume_handler)
+        Self::from_sanitized_object(file, options)
     }
 
     pub fn from_object(
-        mut file: FileDicomObject<InMemDicomObject>,
+        file: FileDicomObject<InMemDicomObject>,
         volume_handler: VolumeHandler,
     ) -> Result<Self, DicomError> {
+        Self::from_object_with_options(
+            file,
+            ViewerOptions::new(volume_handler, FlipOptions::default()),
+        )
+    }
+
+    pub fn from_object_with_options(
+        mut file: FileDicomObject<InMemDicomObject>,
+        options: ViewerOptions,
+    ) -> Result<Self, DicomError> {
         Preprocessor::sanitize_dicom(&mut file);
-        Self::from_sanitized_object(file, volume_handler)
+        Self::from_sanitized_object(file, options)
     }
 
     fn from_sanitized_object(
         file: FileDicomObject<InMemDicomObject>,
-        volume_handler: VolumeHandler,
+        options: ViewerOptions,
     ) -> Result<Self, DicomError> {
-        let frame_plan = volume_handler.frame_plan(&file)?;
+        let frame_plan = options.volume_handler.frame_plan(&file)?;
         Ok(Self {
             file,
-            volume_handler,
+            volume_handler: options.volume_handler,
+            flip: options.flip,
             frame_plan,
         })
     }
@@ -64,13 +104,29 @@ impl ViewerDicom {
         &self.frame_plan
     }
 
+    pub fn flip_options(&self) -> FlipOptions {
+        self.flip
+    }
+
+    /// Return the caller-selected in-plane flip applied by display rendering.
+    pub fn display_flip(&self, width: u32, height: u32) -> Option<Flip> {
+        self.flip.for_dimensions(width, height)
+    }
+
     pub fn prepare_volume_with_options(
         &self,
         options: &ConvertOptions,
         parallel: bool,
     ) -> Result<PreparedVolume, DicomError> {
-        self.volume_handler
-            .prepare_volume_with_options(&self.file, options, parallel)
+        let mut prepared = self
+            .volume_handler
+            .prepare_volume_with_options(&self.file, options, parallel)?;
+        if let Some(frame) = prepared.images.first() {
+            if let Some(flip) = self.display_flip(frame.width(), frame.height()) {
+                prepared.images = flip.apply_iter(prepared.images.into_iter()).collect();
+            }
+        }
+        Ok(prepared)
     }
 
     pub fn decode_display_frame_with_options(
@@ -110,7 +166,7 @@ impl ViewerDicom {
             .context(PixelDataSnafu)?
             .to_dynamic_image_with_options(0, options)
             .context(PixelDataSnafu)?;
-        if let Some(flip) = inverse_standard_dbt_flip(&self.file, std::slice::from_ref(&image)) {
+        if let Some(flip) = self.display_flip(image.width(), image.height()) {
             return Ok(flip.apply(&image));
         }
         Ok(image)
@@ -200,5 +256,29 @@ mod tests {
             .unwrap();
 
         assert_eq!(image.dimensions(), (raw.width, raw.height));
+    }
+
+    #[test]
+    fn viewer_applies_only_caller_selected_display_flips() {
+        let dicom = open_file(dicom_test_files::path(SINGLE_FRAME_FIXTURE).unwrap()).unwrap();
+        let baseline = ViewerDicom::from_object(dicom.clone(), VolumeHandler::keep())
+            .unwrap()
+            .decode_display_frame_with_options(0, &ConvertOptions::default())
+            .unwrap();
+        let viewer = ViewerDicom::from_object_with_options(
+            dicom,
+            ViewerOptions::new(VolumeHandler::keep(), FlipOptions::new(true, false)),
+        )
+        .unwrap();
+
+        let displayed = viewer
+            .decode_display_frame_with_options(0, &ConvertOptions::default())
+            .unwrap();
+
+        assert_eq!(displayed, baseline.fliph());
+        assert_eq!(
+            viewer.display_flip(displayed.width(), displayed.height()),
+            Some(Flip::horizontal_from_image(&displayed))
+        );
     }
 }

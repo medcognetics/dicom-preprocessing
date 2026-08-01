@@ -251,7 +251,7 @@ mod tests {
     use crate::preprocess::Preprocessor;
     use crate::save::TiffSaver;
     use crate::transform::resize::FilterType;
-    use crate::transform::PaddingDirection;
+    use crate::transform::{FlipOptions, PaddingDirection};
     use crate::volume::{KeepVolume, VolumeHandler};
     use image::DynamicImage;
     use image::ImageBuffer;
@@ -300,6 +300,7 @@ mod tests {
             border_frac: None,
             target_frames: 1,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();
@@ -425,6 +426,7 @@ mod tests {
             border_frac: None,
             target_frames: 1,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let dicom_file_path = "pydicom/emri_small.dcm";
@@ -489,6 +491,7 @@ mod tests {
             border_frac: None,
             target_frames: 1,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let dicom_file = open_file(dicom_test_files::path(dicom_file_path).unwrap()).unwrap();

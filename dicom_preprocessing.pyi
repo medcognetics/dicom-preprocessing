@@ -64,6 +64,37 @@ class Flip:
     horizontal: bool
     vertical: bool
 
+class PixelDimensions:
+    """Two-dimensional pixel dimensions."""
+
+    width: int
+    height: int
+
+class PixelRect:
+    """Half-open rectangle in pixel-edge coordinates."""
+
+    left: int
+    top: int
+    width: int
+    height: int
+
+class CoordinateTransform:
+    """Maps source-DICOM and preprocessed pixel-center coordinates.
+
+    Matrices use Canvas order ``[a, b, c, d, e, f]``. Integer coordinates
+    identify pixel centers, resize is center-aligned, and rectangles are half-open.
+    """
+
+    source_dimensions: PixelDimensions
+    display_dimensions: PixelDimensions
+    source_to_display: List[float]
+    display_to_source: List[float]
+    valid_source_rect: PixelRect
+    valid_display_rect: PixelRect
+
+    def map_source_to_display(self, x: float, y: float) -> Tuple[float, float]: ...
+    def map_display_to_source(self, x: float, y: float) -> Tuple[float, float]: ...
+
 class Resolution:
     """Image resolution metadata.
 
@@ -89,6 +120,7 @@ class PreprocessingMetadata:
         padding: Padding transformation, if applied
         resolution: Image resolution, if available
         num_frames: Number of frames in the output
+        coordinate_transform: Affine mapping for the pixels returned by the preprocessing call.
     """
 
     flip: Optional[Flip]
@@ -97,6 +129,7 @@ class PreprocessingMetadata:
     padding: Optional[Padding]
     resolution: Optional[Resolution]
     num_frames: int
+    coordinate_transform: CoordinateTransform
 
 class VolumeHandler:
     """Typed configuration for Rust volume handlers."""
@@ -144,6 +177,8 @@ class Preprocessor:
             Note: If z-spacing is provided in `spacing` parameter, it takes precedence over `target_frames`.
         convert_options: How to handle pixel data. One of: default, normalize.
             Can also be a comma-separated string of window center and width, e.g. "100,100"
+        flip_horizontal: Whether to reverse the x axis before crop, resize, and padding.
+        flip_vertical: Whether to reverse the y axis before crop, resize, and padding.
 
     Raises:
         ValueError: If invalid filter type, padding direction or volume handler specified
@@ -175,6 +210,8 @@ class Preprocessor:
         border_frac: Optional[float] = None,
         target_frames: int = 32,
         convert_options: str = "default",
+        flip_horizontal: bool = False,
+        flip_vertical: bool = False,
     ) -> None: ...
 
 def validate_dicom(path: Union[str, Path], decode: Literal["frame", "none"] = "frame") -> Dict[str, Any]:

@@ -28,6 +28,45 @@ function frameByteLength(rendered) {
   return rendered.width * rendered.height * rendered.samplesPerPixel * bytesPerSample
 }
 
+function identityCoordinateTransform(width, height) {
+  return {
+    sourceDimensions: { width, height },
+    displayDimensions: { width, height },
+    sourceToDisplay: [1, 0, 0, 1, 0, 0],
+    displayToSource: [1, 0, 0, 1, 0, 0],
+    validSourceRect: { left: 0, top: 0, width, height },
+    validDisplayRect: { left: 0, top: 0, width, height },
+  }
+}
+
+function flipCoordinateTransform(width, height, horizontal, vertical) {
+  const matrix = [horizontal ? -1 : 1, 0, 0, vertical ? -1 : 1, horizontal ? width - 1 : 0, vertical ? height - 1 : 0]
+  return {
+    sourceDimensions: { width, height },
+    displayDimensions: { width, height },
+    sourceToDisplay: matrix,
+    displayToSource: matrix,
+    validSourceRect: { left: 0, top: 0, width, height },
+    validDisplayRect: { left: 0, top: 0, width, height },
+  }
+}
+
+function flipFrameData(rendered, horizontal, vertical) {
+  const bytesPerSample = rendered.dtype.endsWith('8') ? 1 : 2
+  const bytesPerPixel = bytesPerSample * rendered.samplesPerPixel
+  const output = Buffer.alloc(rendered.data.length)
+  for (let y = 0; y < rendered.height; y += 1) {
+    for (let x = 0; x < rendered.width; x += 1) {
+      const sourceX = horizontal ? rendered.width - 1 - x : x
+      const sourceY = vertical ? rendered.height - 1 - y : y
+      const sourceOffset = (sourceY * rendered.width + sourceX) * bytesPerPixel
+      const outputOffset = (y * rendered.width + x) * bytesPerPixel
+      rendered.data.copy(output, outputOffset, sourceOffset, sourceOffset + bytesPerPixel)
+    }
+  }
+  return output
+}
+
 test('prepareDicom accepts a file path and renders raw monochrome pixels', () => {
   const prepared = prepareDicom({ path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') })
   const rendered = prepared.renderFrame(0)
@@ -40,6 +79,7 @@ test('prepareDicom accepts a file path and renders raw monochrome pixels', () =>
   assert.match(rendered.dtype, /^u?int(8|16)$/)
   assert.equal(Buffer.isBuffer(rendered.data), true)
   assert.equal(rendered.data.length, frameByteLength(rendered))
+  assert.deepEqual(rendered.coordinateTransform, identityCoordinateTransform(rendered.width, rendered.height))
 })
 
 test('prepareDicom accepts bytes with parity against path input', () => {
@@ -51,6 +91,7 @@ test('prepareDicom accepts bytes with parity against path input', () => {
   assert.equal(fromBytes.height, fromPath.height)
   assert.equal(fromBytes.dtype, fromPath.dtype)
   assert.deepEqual(fromBytes.source, fromPath.source)
+  assert.deepEqual(fromBytes.coordinateTransform, fromPath.coordinateTransform)
   assert.deepEqual(fromBytes.data, fromPath.data)
 })
 
@@ -78,6 +119,7 @@ test('renderFrame returns RGB metadata for RGB DICOM input', () => {
   assert.equal(rendered.photometricInterpretation, 'RGB')
   assert.equal(rendered.dtype, 'uint8')
   assert.equal(rendered.data.length, rendered.width * rendered.height * rendered.samplesPerPixel)
+  assert.deepEqual(rendered.coordinateTransform, identityCoordinateTransform(rendered.width, rendered.height))
 })
 
 test('renderDisplayFrame matches raw rendering for stored display frames', () => {
@@ -89,6 +131,25 @@ test('renderDisplayFrame matches raw rendering for stored display frames', () =>
   assert.deepEqual(display, raw)
   assert.deepEqual(displayMethod, raw)
 })
+
+for (const [name, flipHorizontal, flipVertical] of [
+  ['horizontal', true, false],
+  ['vertical', false, true],
+  ['both-axis', true, true],
+]) {
+  test(`renderDisplayFrame applies an explicit ${name} flip`, () => {
+    const prepared = prepareDicom(
+      { path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') },
+      { flipHorizontal, flipVertical },
+    )
+    const raw = renderFrame(prepared, 0)
+    const display = renderDisplayFrame(prepared, 0)
+
+    assert.deepEqual(raw.coordinateTransform, identityCoordinateTransform(raw.width, raw.height))
+    assert.deepEqual(display.coordinateTransform, flipCoordinateTransform(raw.width, raw.height, flipHorizontal, flipVertical))
+    assert.deepEqual(display.data, flipFrameData(raw, flipHorizontal, flipVertical))
+  })
+}
 
 test('derived frame sources are exposed and raw rendering rejects them', () => {
   const prepared = prepareDicom(
@@ -123,12 +184,23 @@ test('renderDisplayFrame renders derived laplacian mip output', () => {
   assert.equal(rendered.windowCenter, undefined)
   assert.equal(rendered.windowWidth, undefined)
   assert.equal(rendered.data.length, frameByteLength(rendered))
+  assert.deepEqual(rendered.coordinateTransform, identityCoordinateTransform(rendered.width, rendered.height))
   assert.deepEqual(topLevelRendered, rendered)
 })
 
 test('renderDisplayFrame has path and byte parity for derived frames', () => {
   const path = requireFixture('DICOM_PREPROCESSING_MULTIFRAME_FIXTURE')
-  const options = { volumeHandler: { kind: 'laplacian-mip', skipStart: 0, skipEnd: 0 } }
+  const baseline = renderDisplayFrame(
+    prepareDicom(
+      { path },
+      { volumeHandler: { kind: 'laplacian-mip', skipStart: 0, skipEnd: 0 } },
+    ),
+    0,
+  )
+  const options = {
+    volumeHandler: { kind: 'laplacian-mip', skipStart: 0, skipEnd: 0 },
+    flipHorizontal: true,
+  }
   const fromPath = renderDisplayFrame(prepareDicom({ path }, options), 0)
   const fromBytes = renderDisplayFrame(prepareDicom({ bytes: readFileSync(path), filename: 'emri_small.dcm' }, options), 0)
 
@@ -136,7 +208,9 @@ test('renderDisplayFrame has path and byte parity for derived frames', () => {
   assert.equal(fromBytes.height, fromPath.height)
   assert.equal(fromBytes.dtype, fromPath.dtype)
   assert.deepEqual(fromBytes.source, fromPath.source)
+  assert.deepEqual(fromBytes.coordinateTransform, fromPath.coordinateTransform)
   assert.deepEqual(fromBytes.data, fromPath.data)
+  assert.deepEqual(fromPath.data, flipFrameData(baseline, true, false))
 })
 
 test('invalid frame index is structured', () => {
@@ -165,4 +239,10 @@ test('unreadable path and non-DICOM bytes are structured', () => {
       return true
     },
   )
+})
+
+test('flip options require booleans', () => {
+  const input = { path: requireFixture('DICOM_PREPROCESSING_CT_FIXTURE') }
+  assert.throws(() => prepareDicom(input, { flipHorizontal: 'yes' }), { code: 'INVALID_INPUT' })
+  assert.throws(() => prepareDicom(input, { flipVertical: 1 }), { code: 'INVALID_INPUT' })
 })

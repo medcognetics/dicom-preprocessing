@@ -16,12 +16,14 @@ Run `make test-build` afterward to smoke-test the Rust binaries, install the Pyt
 
 Depending on the options used, the following transformations are applied to the DICOM image:
 
-1. **Cropping** - if the `--crop` option is used, the image or volume is cropped such that all-zero rows and columns are removed
+1. **Optional flips** - `--flip-horizontal` and `--flip-vertical` reverse caller-selected axes after volume decoding or projection. Both default to off. DICOM metadata never selects a flip.
+2. **Cropping** - if the `--crop` option is used, the image or volume is cropped such that all-zero rows and columns are removed
 from the edges of the image.
-2. **Resizing** - the image is resized to the target size, preserving the aspect ratio.
-3. **Padding** - if the aspect ratio does not match the target size, the image is padded in the direction specified by the `--padding` option.
+3. **Resizing** - the image is resized to the target size, preserving the aspect ratio.
+4. **Padding** - if the aspect ratio does not match the target size, the image is padded in the direction specified by the `--padding` option.
 
 To enable mapping coordinates from the original image to the output image, the following TIFF tags will be set:
+- `PreprocessingFlip` - source dimensions and caller-selected horizontal/vertical flags
 - `DefaultCropOrigin` - the origin of the initial cropping step as `(x, y)`
 - `DefaultCropSize` - the size of the initial cropping step as `(width, height)`
 - `DefaultScale` - the floating point scale of the resizing step as `(x, y)`
@@ -46,8 +48,9 @@ flowchart TD
     E --> F
     F --> G["Decode"]
     G --> H["Volume handler"]
-    H --> I["Crop, resize, pad"]
-    I --> J["Write TIFF"]
+    H --> I["Caller-selected flips"]
+    I --> J["Crop, resize, pad"]
+    J --> K["Write TIFF"]
 ```
 
 
@@ -81,6 +84,10 @@ Options:
           Padding direction [default: zero] [possible values: zero, top-left, bottom-right, center]
       --no-padding
           Disable padding
+      --flip-horizontal
+          Reverse the horizontal pixel axis before crop, resize, and padding
+      --flip-vertical
+          Reverse the vertical pixel axis before crop, resize, and padding
   -z, --compressor <COMPRESSOR>
           Compression type [default: packbits] [possible values: packbits, lzw, uncompressed]
   -v, --volume-handler <VOLUME_HANDLER>
@@ -232,10 +239,13 @@ The viewer path uses the same frame ordering, volume handling, and DICOM sanitat
 Public methods that accept or return DICOM object or conversion types use dicom-rs 0.10, so downstream Rust crates should use a compatible `dicom` 0.10 dependency.
 
 ```rust
-use dicom_preprocessing::{ViewerDicom, VolumeFrameSource, VolumeHandler};
+use dicom_preprocessing::{FlipOptions, ViewerDicom, ViewerOptions, VolumeFrameSource, VolumeHandler};
 
 fn main() -> Result<(), dicom_preprocessing::DicomError> {
-    let viewer = ViewerDicom::open("/path/to/image.dcm", VolumeHandler::keep())?;
+    let viewer = ViewerDicom::open_with_options(
+        "/path/to/image.dcm",
+        ViewerOptions::new(VolumeHandler::keep(), FlipOptions::new(true, false)),
+    )?;
     for (display_index, source) in viewer.frame_plan().display_frames.iter().enumerate() {
         match source {
             VolumeFrameSource::StoredFrame { stored_frame_index } => {
@@ -254,6 +264,9 @@ fn main() -> Result<(), dicom_preprocessing::DicomError> {
 
 `StoredFrame` entries are safe to use for frame-specific overlays such as GSPS, SR, or Parametric Map references.
 `Derived` entries identify synthesized outputs such as interpolation, MIP, or Laplacian MIP where exact stored-frame overlays should not be drawn directly.
+`ViewerDicom::display_flip` reports the caller-selected in-plane flip used by display rendering without decoding another frame. Existing constructors default to no flip, and raw stored-frame decoding remains unmodified.
+
+Rust callers that run the full preprocessing path can construct `CoordinateTransform` from `PreprocessingMetadata`. The transform composes flip, crop, resize, and padding, reports valid source and display rectangles, and provides forward and inverse Canvas-style affine matrices.
 
 ### Python Bindings
 
@@ -278,8 +291,15 @@ handler = dp.VolumeHandler.laplacian_mip(
     mip_weight=1.5,
     projection_mode="parallel-beam",
 )
-preprocessor = dp.Preprocessor(crop=False, volume_handler=handler)
-projection = dp.preprocess_f32("/path/to/volume.dcm", preprocessor)
+preprocessor = dp.Preprocessor(
+    crop=False,
+    volume_handler=handler,
+    flip_horizontal=True,
+)
+projection, metadata = dp.preprocess_f32_with_metadata(
+    "/path/to/volume.dcm", preprocessor
+)
+display_x, display_y = metadata.coordinate_transform.map_source_to_display(10, 20)
 ```
 
 The validator API returns the same report schema as `dicom-validate --format json`.
@@ -323,14 +343,23 @@ Supported hosts are Linux x64 GNU, macOS arm64, and Windows x64 MSVC.
 ```ts
 import { prepareDicom, renderDisplayFrame, renderFrame } from '@medcognetics/dicom-preprocessing'
 
-const prepared = prepareDicom({ path: '/path/to/image.dcm' })
+const prepared = prepareDicom(
+  { path: '/path/to/image.dcm' },
+  { flipHorizontal: true, flipVertical: false },
+)
 const raw = renderFrame(prepared, 0)
 const display = renderDisplayFrame(prepared, 0)
-console.log(display.width, display.height, display.dtype, display.source)
+const [a, b, c, d, e, f] = display.coordinateTransform.sourceToDisplay
+const sourceX = 10
+const sourceY = 20
+const displayX = a * sourceX + c * sourceY + e
+const displayY = b * sourceX + d * sourceY + f
+console.log(display.width, display.height, displayX, displayY)
 ```
 
-`renderFrame` returns raw stored-frame bytes and rejects derived display frames because they have no exact stored-frame source.
-`renderDisplayFrame` returns the display-frame pixels, including derived volume-handler outputs such as `laplacian-mip`.
+`renderFrame` returns raw stored-frame bytes with an identity coordinate transform and rejects derived display frames because they have no exact stored-frame source.
+`renderDisplayFrame` returns display-frame pixels and the transform for caller-selected flips, including derived volume-handler outputs such as `laplacian-mip`. DICOM metadata does not select a flip.
+The six-element matrices use Canvas order `[a, b, c, d, e, f]`, where `x' = a*x + c*y + e` and `y' = b*x + d*y + f`. Integer coordinates identify pixel centers. Valid rectangles are half-open and use pixel-edge coordinates.
 Frame data is returned as a Node `Buffer`. NAPI-RS can transfer Rust-owned buffers without copying in standard Node runtimes, but Electron may copy buffers because of V8 memory-cage constraints.
 
 

@@ -1,6 +1,8 @@
 use crate::image_array::images_to_array;
 use crate::load::LoadFromTiff;
-use crate::metadata::{PreprocessingMetadata, Resolution};
+use crate::metadata::{
+    CoordinateTransform, PixelDimensions, PixelRect, PreprocessingMetadata, Resolution,
+};
 use crate::preprocess::Preprocessor;
 use crate::python::path::PyPath;
 use crate::transform::resize::FilterType;
@@ -8,8 +10,9 @@ use crate::transform::volume::{
     CentralSlice, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity, ProjectionMode,
     VolumeHandler,
 };
-use crate::transform::{Crop, Flip, Padding, PaddingDirection, Resize};
+use crate::transform::{Crop, Flip, FlipOptions, Padding, PaddingDirection, Resize};
 use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
+use dicom::dictionary_std::tags;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
 use dicom::pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
 use ndarray::Array4;
@@ -187,6 +190,8 @@ impl PyPreprocessor {
         border_frac=None,
         target_frames=DEFAULT_INTERPOLATE_TARGET_FRAMES,
         convert_options="default",
+        flip_horizontal=false,
+        flip_vertical=false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -202,6 +207,8 @@ impl PyPreprocessor {
         border_frac: Option<f32>,
         target_frames: u32,
         convert_options: &str,
+        flip_horizontal: bool,
+        flip_vertical: bool,
     ) -> PyResult<Self> {
         let filter = match filter.to_lowercase().as_str() {
             "nearest" => FilterType::Nearest,
@@ -275,6 +282,7 @@ impl PyPreprocessor {
             border_frac,
             target_frames,
             convert_options,
+            flip: FlipOptions::new(flip_horizontal, flip_vertical),
         };
         inner
             .validate()
@@ -285,7 +293,7 @@ impl PyPreprocessor {
 
     fn __repr__(&self) -> PyResult<String> {
         Ok(format!(
-            "Preprocessor(crop={}, size={:?}, spacing={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={}, convert_options={:?})",
+            "Preprocessor(crop={}, size={:?}, spacing={:?}, filter={:?}, padding_direction={:?}, crop_max={}, volume_handler={:?}, use_components={}, use_padding={}, border_frac={:?}, target_frames={}, convert_options={:?}, flip_horizontal={}, flip_vertical={})",
             self.inner.crop,
             self.inner.size,
             self.inner.spacing,
@@ -298,6 +306,8 @@ impl PyPreprocessor {
             self.inner.border_frac,
             self.inner.target_frames,
             self.inner.convert_options,
+            self.inner.flip.horizontal,
+            self.inner.flip.vertical,
         ))
     }
 }
@@ -502,10 +512,148 @@ impl From<Resolution> for PyResolution {
     }
 }
 
+#[pyclass(name = "PixelDimensions", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyPixelDimensions {
+    inner: PixelDimensions,
+}
+
+#[pymethods]
+impl PyPixelDimensions {
+    #[getter]
+    fn width(&self) -> u32 {
+        self.inner.width
+    }
+
+    #[getter]
+    fn height(&self) -> u32 {
+        self.inner.height
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PixelDimensions(width={}, height={})",
+            self.inner.width, self.inner.height
+        )
+    }
+}
+
+impl From<PixelDimensions> for PyPixelDimensions {
+    fn from(inner: PixelDimensions) -> Self {
+        Self { inner }
+    }
+}
+
+#[pyclass(name = "PixelRect", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyPixelRect {
+    inner: PixelRect,
+}
+
+#[pymethods]
+impl PyPixelRect {
+    #[getter]
+    fn left(&self) -> u32 {
+        self.inner.left
+    }
+
+    #[getter]
+    fn top(&self) -> u32 {
+        self.inner.top
+    }
+
+    #[getter]
+    fn width(&self) -> u32 {
+        self.inner.width
+    }
+
+    #[getter]
+    fn height(&self) -> u32 {
+        self.inner.height
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PixelRect(left={}, top={}, width={}, height={})",
+            self.inner.left, self.inner.top, self.inner.width, self.inner.height
+        )
+    }
+}
+
+impl From<PixelRect> for PyPixelRect {
+    fn from(inner: PixelRect) -> Self {
+        Self { inner }
+    }
+}
+
+#[pyclass(name = "CoordinateTransform", frozen, skip_from_py_object)]
+#[derive(Clone)]
+pub struct PyCoordinateTransform {
+    inner: CoordinateTransform,
+}
+
+#[pymethods]
+impl PyCoordinateTransform {
+    #[getter]
+    fn source_dimensions(&self) -> PyPixelDimensions {
+        self.inner.source_dimensions.into()
+    }
+
+    #[getter]
+    fn display_dimensions(&self) -> PyPixelDimensions {
+        self.inner.display_dimensions.into()
+    }
+
+    #[getter]
+    fn source_to_display(&self) -> Vec<f64> {
+        self.inner.source_to_display.to_vec()
+    }
+
+    #[getter]
+    fn display_to_source(&self) -> Vec<f64> {
+        self.inner.display_to_source.to_vec()
+    }
+
+    #[getter]
+    fn valid_source_rect(&self) -> PyPixelRect {
+        self.inner.valid_source_rect.into()
+    }
+
+    #[getter]
+    fn valid_display_rect(&self) -> PyPixelRect {
+        self.inner.valid_display_rect.into()
+    }
+
+    fn map_source_to_display(&self, x: f64, y: f64) -> (f64, f64) {
+        self.inner.map_source_to_display(x, y)
+    }
+
+    fn map_display_to_source(&self, x: f64, y: f64) -> (f64, f64) {
+        self.inner.map_display_to_source(x, y)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "CoordinateTransform(source_dimensions={}x{}, display_dimensions={}x{})",
+            self.inner.source_dimensions.width,
+            self.inner.source_dimensions.height,
+            self.inner.display_dimensions.width,
+            self.inner.display_dimensions.height
+        )
+    }
+}
+
+impl From<CoordinateTransform> for PyCoordinateTransform {
+    fn from(inner: CoordinateTransform) -> Self {
+        Self { inner }
+    }
+}
+
 #[pyclass(name = "PreprocessingMetadata", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPreprocessingMetadata {
     inner: PreprocessingMetadata,
+    coordinate_transform: CoordinateTransform,
 }
 
 #[pymethods]
@@ -540,6 +688,11 @@ impl PyPreprocessingMetadata {
         self.inner.num_frames.into()
     }
 
+    #[getter]
+    fn coordinate_transform(&self) -> PyCoordinateTransform {
+        self.coordinate_transform.into()
+    }
+
     fn __repr__(&self) -> String {
         format!(
             "PreprocessingMetadata(flip={:?}, crop={:?}, resize={:?}, padding={:?}, resolution={:?}, num_frames={})",
@@ -553,10 +706,51 @@ impl PyPreprocessingMetadata {
     }
 }
 
-impl From<PreprocessingMetadata> for PyPreprocessingMetadata {
-    fn from(metadata: PreprocessingMetadata) -> Self {
-        PyPreprocessingMetadata { inner: metadata }
+impl PyPreprocessingMetadata {
+    fn new(
+        inner: PreprocessingMetadata,
+        source_dimensions: PixelDimensions,
+    ) -> Result<Self, String> {
+        let coordinate_transform =
+            CoordinateTransform::from_preprocessing(source_dimensions, &inner)
+                .map_err(|error| format!("Failed to create coordinate transform: {error}"))?;
+        Ok(Self {
+            inner,
+            coordinate_transform,
+        })
     }
+}
+
+fn dicom_source_dimensions(
+    dcm: &FileDicomObject<InMemDicomObject>,
+) -> Result<PixelDimensions, String> {
+    let width = dcm
+        .get(tags::COLUMNS)
+        .ok_or_else(|| "DICOM Columns is required for coordinate transforms".to_string())?
+        .to_int::<u32>()
+        .map_err(|error| format!("Invalid DICOM Columns for coordinate transform: {error}"))?;
+    let height = dcm
+        .get(tags::ROWS)
+        .ok_or_else(|| "DICOM Rows is required for coordinate transforms".to_string())?
+        .to_int::<u32>()
+        .map_err(|error| format!("Invalid DICOM Rows for coordinate transform: {error}"))?;
+    Ok(PixelDimensions::new(width, height))
+}
+
+fn common_source_dimensions(
+    dcms: &[FileDicomObject<InMemDicomObject>],
+) -> Result<PixelDimensions, String> {
+    let expected = dicom_source_dimensions(&dcms[0])?;
+    for (input_index, dcm) in dcms.iter().enumerate().skip(1) {
+        let actual = dicom_source_dimensions(dcm)?;
+        if actual != expected {
+            return Err(format!(
+                "DICOM input {input_index} has source dimensions {}x{}, expected {}x{} for a shared coordinate transform",
+                actual.width, actual.height, expected.width, expected.height
+            ));
+        }
+    }
+    Ok(expected)
 }
 
 fn preprocess_to_array<'py, T>(
@@ -583,6 +777,7 @@ where
     T: Clone + Zero + Element,
     Array4<T>: LoadFromTiff<T>,
 {
+    let source_dimensions = dicom_source_dimensions(dcm).map_err(PyRuntimeError::new_err)?;
     let (array, metadata) = py
         .detach(|| {
             let (images, metadata) = preprocessor
@@ -593,7 +788,9 @@ where
             Ok::<_, String>((array, metadata))
         })
         .map_err(PyRuntimeError::new_err)?;
-    Ok((array.into_pyarray(py), metadata.into()))
+    let metadata = PyPreprocessingMetadata::new(metadata, source_dimensions)
+        .map_err(PyRuntimeError::new_err)?;
+    Ok((array.into_pyarray(py), metadata))
 }
 
 /*
@@ -632,6 +829,7 @@ where
             "Cannot process empty list of DICOMs",
         ));
     }
+    let source_dimensions = common_source_dimensions(dcms).map_err(PyRuntimeError::new_err)?;
 
     let (arrays, metadata) = py
         .detach(|| {
@@ -651,7 +849,9 @@ where
         .map(|array| array.into_pyarray(py))
         .collect();
 
-    Ok((result_arrays, metadata.into()))
+    let metadata = PyPreprocessingMetadata::new(metadata, source_dimensions)
+        .map_err(PyRuntimeError::new_err)?;
+    Ok((result_arrays, metadata))
 }
 
 fn preprocess_stream<'py, T>(
@@ -1288,6 +1488,9 @@ pub(crate) fn register_submodule<'py>(_py: Python<'py>, m: &Bound<'py, PyModule>
     m.add_class::<PyResize>()?;
     m.add_class::<PyPadding>()?;
     m.add_class::<PyResolution>()?;
+    m.add_class::<PyPixelDimensions>()?;
+    m.add_class::<PyPixelRect>()?;
+    m.add_class::<PyCoordinateTransform>()?;
     m.add_class::<PyPreprocessingMetadata>()?;
     Ok(())
 }

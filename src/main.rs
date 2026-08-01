@@ -32,6 +32,7 @@ use dicom_preprocessing::transform::volume::{
     CentralSlice, DisplayVolumeHandler, InterpolateVolume, KeepVolume, LaplacianMip, MaxIntensity,
     ProjectionMode, VolumeHandler, DEFAULT_INTERPOLATE_TARGET_FRAMES,
 };
+use dicom_preprocessing::transform::FlipOptions;
 
 #[derive(Debug, Snafu)]
 pub enum Error {
@@ -234,6 +235,20 @@ struct Args {
 
     #[arg(help = "Disable padding", long = "no-padding", default_value_t = false)]
     no_padding: bool,
+
+    #[arg(
+        help = "Reverse the horizontal pixel axis before crop, resize, and padding",
+        long = "flip-horizontal",
+        default_value_t = false
+    )]
+    flip_horizontal: bool,
+
+    #[arg(
+        help = "Reverse the vertical pixel axis before crop, resize, and padding",
+        long = "flip-vertical",
+        default_value_t = false
+    )]
+    flip_vertical: bool,
 
     #[arg(
         help = "Compression type",
@@ -549,6 +564,7 @@ fn run(args: Args) -> Result<(), Error> {
         border_frac: args.border_frac,
         target_frames: args.target_frames,
         convert_options,
+        flip: FlipOptions::new(args.flip_horizontal, args.flip_vertical),
     };
     preprocessor
         .validate()
@@ -651,6 +667,21 @@ mod tests {
         assert_eq!(error.kind(), ErrorKind::ValueValidation);
     }
 
+    #[test]
+    fn explicit_flip_flags_are_parsed_independently() {
+        let args = Args::try_parse_from([
+            "dicom-preprocess",
+            "source.dcm",
+            "output.tiff",
+            "--flip-horizontal",
+            "--flip-vertical",
+        ])
+        .unwrap();
+
+        assert!(args.flip_horizontal);
+        assert!(args.flip_vertical);
+    }
+
     fn default_args(source: PathBuf, output: PathBuf) -> Args {
         Args {
             source,
@@ -666,6 +697,8 @@ mod tests {
             no_components: false,
             volume_handler: DisplayVolumeHandler::default(),
             no_padding: false,
+            flip_horizontal: false,
+            flip_vertical: false,
             border_frac: None,
             target_frames: 32,
             window: None,

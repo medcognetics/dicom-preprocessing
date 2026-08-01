@@ -3,8 +3,9 @@ use std::io::Cursor;
 use dicom::object::from_reader;
 use dicom::pixeldata::ConvertOptions;
 use dicom_preprocessing::{
-    metadata::pixel_spacing_mm, CoordinateTransform, DicomError, Flip, FrameOrderStrategy,
-    PixelDimensions, PixelRect, ViewerDicom, VolumeFrameSource, VolumeHandler,
+    metadata::pixel_spacing_mm, CoordinateTransform, DicomError, Flip, FlipOptions,
+    FrameOrderStrategy, PixelDimensions, PixelRect, ViewerDicom, ViewerOptions, VolumeFrameSource,
+    VolumeHandler,
 };
 use napi::bindgen_prelude::{Buffer, Object, Uint8Array, Unknown};
 use napi::{Error, JsValue, ValueType};
@@ -121,8 +122,8 @@ pub fn prepare_dicom(
     input: Unknown<'_>,
     options: Option<Unknown<'_>>,
 ) -> std::result::Result<PreparedDicom, Error<String>> {
-    let volume_handler = parse_prepare_options(options)?;
-    let viewer = parse_dicom_input(input, volume_handler)?;
+    let viewer_options = parse_prepare_options(options)?;
+    let viewer = parse_dicom_input(input, viewer_options)?;
     let frame_plan = node_frame_plan(viewer.frame_plan());
     Ok(PreparedDicom { viewer, frame_plan })
 }
@@ -231,9 +232,7 @@ fn render_stored_display_frame(
         .viewer
         .decode_raw_display_frame(frame_index as usize)
         .map_err(map_dicom_render_error)?;
-    let flip = prepared
-        .viewer
-        .display_orientation_flip(raw.width, raw.height);
+    let flip = prepared.viewer.display_flip(raw.width, raw.height);
     if let Some(flip) = flip {
         raw.data = flip_frame_data(
             raw.data,
@@ -263,7 +262,7 @@ fn render_derived_display_frame(
     let height = image.height();
     let coordinate_transform = CoordinateTransform::from_flip(
         PixelDimensions::new(width, height),
-        prepared.viewer.display_orientation_flip(width, height),
+        prepared.viewer.display_flip(width, height),
     )
     .map_err(map_coordinate_transform_error)?;
     let color = image.color();
@@ -406,7 +405,7 @@ fn node_pixel_spacing(viewer: &ViewerDicom) -> Option<Vec<f64>> {
 
 fn parse_dicom_input(
     input: Unknown<'_>,
-    volume_handler: VolumeHandler,
+    options: ViewerOptions,
 ) -> std::result::Result<ViewerDicom, Error<String>> {
     let input = unknown_to_object(input, "input")?;
     let path = input
@@ -417,7 +416,9 @@ fn parse_dicom_input(
         .map_err(map_napi_invalid_input)?;
 
     match (path, bytes) {
-        (Some(path), None) => ViewerDicom::open(path, volume_handler).map_err(map_dicom_open_error),
+        (Some(path), None) => {
+            ViewerDicom::open_with_options(path, options).map_err(map_dicom_open_error)
+        }
         (None, Some(bytes)) => {
             let data = bytes.as_ref().to_vec();
             let file = from_reader(Cursor::new(data)).map_err(|error| {
@@ -426,7 +427,7 @@ fn parse_dicom_input(
                     format!("error reading DICOM bytes: {error}"),
                 )
             })?;
-            ViewerDicom::from_object(file, volume_handler).map_err(map_dicom_open_error)
+            ViewerDicom::from_object_with_options(file, options).map_err(map_dicom_open_error)
         }
         (Some(_), Some(_)) => Err(js_error(
             CODE_INVALID_INPUT,
@@ -441,18 +442,32 @@ fn parse_dicom_input(
 
 fn parse_prepare_options(
     options: Option<Unknown<'_>>,
-) -> std::result::Result<VolumeHandler, Error<String>> {
+) -> std::result::Result<ViewerOptions, Error<String>> {
     let Some(options) = options else {
-        return Ok(VolumeHandler::keep());
+        return Ok(ViewerOptions::default());
     };
     let options = unknown_to_object(options, "options")?;
     let handler = options
         .get::<Unknown>("volumeHandler")
         .map_err(map_napi_invalid_input)?;
-    let Some(handler) = handler else {
-        return Ok(VolumeHandler::keep());
+    let volume_handler = match handler {
+        Some(handler) => parse_volume_handler(handler)?,
+        None => VolumeHandler::keep(),
     };
-    parse_volume_handler(handler)
+    Ok(ViewerOptions::new(
+        volume_handler,
+        FlipOptions::new(
+            optional_bool(&options, "flipHorizontal")?.unwrap_or(false),
+            optional_bool(&options, "flipVertical")?.unwrap_or(false),
+        ),
+    ))
+}
+
+fn optional_bool(
+    object: &Object<'_>,
+    field: &str,
+) -> std::result::Result<Option<bool>, Error<String>> {
+    object.get::<bool>(field).map_err(map_napi_invalid_input)
 }
 
 fn parse_frame_index(frame_index: Unknown<'_>) -> std::result::Result<u32, Error<String>> {
@@ -667,37 +682,9 @@ fn js_error(code: impl Into<String>, message: impl Into<String>) -> Error<String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
-    use dicom::dictionary_std::{tags, uids};
     use dicom::object::open_file;
-    use dicom::object::{FileDicomObject, InMemDicomObject};
 
     const MULTI_FRAME_FIXTURE: &str = "pydicom/emri_small.dcm";
-
-    fn put_str_element(
-        dicom: &mut FileDicomObject<InMemDicomObject>,
-        tag: Tag,
-        vr: VR,
-        value: &str,
-    ) {
-        dicom.put_element(DataElement::new(tag, vr, PrimitiveValue::from(value)));
-    }
-
-    fn horizontal_only_dbt_volume() -> FileDicomObject<InMemDicomObject> {
-        let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_FIXTURE).unwrap()).unwrap();
-        dicom.meta_mut().media_storage_sop_class_uid =
-            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE.to_string();
-        put_str_element(
-            &mut dicom,
-            tags::SOP_CLASS_UID,
-            VR::UI,
-            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
-        );
-        put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, "R");
-        put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, "CC");
-        put_str_element(&mut dicom, tags::PATIENT_ORIENTATION, VR::CS, "P\\L");
-        dicom
-    }
 
     #[test]
     fn dtype_maps_supported_native_frames() {
@@ -760,8 +747,12 @@ mod tests {
 
     #[test]
     fn stored_display_frame_returns_applied_horizontal_transform() {
-        let viewer =
-            ViewerDicom::from_object(horizontal_only_dbt_volume(), VolumeHandler::keep()).unwrap();
+        let dicom = open_file(dicom_test_files::path("pydicom/CT_small.dcm").unwrap()).unwrap();
+        let viewer = ViewerDicom::from_object_with_options(
+            dicom,
+            ViewerOptions::new(VolumeHandler::keep(), FlipOptions::new(true, false)),
+        )
+        .unwrap();
         let frame_plan = node_frame_plan(viewer.frame_plan());
         let prepared = PreparedDicom { viewer, frame_plan };
         let raw = render_raw_prepared_frame(&prepared, 0).unwrap();
@@ -787,9 +778,13 @@ mod tests {
 
     #[test]
     fn derived_display_frame_returns_applied_horizontal_transform() {
-        let viewer = ViewerDicom::from_object(
-            horizontal_only_dbt_volume(),
-            VolumeHandler::laplacian_mip(0, 0),
+        let dicom = open_file(dicom_test_files::path(MULTI_FRAME_FIXTURE).unwrap()).unwrap();
+        let viewer = ViewerDicom::from_object_with_options(
+            dicom,
+            ViewerOptions::new(
+                VolumeHandler::laplacian_mip(0, 0),
+                FlipOptions::new(true, false),
+            ),
         )
         .unwrap();
         let frame_plan = node_frame_plan(viewer.frame_plan());

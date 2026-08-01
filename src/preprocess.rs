@@ -12,7 +12,7 @@ use crate::metadata::{
 };
 use crate::transform::resize;
 use crate::transform::{
-    inverse_standard_dbt_flip, Crop, KeepVolume, Padding, PaddingDirection, PreparedVolume, Resize,
+    Crop, Flip, FlipOptions, KeepVolume, Padding, PaddingDirection, PreparedVolume, Resize,
     Transform, VolumeFramePlan, VolumeFrameSource, VolumeHandler,
 };
 
@@ -65,6 +65,8 @@ pub struct Preprocessor {
     pub border_frac: Option<f32>,
     pub target_frames: u32,
     pub convert_options: ConvertOptions,
+    /// Caller-selected in-plane flip axes, applied before crop, resize, and padding.
+    pub flip: FlipOptions,
 }
 
 /// Geometry-aware result for a validated single-frame DICOM series.
@@ -95,6 +97,7 @@ impl Default for Preprocessor {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         }
     }
 }
@@ -317,6 +320,31 @@ impl Preprocessor {
         }
     }
 
+    fn requested_flip(&self, images: &[DynamicImage]) -> Result<Option<Flip>, DicomError> {
+        if self.flip.is_identity() {
+            return Ok(None);
+        }
+        let reference = images.first().ok_or_else(|| DicomError::Other {
+            message: "cannot apply a flip to an empty image volume".to_string(),
+        })?;
+        for (frame_index, image) in images.iter().enumerate().skip(1) {
+            if image.dimensions() != reference.dimensions() {
+                return Err(DicomError::IncompatibleFrame {
+                    frame_index,
+                    expected_width: reference.width(),
+                    expected_height: reference.height(),
+                    expected_color_type: reference.color(),
+                    actual_width: image.width(),
+                    actual_height: image.height(),
+                    actual_color_type: image.color(),
+                });
+            }
+        }
+        Ok(self
+            .flip
+            .for_dimensions(reference.width(), reference.height()))
+    }
+
     /// Decoding will error if the VOILUT tag is present but empty.
     /// This function removes the tag if it is empty.
     fn sanitize_voi_lut_function(
@@ -440,7 +468,8 @@ impl Preprocessor {
         let prepared_volume = self.prepare_volume_with_single_frame_guard(file, parallel)?;
         let mut image_data = prepared_volume.images;
         let mut frame_plan = prepared_volume.frame_plan;
-        let flip = prepared_volume.orientation_flip;
+        let flip = self.requested_flip(&image_data)?;
+        image_data = self.apply_transform_to_frames(image_data, &flip, parallel);
 
         // Try to determine the resolution from pixel spacing attributes
         let mut resolution = Resolution::try_from(file).ok();
@@ -572,7 +601,8 @@ impl Preprocessor {
             .into_iter()
             .flatten()
             .collect();
-        let flip = inverse_standard_dbt_flip(files[0], &combined_volume);
+        let flip = self.requested_flip(&combined_volume)?;
+        combined_volume = self.apply_transform_to_frames(combined_volume, &flip, parallel);
 
         // Try to determine the resolution from the first file's pixel spacing attributes
         let mut resolution = resolution.or_else(|| Resolution::try_from(files[0]).ok());
@@ -726,20 +756,15 @@ mod tests {
         dicom.put_element(DataElement::new(tag, vr, PrimitiveValue::from(value)));
     }
 
-    fn dbt_volume(
+    fn volume_with_orientation_metadata(
+        sop_class_uid: &str,
         laterality: &str,
         view_position: &str,
         patient_orientation: &str,
     ) -> FileDicomObject<InMemDicomObject> {
         let mut dicom = open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
-        dicom.meta_mut().media_storage_sop_class_uid =
-            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE.to_string();
-        put_str_element(
-            &mut dicom,
-            tags::SOP_CLASS_UID,
-            VR::UI,
-            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
-        );
+        dicom.meta_mut().media_storage_sop_class_uid = sop_class_uid.to_string();
+        put_str_element(&mut dicom, tags::SOP_CLASS_UID, VR::UI, sop_class_uid);
         put_str_element(&mut dicom, tags::IMAGE_LATERALITY, VR::CS, laterality);
         put_str_element(&mut dicom, tags::VIEW_POSITION, VR::CS, view_position);
         put_str_element(
@@ -749,6 +774,19 @@ mod tests {
             patient_orientation,
         );
         dicom
+    }
+
+    fn dbt_volume(
+        laterality: &str,
+        view_position: &str,
+        patient_orientation: &str,
+    ) -> FileDicomObject<InMemDicomObject> {
+        volume_with_orientation_metadata(
+            uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE,
+            laterality,
+            view_position,
+            patient_orientation,
+        )
     }
 
     #[test]
@@ -874,10 +912,33 @@ mod tests {
     }
 
     #[rstest]
+    #[case(uids::BREAST_TOMOSYNTHESIS_IMAGE_STORAGE)]
+    #[case(uids::DIGITAL_MAMMOGRAPHY_X_RAY_IMAGE_STORAGE_FOR_PRESENTATION)]
+    #[case(uids::BREAST_PROJECTION_X_RAY_IMAGE_STORAGE_FOR_PROCESSING)]
+    #[case(uids::CT_IMAGE_STORAGE)]
+    fn orientation_metadata_does_not_select_an_implicit_flip(#[case] sop_class_uid: &str) {
+        let dicom_file = volume_with_orientation_metadata(sop_class_uid, "R", "CC", "P\\L");
+        let preprocessor = Preprocessor {
+            crop: false,
+            use_padding: false,
+            ..Preprocessor::default()
+        };
+
+        let expected = VolumeHandler::keep()
+            .prepare_volume_with_options(&dicom_file, &ConvertOptions::default(), false)
+            .unwrap()
+            .images;
+        let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
+
+        assert_eq!(metadata.flip, None);
+        assert_images_equal(&expected, &images);
+    }
+
+    #[rstest]
     #[case("R", "CC", "P\\L", true, false)]
     #[case("R", "CC", "A\\R", false, true)]
     #[case("L", "CC", "P\\L", true, true)]
-    fn test_dbt_orientation_metadata_records_axis_specific_flip(
+    fn requested_flip_is_recorded_in_preprocessing_metadata(
         #[case] laterality: &str,
         #[case] view_position: &str,
         #[case] patient_orientation: &str,
@@ -898,15 +959,66 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::new(horizontal, vertical),
         };
 
+        let expected: Vec<DynamicImage> = VolumeHandler::keep()
+            .prepare_volume_with_options(&dicom_file, &ConvertOptions::default(), false)
+            .unwrap()
+            .images
+            .into_iter()
+            .map(|image| {
+                Flip::new(image.width(), image.height(), horizontal, vertical).apply(&image)
+            })
+            .collect();
         let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
         let flip = Flip::new(images[0].width(), images[0].height(), horizontal, vertical);
         assert_eq!(metadata.flip, Some(flip));
+        assert_images_equal(&expected, &images);
         assert_eq!(
             metadata.apply(&Coord::new(0, 0)),
             flip.apply(&Coord::new(0, 0))
         );
+    }
+
+    #[test]
+    fn requested_flip_applies_after_each_volume_handler() {
+        let dicom_file =
+            open_file(dicom_test_files::path(MULTI_FRAME_TEST_DICOM).unwrap()).unwrap();
+        let handlers = [
+            VolumeHandler::keep(),
+            VolumeHandler::central_slice(),
+            VolumeHandler::max_intensity(0, 0),
+            VolumeHandler::interpolate(3),
+            VolumeHandler::laplacian_mip(0, 0),
+        ];
+
+        for volume_handler in handlers {
+            let baseline_preprocessor = Preprocessor {
+                crop: false,
+                use_padding: false,
+                volume_handler: volume_handler.clone(),
+                ..Preprocessor::default()
+            };
+            let flipped_preprocessor = Preprocessor {
+                flip: FlipOptions::new(true, false),
+                ..baseline_preprocessor.clone()
+            };
+            let (baseline, _) = baseline_preprocessor
+                .prepare_image(&dicom_file, false)
+                .unwrap();
+            let (actual, metadata) = flipped_preprocessor
+                .prepare_image(&dicom_file, false)
+                .unwrap();
+            let expected: Vec<DynamicImage> =
+                baseline.into_iter().map(|image| image.fliph()).collect();
+
+            assert_images_equal(&expected, &actual);
+            assert_eq!(
+                metadata.flip,
+                actual.first().map(Flip::horizontal_from_image)
+            );
+        }
     }
 
     #[test]
@@ -926,6 +1038,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let (images, metadata) = preprocessor.prepare_image(&dicom_file, false).unwrap();
@@ -959,6 +1072,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         },
         false
     )]
@@ -977,6 +1091,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         },
         true
     )]
@@ -995,6 +1110,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         },
         false
     )]
@@ -1013,6 +1129,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         },
         false
     )]
@@ -1031,6 +1148,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         },
         false
     )]
@@ -1049,6 +1167,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         },
         false
     )]
@@ -1133,6 +1252,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let resize_config = None;
@@ -1194,6 +1314,7 @@ mod tests {
             border_frac,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let (processed_images, metadata) = preprocessor
@@ -1239,6 +1360,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: convert_options_1,
+            flip: FlipOptions::default(),
         };
 
         let preprocessor_2 = Preprocessor {
@@ -1254,6 +1376,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: convert_options_2,
+            flip: FlipOptions::default(),
         };
 
         // Process the same DICOM file with both preprocessors
@@ -1333,6 +1456,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         // Process the DICOM file
@@ -1405,6 +1529,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         // Create a copy without pixel spacing
@@ -1451,6 +1576,7 @@ mod tests {
             border_frac: None,
             target_frames,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         // Process the DICOM file
@@ -1478,6 +1604,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         }
     }
 
@@ -1598,6 +1725,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         // Process the DICOM file
@@ -1674,6 +1802,7 @@ mod tests {
             border_frac: None,
             target_frames,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         // Process the batch
@@ -1712,6 +1841,7 @@ mod tests {
             border_frac: Some(0.05),
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::new(true, false),
         };
 
         let (serial_images, serial_metadata) =
@@ -1746,6 +1876,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::new(false, true),
         };
 
         let (serial_batches, serial_metadata) =
@@ -1799,6 +1930,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         };
 
         let (serial, serial_metadata) = preprocessor.prepare_images_batch(&files, false).unwrap();
@@ -1879,6 +2011,7 @@ mod tests {
             border_frac: None,
             target_frames: 32,
             convert_options: ConvertOptions::default(),
+            flip: FlipOptions::default(),
         }
     }
 

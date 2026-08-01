@@ -45,6 +45,8 @@ Run binaries with `cargo run --release --bin <name> -- ...`:
 ## Coding Style & Naming Conventions
 Use Rust 2021 defaults and keep code `rustfmt`/`clippy` clean (`-D warnings` in CI). Prefer snake_case for functions/modules and descriptive CLI flag names.
 
+Keep orientation policy outside this repository. Preprocessing may apply caller-selected horizontal or vertical flips and must report them in transformation metadata, but DICOM metadata must not implicitly select a flip.
+
 Python style is formatter-driven:
 - Ruff is the formatter/import sorter and is configured in `pyproject.toml` (`line-length = 120`, `target-version = "py310"`).
 - basedpyright type checking is configured in `pyproject.toml` (`pythonVersion = "3.10"`, `typeCheckingMode = "basic"`).

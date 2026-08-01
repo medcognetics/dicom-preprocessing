@@ -16,6 +16,10 @@ export type VolumeHandler =
 
 export interface PrepareOptions {
   volumeHandler?: VolumeHandler
+  /** Reverse the display x axis. Raw `renderFrame` output is unchanged. */
+  flipHorizontal?: boolean
+  /** Reverse the display y axis. Raw `renderFrame` output is unchanged. */
+  flipVertical?: boolean
 }
 
 export type FrameSource =

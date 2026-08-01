@@ -13,6 +13,39 @@ use crate::transform::{Coord, InvertibleTransform, Transform};
 /// `[width, height, horizontal, vertical]`.
 pub const PREPROCESSING_FLIP: u16 = 65000;
 
+/// Caller-selected in-plane flip axes.
+///
+/// Both axes default to `false`. This type contains no DICOM interpretation;
+/// callers are responsible for deciding when a flip is appropriate.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FlipOptions {
+    /// Whether to reverse the x axis.
+    pub horizontal: bool,
+    /// Whether to reverse the y axis.
+    pub vertical: bool,
+}
+
+impl FlipOptions {
+    pub const fn new(horizontal: bool, vertical: bool) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+
+    pub const fn is_identity(self) -> bool {
+        !self.horizontal && !self.vertical
+    }
+
+    pub const fn for_dimensions(self, width: u32, height: u32) -> Option<Flip> {
+        if self.is_identity() {
+            None
+        } else {
+            Some(Flip::new(width, height, self.horizontal, self.vertical))
+        }
+    }
+}
+
 /// A horizontal and/or vertical flip in the original image coordinate space.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Flip {
@@ -29,7 +62,7 @@ pub struct Flip {
 impl Flip {
     const TAG_CARDINALITY: usize = 4;
 
-    pub fn new(width: u32, height: u32, horizontal: bool, vertical: bool) -> Self {
+    pub const fn new(width: u32, height: u32, horizontal: bool, vertical: bool) -> Self {
         Self {
             width,
             height,

@@ -32,7 +32,7 @@
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::{resolve_frame_order, FrameOrderPlan, FrameOrderStrategy};
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{ConvertOptions, PixelDecoder, PixelRepresentation};
+use dicom::pixeldata::{ConvertOptions, PixelDecoder, PixelRepresentation, PlanarConfiguration};
 use image::DynamicImage;
 use image::GenericImageView;
 use rayon::prelude::*;
@@ -156,6 +156,7 @@ pub struct DecodedStoredFrame {
     pub width: u32,
     pub height: u32,
     pub samples_per_pixel: u16,
+    pub planar_configuration: PlanarConfiguration,
     pub bits_allocated: u16,
     pub bits_stored: u16,
     pub pixel_representation_signed: bool,
@@ -441,6 +442,7 @@ fn decode_stored_frame_raw(
         width: decoded.columns(),
         height: decoded.rows(),
         samples_per_pixel: decoded.samples_per_pixel(),
+        planar_configuration: decoded.planar_configuration(),
         bits_allocated: decoded.bits_allocated(),
         bits_stored: decoded.bits_stored(),
         pixel_representation_signed: matches!(
@@ -1893,6 +1895,8 @@ mod tests {
     use super::*;
     use crate::metadata::preprocessing::FrameCount;
 
+    use dicom::core::{DataElement, PrimitiveValue, VR};
+    use dicom::dictionary_std::tags;
     use dicom::object::open_file;
     use dicom::pixeldata::VoiLutOption;
     use image::{ImageBuffer, Luma, Rgb};
@@ -2097,6 +2101,20 @@ mod tests {
         assert_eq!(raw.samples_per_pixel, 1);
         assert!(raw.bits_allocated == 8 || raw.bits_allocated == 16);
         assert!(raw.photometric_interpretation.starts_with("MONOCHROME"));
+    }
+
+    #[test]
+    fn raw_decode_preserves_planar_configuration() {
+        let mut dicom = open_file(dicom_test_files::path("pydicom/SC_rgb.dcm").unwrap()).unwrap();
+        dicom.put_element(DataElement::new(
+            tags::PLANAR_CONFIGURATION,
+            VR::US,
+            PrimitiveValue::from(1_u16),
+        ));
+
+        let raw = VolumeHandler::decode_stored_frame_raw(&dicom, 0).unwrap();
+
+        assert_eq!(raw.planar_configuration, PlanarConfiguration::PixelFirst);
     }
 
     #[test]

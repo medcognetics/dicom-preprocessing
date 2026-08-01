@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use dicom::object::from_reader;
-use dicom::pixeldata::ConvertOptions;
+use dicom::pixeldata::{ConvertOptions, PlanarConfiguration};
 use dicom_preprocessing::{
     metadata::pixel_spacing_mm, CoordinateTransform, DicomError, Flip, FlipOptions,
     FrameOrderStrategy, PixelDimensions, PixelRect, ViewerDicom, ViewerOptions, VolumeFrameSource,
@@ -239,6 +239,7 @@ fn render_stored_display_frame(
             raw.width,
             raw.height,
             raw.samples_per_pixel,
+            raw.planar_configuration,
             raw.bits_allocated,
             flip,
         )?;
@@ -320,6 +321,7 @@ fn flip_frame_data(
     width: u32,
     height: u32,
     samples_per_pixel: u16,
+    planar_configuration: PlanarConfiguration,
     bits_allocated: u16,
     flip: Flip,
 ) -> std::result::Result<Vec<u8>, Error<String>> {
@@ -330,14 +332,27 @@ fn flip_frame_data(
             format!("cannot flip pixels with BitsAllocated={bits_allocated}"),
         ));
     }
-    let bytes_per_pixel = usize::from(samples_per_pixel)
-        .checked_mul(usize::from(bits_allocated / BITS_PER_BYTE))
-        .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "pixel stride overflow"))?;
+    let bytes_per_sample = usize::from(bits_allocated / BITS_PER_BYTE);
+    let samples_per_pixel = usize::from(samples_per_pixel);
+    let pixel_count = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "frame size overflow"))?;
+    let (plane_count, bytes_per_location) = match planar_configuration {
+        PlanarConfiguration::Standard => (
+            1,
+            samples_per_pixel
+                .checked_mul(bytes_per_sample)
+                .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "pixel stride overflow"))?,
+        ),
+        PlanarConfiguration::PixelFirst => (samples_per_pixel, bytes_per_sample),
+    };
+    let plane_len = pixel_count
+        .checked_mul(bytes_per_location)
+        .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "plane size overflow"))?;
     let width = width as usize;
     let height = height as usize;
-    let expected_len = width
-        .checked_mul(height)
-        .and_then(|pixels| pixels.checked_mul(bytes_per_pixel))
+    let expected_len = plane_len
+        .checked_mul(plane_count)
         .ok_or_else(|| js_error(CODE_UNSUPPORTED_IMAGE_LAYOUT, "frame size overflow"))?;
     if data.len() != expected_len {
         return Err(js_error(
@@ -350,22 +365,26 @@ fn flip_frame_data(
     }
 
     let mut output = vec![0_u8; data.len()];
-    for output_y in 0..height {
-        let input_y = if flip.vertical {
-            height - 1 - output_y
-        } else {
-            output_y
-        };
-        for output_x in 0..width {
-            let input_x = if flip.horizontal {
-                width - 1 - output_x
+    for plane_index in 0..plane_count {
+        let plane_offset = plane_index * plane_len;
+        for output_y in 0..height {
+            let input_y = if flip.vertical {
+                height - 1 - output_y
             } else {
-                output_x
+                output_y
             };
-            let input_offset = (input_y * width + input_x) * bytes_per_pixel;
-            let output_offset = (output_y * width + output_x) * bytes_per_pixel;
-            output[output_offset..output_offset + bytes_per_pixel]
-                .copy_from_slice(&data[input_offset..input_offset + bytes_per_pixel]);
+            for output_x in 0..width {
+                let input_x = if flip.horizontal {
+                    width - 1 - output_x
+                } else {
+                    output_x
+                };
+                let input_offset = plane_offset + (input_y * width + input_x) * bytes_per_location;
+                let output_offset =
+                    plane_offset + (output_y * width + output_x) * bytes_per_location;
+                output[output_offset..output_offset + bytes_per_location]
+                    .copy_from_slice(&data[input_offset..input_offset + bytes_per_location]);
+            }
         }
     }
     Ok(output)
@@ -739,7 +758,57 @@ mod tests {
             (Flip::new(WIDTH, HEIGHT, true, true), vec![6, 5, 4, 3, 2, 1]),
         ] {
             assert_eq!(
-                flip_frame_data(source.clone(), WIDTH, HEIGHT, 1, 8, flip).unwrap(),
+                flip_frame_data(
+                    source.clone(),
+                    WIDTH,
+                    HEIGHT,
+                    1,
+                    PlanarConfiguration::Standard,
+                    8,
+                    flip,
+                )
+                .unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn frame_data_flip_preserves_planar_color_planes() {
+        const WIDTH: u32 = 2;
+        const HEIGHT: u32 = 2;
+        const SAMPLES_PER_PIXEL: u16 = 3;
+        const BITS_ALLOCATED: u16 = 8;
+        let source = vec![
+            1, 2, 3, 4, // red
+            11, 12, 13, 14, // green
+            21, 22, 23, 24, // blue
+        ];
+        for (flip, expected) in [
+            (
+                Flip::new(WIDTH, HEIGHT, true, false),
+                vec![2, 1, 4, 3, 12, 11, 14, 13, 22, 21, 24, 23],
+            ),
+            (
+                Flip::new(WIDTH, HEIGHT, false, true),
+                vec![3, 4, 1, 2, 13, 14, 11, 12, 23, 24, 21, 22],
+            ),
+            (
+                Flip::new(WIDTH, HEIGHT, true, true),
+                vec![4, 3, 2, 1, 14, 13, 12, 11, 24, 23, 22, 21],
+            ),
+        ] {
+            assert_eq!(
+                flip_frame_data(
+                    source.clone(),
+                    WIDTH,
+                    HEIGHT,
+                    SAMPLES_PER_PIXEL,
+                    PlanarConfiguration::PixelFirst,
+                    BITS_ALLOCATED,
+                    flip,
+                )
+                .unwrap(),
                 expected
             );
         }

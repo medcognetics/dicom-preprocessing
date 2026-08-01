@@ -8,6 +8,7 @@ import {
   type CoordinateTransform,
   type DicomInput,
   type FrameSource,
+  type PrepareOptions,
   type RenderedFrame,
   type VolumeHandler,
 } from '../index'
@@ -15,7 +16,8 @@ import {
 const input: DicomInput = { bytes: readFileSync('/tmp/example.dcm'), filename: 'example.dcm' }
 const byteViewInput: DicomInput = { bytes: new Uint8Array([0]), filename: 'example.dcm' }
 const handler: VolumeHandler = { kind: 'max-intensity', skipStart: 1, skipEnd: 1 }
-const prepared: PreparedDicom = prepareDicom(input, { volumeHandler: handler })
+const options: PrepareOptions = { volumeHandler: handler, flipHorizontal: true, flipVertical: false }
+const prepared: PreparedDicom = prepareDicom(input, options)
 const source: FrameSource = prepared.framePlan.displayFrames[0]
 const rendered: RenderedFrame = renderFrame(prepared, 0)
 const displayRendered: RenderedFrame = renderDisplayFrame(prepared, 0)

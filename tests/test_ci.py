@@ -13,6 +13,7 @@ CARGO_AUDIT_CONFIG_PATH = REPOSITORY_ROOT / ".cargo" / "audit.toml"
 CIRCLECI_CONFIG_PATH = REPOSITORY_ROOT / ".circleci" / "config.yml"
 MAKEFILE_PATH = REPOSITORY_ROOT / "Makefile"
 NODE_PACKAGE_PATH = REPOSITORY_ROOT / "package.json"
+NODE_PACKAGE_LOCK_PATH = REPOSITORY_ROOT / "package-lock.json"
 NODE_LOADER_PATH = REPOSITORY_ROOT / "bindings" / "node" / "index.js"
 NODE_GIT_INSTALL_PATH = REPOSITORY_ROOT / "bindings" / "node" / "test" / "git-install.mjs"
 
@@ -24,6 +25,7 @@ VERSION_TAG_FILTER = '"v[0-9]+.[0-9]+.[0-9]+"'
 NIGHTLY_CRON = '"17 6 * * *"'
 CROSS_PLATFORM_CRON = '"17 5 * * 0"'
 DEPENDENCY_HEALTH_CRON = '"17 7 * * 1"'
+MINIMUM_SAFE_JS_YAML_VERSION = (4, 3, 1)
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
 
@@ -235,6 +237,19 @@ def test_dependency_health_jobs_are_independent_and_read_only() -> None:
     assert "zizmor==1.27.0" in config
     assert "scripts/ci/dependency_health.py security" in config
     assert "scripts/ci/dependency_health.py deprecation" in config
+
+
+def test_node_lock_excludes_vulnerable_js_yaml_versions() -> None:
+    package_lock = json.loads(NODE_PACKAGE_LOCK_PATH.read_text())
+    js_yaml = package_lock["packages"].get("node_modules/js-yaml")
+    if js_yaml is None:
+        return
+
+    version_without_build_metadata = js_yaml["version"].partition("+")[0]
+    version_core, prerelease_marker, _ = version_without_build_metadata.partition("-")
+    version = tuple(int(component) for component in version_core.split("."))
+
+    assert version > MINIMUM_SAFE_JS_YAML_VERSION or (version == MINIMUM_SAFE_JS_YAML_VERSION and not prerelease_marker)
 
 
 def test_workflows_pin_actions_and_disable_checkout_credentials() -> None:

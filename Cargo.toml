@@ -11,6 +11,7 @@ path = "src/lib.rs"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
+tempfile = "=3.27.0"
 dicom = { version = "0.10.0", features = ["image", "ndarray"]}
 dicom-pixeldata = { version = "0.10.0", features = ["openjpeg-sys", "rayon"]}
 indicatif = { version= "0.18.4", features= ["rayon"] }
@@ -45,7 +46,6 @@ file-id = "=0.2.3"
 python = ["pyo3", "numpy", "pyo3/auto-initialize"]
 
 [dev-dependencies]
-tempfile = "3.24"
 dicom-test-files = "0.4"
 rstest = "0.26"
 rand = "0.10"

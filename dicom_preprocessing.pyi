@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Literal, Optional, Sequence, Tuple, TypedDict, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -1001,5 +1001,87 @@ def load_tiff_f32_batched(
 
     Yields:
         A batch of TIFF files as 32-bit floating-point numpy arrays
+    """
+    ...
+
+# Runtime verification declarations and deterministic reports.
+class _VerificationTagPathRequired(TypedDict):
+    group: int
+    element: int
+
+class VerificationTagPath(_VerificationTagPathRequired, total=False):
+    item: Optional[int]
+
+class VerificationTagExpectation(TypedDict):
+    path: List[VerificationTagPath]
+    vr: str
+    values: List[str]
+
+class _VerificationFrameRequired(TypedDict):
+    width: int
+    height: int
+    samples_per_pixel: int
+    planar_configuration: Literal[0, 1]
+    sample_type: Literal["u8", "i8", "u16", "i16"]
+    values: List[int]
+
+class VerificationFrameExpectation(_VerificationFrameRequired, total=False):
+    absolute_tolerance: int
+
+class VerificationCase(TypedDict):
+    id: str
+    dicom_bytes: bytes
+    transfer_syntax_uid: str
+    tags: List[VerificationTagExpectation]
+    frames: List[VerificationFrameExpectation]
+
+class VerificationCodec(TypedDict):
+    id: str
+    required_cases: Dict[str, List[str]]
+
+class _VerificationCheckRequired(TypedDict):
+    name: str
+    passed: bool
+
+class VerificationCheck(_VerificationCheckRequired, total=False):
+    diagnostic: Optional[str]
+
+class VerificationCustomTest(TypedDict):
+    id: str
+    run: Callable[[], Sequence[VerificationCheck]]
+
+class VerificationCaseResult(TypedDict):
+    id: str
+    source: Literal["embedded_fixture", "generated_fixture", "extension_fixture", "custom"]
+    path: Literal["shared_library", "caller_integration"]
+    transfer_syntax_uid: Optional[str]
+    passed: bool
+    checks: List[VerificationCheck]
+
+class VerificationCodecResult(TypedDict):
+    id: str
+    transfer_syntax_uid: str
+    required_cases: List[str]
+    shared_library_verified: bool
+    passed: bool
+
+class VerificationReport(TypedDict):
+    schema_version: int
+    suite_version: str
+    library_version: str
+    passed: bool
+    cases: List[VerificationCaseResult]
+    codecs: List[VerificationCodecResult]
+
+def verify_runtime(
+    *,
+    cases: Sequence[VerificationCase] = (),
+    codecs: Sequence[VerificationCodec] = (),
+    tests: Sequence[VerificationCustomTest] = (),
+) -> VerificationReport:
+    """Run offline installation checks. Invalid declarations raise ValueError or TypeError.
+
+    Tests run synchronously once. Ordinary callback exceptions become failures;
+    BaseException subclasses such as KeyboardInterrupt propagate.
     """
     ...

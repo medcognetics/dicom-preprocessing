@@ -1,0 +1,3444 @@
+[
+  {
+    "id": "builtin/static-implicit",
+    "file": "implicit.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-explicit",
+    "file": "explicit.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.1",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-big-endian",
+    "file": "big-endian.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.2",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u16",
+        "values": [
+          0,
+          303,
+          606,
+          909,
+          1212,
+          1515,
+          1818,
+          2121,
+          2424,
+          2727,
+          3030,
+          3333,
+          3636,
+          3939,
+          4242,
+          4545,
+          4848,
+          5151,
+          5454,
+          5757,
+          6060,
+          6363,
+          6666,
+          6969,
+          7272,
+          7575,
+          7878,
+          8181,
+          8484,
+          8787,
+          9090,
+          9393,
+          9696,
+          9999,
+          10302,
+          10605,
+          10908,
+          11211,
+          11514,
+          11817,
+          12120,
+          12423,
+          12726,
+          13029,
+          13332,
+          13635,
+          13938,
+          14241,
+          14544,
+          14847,
+          15150,
+          15453,
+          15756,
+          16059,
+          16362,
+          16665,
+          16968,
+          17271,
+          17574,
+          17877,
+          18180,
+          18483,
+          18786,
+          19089
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-deflated",
+    "file": "deflated.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.1.99",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-encapsulated-native",
+    "file": "encapsulated-native.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.1.98",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-deflated-frame",
+    "file": "deflated-frame.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.8.1",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-rle",
+    "file": "rle.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.5",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-jpeg-baseline",
+    "file": "jpeg-baseline.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.50",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 3
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-jpeg-extended",
+    "file": "jpeg-extended.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.51",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u16",
+        "values": [
+          0,
+          48,
+          96,
+          144,
+          192,
+          240,
+          288,
+          336,
+          384,
+          432,
+          480,
+          528,
+          576,
+          624,
+          672,
+          720,
+          768,
+          816,
+          864,
+          912,
+          960,
+          1008,
+          1056,
+          1104,
+          1152,
+          1200,
+          1248,
+          1296,
+          1344,
+          1392,
+          1440,
+          1488,
+          1536,
+          1584,
+          1632,
+          1680,
+          1728,
+          1776,
+          1824,
+          1872,
+          1920,
+          1968,
+          2016,
+          2064,
+          2112,
+          2160,
+          2208,
+          2256,
+          2304,
+          2352,
+          2400,
+          2448,
+          2496,
+          2544,
+          2592,
+          2640,
+          2688,
+          2736,
+          2784,
+          2832,
+          2880,
+          2928,
+          2976,
+          3024
+        ],
+        "absolute_tolerance": 3
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-jpeg-lossless",
+    "file": "jpeg-lossless.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.57",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "3"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "4"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 4,
+        "height": 3,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u16",
+        "values": [
+          32768,
+          32770,
+          32774,
+          32775,
+          32772,
+          32771,
+          32768,
+          32777,
+          32780,
+          32775,
+          32776,
+          32781
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-jpeg-lossless-sv1",
+    "file": "jpeg-lossless-sv1.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.70",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "3"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "4"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 4,
+        "height": 3,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u16",
+        "values": [
+          32768,
+          32770,
+          32774,
+          32775,
+          32772,
+          32771,
+          32768,
+          32777,
+          32780,
+          32775,
+          32776,
+          32781
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-j2k-lossless",
+    "file": "j2k-lossless.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.90",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-j2k-lossy",
+    "file": "j2k-lossy.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.91",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 2
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-j2k-part2-lossless",
+    "file": "j2k-part2-lossless.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.92",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-j2k-part2-lossy",
+    "file": "j2k-part2-lossy.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.93",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 2
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-htj2k-lossless",
+    "file": "htj2k-lossless.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.201",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-htj2k-rpcl",
+    "file": "htj2k-rpcl.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.202",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 0
+      }
+    ]
+  },
+  {
+    "id": "builtin/static-htj2k-lossy",
+    "file": "htj2k-lossy.dcm",
+    "transfer_syntax_uid": "1.2.840.10008.1.2.4.203",
+    "tags": [
+      {
+        "path": [
+          {
+            "group": 16,
+            "element": 16
+          }
+        ],
+        "vr": "PN",
+        "values": [
+          "SYNTHETIC^VERIFICATION"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 16
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 17
+          }
+        ],
+        "vr": "US",
+        "values": [
+          "8"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 48
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0.5",
+          "0.75"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4178
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "0"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4179
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "1"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4176
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "128"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 40,
+            "element": 4177
+          }
+        ],
+        "vr": "DS",
+        "values": [
+          "256"
+        ]
+      },
+      {
+        "path": [
+          {
+            "group": 8,
+            "element": 4146,
+            "item": 0
+          },
+          {
+            "group": 8,
+            "element": 256
+          }
+        ],
+        "vr": "SH",
+        "values": [
+          "SELFTEST"
+        ]
+      }
+    ],
+    "frames": [
+      {
+        "width": 8,
+        "height": 8,
+        "samples_per_pixel": 1,
+        "planar_configuration": 0,
+        "sample_type": "u8",
+        "values": [
+          0,
+          3,
+          6,
+          9,
+          12,
+          15,
+          18,
+          21,
+          24,
+          27,
+          30,
+          33,
+          36,
+          39,
+          42,
+          45,
+          48,
+          51,
+          54,
+          57,
+          60,
+          63,
+          66,
+          69,
+          72,
+          75,
+          78,
+          81,
+          84,
+          87,
+          90,
+          93,
+          96,
+          99,
+          102,
+          105,
+          108,
+          111,
+          114,
+          117,
+          120,
+          123,
+          126,
+          129,
+          132,
+          135,
+          138,
+          141,
+          144,
+          147,
+          150,
+          153,
+          156,
+          159,
+          162,
+          165,
+          168,
+          171,
+          174,
+          177,
+          180,
+          183,
+          186,
+          189
+        ],
+        "absolute_tolerance": 3
+      }
+    ]
+  }
+]

@@ -81,6 +81,74 @@ export interface RenderedFrame extends FrameMetadata {
   coordinateTransform: CoordinateTransform
   data: Buffer
 }
+
+export interface VerificationTagPath {
+  group: number
+  element: number
+  item?: number | null
+}
+export interface VerificationTagExpectation {
+  path: VerificationTagPath[]
+  vr: string
+  values: string[]
+}
+export interface VerificationFrameExpectation {
+  width: number
+  height: number
+  samplesPerPixel: 1 | 3
+  planarConfiguration: 0 | 1
+  sampleType: 'u8' | 'i8' | 'u16' | 'i16'
+  values: number[]
+  absoluteTolerance?: number
+}
+export interface VerificationCase {
+  id: string
+  dicomBytes: Uint8Array
+  transferSyntaxUid: string
+  tags: VerificationTagExpectation[]
+  frames: VerificationFrameExpectation[]
+}
+export interface VerificationCodec {
+  id: string
+  requiredCases: Record<string, string[]>
+}
+export interface VerificationCheck {
+  name: string
+  passed: boolean
+  diagnostic?: string | null
+}
+export interface VerificationCustomTest {
+  id: string
+  run: () => VerificationCheck[]
+}
+export interface VerificationOptions {
+  cases?: VerificationCase[]
+  codecs?: VerificationCodec[]
+  tests?: VerificationCustomTest[]
+}
+export interface VerificationCaseResult {
+  id: string
+  source: 'embedded_fixture' | 'generated_fixture' | 'extension_fixture' | 'custom'
+  path: 'shared_library' | 'caller_integration'
+  transferSyntaxUid: string | null
+  passed: boolean
+  checks: VerificationCheck[]
+}
+export interface VerificationCodecResult {
+  id: string
+  transferSyntaxUid: string
+  requiredCases: string[]
+  sharedLibraryVerified: boolean
+  passed: boolean
+}
+export interface VerificationReport {
+  schemaVersion: number
+  suiteVersion: string
+  libraryVersion: string
+  passed: boolean
+  cases: VerificationCaseResult[]
+  codecs: VerificationCodecResult[]
+}
 export declare class PreparedDicom {
   get framePlan(): FramePlan
   renderFrame(frameIndex: number): RenderedFrame
@@ -142,3 +210,5 @@ export declare function prepareDicom(input: DicomInput, options?: PrepareOptions
 export declare function renderDisplayFrame(prepared: PreparedDicom, frameIndex: number): RenderedFrame
 
 export declare function renderFrame(prepared: PreparedDicom, frameIndex: number): RenderedFrame
+
+export declare function verifyRuntime(options?: VerificationOptions): VerificationReport

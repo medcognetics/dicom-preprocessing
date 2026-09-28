@@ -1,3 +1,5 @@
+pub mod verification;
+
 use std::io::Cursor;
 
 use dicom::object::from_reader;

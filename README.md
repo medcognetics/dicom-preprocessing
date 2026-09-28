@@ -2,6 +2,14 @@
 
 Implements a tool that preprocesses DICOM files into TIFF images. The primary motivation is to prepare DICOM images for use in computer vision tasks, with a focus on efficient storage and minimization of decode processing time.
 
+### Runtime Verification
+
+Use `verify_runtime()` in Rust/Python or `verifyRuntime()` in Node to run an offline
+installation check of tag parsing, pixel decoding, and preprocessing. Applications
+can add fixtures, custom tests, and codec coverage declarations. See
+[the runtime verification guide](docs/runtime-verification.md) for examples and
+current decoder findings. A failed report must not be treated as a successful check.
+
 ### Building Distributable Artifacts
 
 Run `make build` to create release artifacts for all supported Linux package surfaces:

@@ -892,8 +892,7 @@ checksum = "fb22e947478ccf9dc44d8922042c677a63fbb88f2cb468521d1145816e5087cb"
 [[package]]
 name = "dicom"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23ecf5e95d23500de7e76c97eb7f632d31218cb207b1ca49a7d5b1bc319f4aeb"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "dicom-core",
  "dicom-dictionary-std",
@@ -909,8 +908,7 @@ dependencies = [
 [[package]]
 name = "dicom-core"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9cc2f5e27e1395515510d3c71ad3d86f8f3c1597b23659f7df8cc933f94b92a2"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "chrono",
  "either",
@@ -924,8 +922,7 @@ dependencies = [
 [[package]]
 name = "dicom-dictionary-std"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd658dbe4102706148f924227cc5107677a9b0341c2efa2aa041b2c9c7d23d00"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "dicom-core",
  "once_cell",
@@ -934,8 +931,7 @@ dependencies = [
 [[package]]
 name = "dicom-dump"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e0f8ee96d49fb578eabc2057d8bb5f8bbf9113a87ab570b65a68857b944bb5f"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "dicom-core",
  "dicom-dictionary-std",
@@ -952,8 +948,7 @@ dependencies = [
 [[package]]
 name = "dicom-encoding"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31c6ac3cbc66644aa0f4727130b34c548ac470ba8678202dbfc0be11f9169264"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "byteordered",
  "dicom-core",
@@ -966,8 +961,7 @@ dependencies = [
 [[package]]
 name = "dicom-json"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e17a0468bd66f606d21d05773b86166302e192ab74dd2347b6895985f4b5d84e"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "base64",
  "dicom-core",
@@ -982,8 +976,7 @@ dependencies = [
 [[package]]
 name = "dicom-object"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0504b87987f0e7624cf7ee063fe7ffdb438c66c092620817fb9bb0f130686b85"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "byteordered",
  "dicom-core",
@@ -1000,8 +993,7 @@ dependencies = [
 [[package]]
 name = "dicom-parser"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b35ad5a068e04a6e1c441982438e41d92b940a7c52998388b31197c7393a6ae"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "dicom-core",
  "dicom-dictionary-std",
@@ -1014,8 +1006,7 @@ dependencies = [
 [[package]]
 name = "dicom-pixeldata"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6362ed7417c2e431c4cb0f5bb8f45e6eefc8665f70354c8352287a64b176f3e"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "byteorder",
  "dicom-core",
@@ -1098,8 +1089,7 @@ dependencies = [
 [[package]]
 name = "dicom-transfer-syntax-registry"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f05c1eb0b59a2c2fdee65fc73105f8a4c346d91f7d74b5d560b1807acf802101"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "byteordered",
  "dicom-core",
@@ -1116,8 +1106,7 @@ dependencies = [
 [[package]]
 name = "dicom-ul"
 version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b8093ce06f08bd44788300d03fdf03dcfbe06418034b0de6a6a53c56b555917"
+source = "git+https://github.com/medcognetics/dicom-rs.git?branch=fix%2Frle-sample-offset-v0.10#663e9666ba6bd34f7cfc2685591490669cc2d5f4"
 dependencies = [
  "byteordered",
  "bytes",
@@ -1866,7 +1855,7 @@ dependencies = [
 [[package]]
 name = "jpeg-decoder"
 version = "0.3.2"
-source = "git+https://github.com/TidalPaladin/jpeg-decoder.git?branch=fix%2Flossless-restart-boundary-286#201d4c98f16d1d332912d92d71057310bd5eca8d"
+source = "git+https://github.com/medcognetics/jpeg-decoder.git?branch=dicom-12bit-extended#982d7ace394ab475dcbed28e58f772decf4574f5"
 dependencies = [
  "rayon",
 ]

@@ -13,6 +13,8 @@ const GENERATED: &[(&str, &str)] = &[
     ("builtin/generated-rgb", EXPLICIT),
     ("builtin/generated-planar-rgb", EXPLICIT),
     ("builtin/generated-rle", "1.2.840.10008.1.2.5"),
+    ("builtin/generated-rle-u16", "1.2.840.10008.1.2.5"),
+    ("builtin/generated-rgb-rle-u16", "1.2.840.10008.1.2.5"),
     ("builtin/generated-jpeg", "1.2.840.10008.1.2.4.50"),
 ];
 
@@ -28,6 +30,7 @@ fn embedded(name: &str) -> Option<&'static [u8]> {
         "rle",
         "jpeg-baseline",
         "jpeg-extended",
+        "jpeg-extended-37x23",
         "jpeg-lossless",
         "jpeg-lossless-sv1",
         "j2k-lossless",
@@ -120,10 +123,15 @@ pub(super) fn generated(id: &str, uid: &str) -> Result<VerificationCase, ()> {
         .ok_or(())?;
     let mut file = from_reader(Cursor::new(&case.dicom_bytes)).map_err(|_| ())?;
     let signed = id.ends_with("signed");
-    let rgb = id.ends_with("rgb");
-    let planar = id.ends_with("planar-rgb");
+    let unsigned_wide = id.ends_with("u16");
+    let wide = signed || unsigned_wide;
+    let rgb = id.contains("rgb");
+    let planar = id.contains("planar-rgb");
+    let rle = id.contains("-rle");
     let sample_type = if signed {
         SampleType::I16
+    } else if unsigned_wide {
+        SampleType::U16
     } else {
         SampleType::U8
     };
@@ -138,14 +146,17 @@ pub(super) fn generated(id: &str, uid: &str) -> Result<VerificationCase, ()> {
                 state ^= state << 5;
                 if signed {
                     (state % 60001) as i32 - 30000
+                } else if unsigned_wide {
+                    // Distinct high and low bytes expose swapped RLE segments.
+                    ((i * 2053 + frame * 4099 + 17) * 31) % 65536
                 } else {
                     (i * 3 + frame * 11) % 192
                 }
             })
             .collect::<Vec<_>>();
         for &value in &values {
-            if signed {
-                bytes.extend_from_slice(&(value as i16).to_le_bytes());
+            if wide {
+                bytes.extend_from_slice(&(value as u16).to_le_bytes());
             } else {
                 bytes.push(value as u8);
             }
@@ -162,9 +173,9 @@ pub(super) fn generated(id: &str, uid: &str) -> Result<VerificationCase, ()> {
     }
     put_u16(&mut file, tags::SAMPLES_PER_PIXEL, if rgb { 3 } else { 1 });
     put_u16(&mut file, tags::PLANAR_CONFIGURATION, u16::from(planar));
-    put_u16(&mut file, tags::BITS_ALLOCATED, if signed { 16 } else { 8 });
-    put_u16(&mut file, tags::BITS_STORED, if signed { 16 } else { 8 });
-    put_u16(&mut file, tags::HIGH_BIT, if signed { 15 } else { 7 });
+    put_u16(&mut file, tags::BITS_ALLOCATED, if wide { 16 } else { 8 });
+    put_u16(&mut file, tags::BITS_STORED, if wide { 16 } else { 8 });
+    put_u16(&mut file, tags::HIGH_BIT, if wide { 15 } else { 7 });
     put_u16(&mut file, tags::PIXEL_REPRESENTATION, u16::from(signed));
     file.put(DataElement::new(
         tags::PHOTOMETRIC_INTERPRETATION,
@@ -172,7 +183,7 @@ pub(super) fn generated(id: &str, uid: &str) -> Result<VerificationCase, ()> {
         if rgb { "RGB" } else { "MONOCHROME2" },
     ));
     file.put(DataElement::new(tags::NUMBER_OF_FRAMES, VR::IS, "3"));
-    let pixel_value = if signed {
+    let pixel_value = if wide {
         PrimitiveValue::U16(
             bytes
                 .chunks_exact(2)
@@ -184,24 +195,15 @@ pub(super) fn generated(id: &str, uid: &str) -> Result<VerificationCase, ()> {
     };
     file.put(DataElement::new(
         tags::PIXEL_DATA,
-        if signed { VR::OW } else { VR::OB },
+        if wide { VR::OW } else { VR::OB },
         pixel_value,
     ));
-    if id.ends_with("rle") {
+    if rle {
+        let samples = if rgb { 3 } else { 1 };
+        let bytes_per_sample = if wide { 2 } else { 1 };
         let fragments = bytes
-            .chunks_exact(64)
-            .map(|frame| {
-                let mut fragment = Vec::new();
-                fragment.extend_from_slice(&1u32.to_le_bytes());
-                fragment.extend_from_slice(&64u32.to_le_bytes());
-                fragment.resize(64, 0);
-                // Each row is one PackBits literal run. Runs cannot cross rows.
-                for row in frame.chunks_exact(8) {
-                    fragment.push(7);
-                    fragment.extend_from_slice(row);
-                }
-                fragment
-            })
+            .chunks_exact(64 * samples * bytes_per_sample)
+            .map(|frame| rle_fragment(frame, samples, bytes_per_sample))
             .collect::<Vec<_>>();
         let mut offset = 0;
         let offsets = fragments
@@ -231,6 +233,31 @@ pub(super) fn generated(id: &str, uid: &str) -> Result<VerificationCase, ()> {
     case.dicom_bytes.clear();
     file.write_all(&mut case.dicom_bytes).map_err(|_| ())?;
     Ok(case)
+}
+
+/// Encodes one 8x8 frame of interleaved little endian samples as RLE Lossless.
+///
+/// Segments follow DICOM PS3.5 Annex G: each sample's most significant byte comes first.
+fn rle_fragment(frame: &[u8], samples: usize, bytes_per_sample: usize) -> Vec<u8> {
+    let segments = samples * bytes_per_sample;
+    let mut fragment = vec![0; 64];
+    fragment[..4].copy_from_slice(&(segments as u32).to_le_bytes());
+    for segment in 0..segments {
+        let offset = fragment.len() as u32;
+        fragment[4 + 4 * segment..8 + 4 * segment].copy_from_slice(&offset.to_le_bytes());
+        let byte = (segment / bytes_per_sample) * bytes_per_sample
+            + (bytes_per_sample - 1 - segment % bytes_per_sample);
+        let plane: Vec<u8> = frame
+            .chunks_exact(segments)
+            .map(|pixel| pixel[byte])
+            .collect();
+        // Each row is one PackBits literal run. Runs cannot cross rows.
+        for row in plane.chunks_exact(8) {
+            fragment.push(7);
+            fragment.extend_from_slice(row);
+        }
+    }
+    fragment
 }
 
 fn preprocessing() -> VerificationCaseResult {

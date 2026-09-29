@@ -20,6 +20,7 @@ test('runtime report is deterministic and covers every enabled decoder', () => {
   assert.ok(report.cases.length >= 25)
   assert.ok(report.codecs.every(codec => codec.requiredCases.length > 0))
   assert.equal(report.passed, report.cases.every(result => result.passed))
+  assert.deepEqual(report.cases.filter(result => !result.passed).map(result => result.id), [])
 })
 
 test('extension fixtures and custom integrations have distinct coverage', () => {

@@ -34,21 +34,21 @@ Calls are synchronous and uncached. Python releases the GIL for shared Rust chec
 and reacquires it for callbacks. Node applications can run verification in a worker.
 The report omits timestamps and durations so repeated runs can be compared directly.
 
-## Current decoder findings
+## Patched decoders
 
-With the pinned dependencies, the suite reports `passed: false` for three cases:
+With the pinned dependencies, the default report passes. Two decoders are patched
+through `[patch.crates-io]` in `Cargo.toml` (#128):
 
-- `builtin/static-rle` and `builtin/generated-rle`: the upstream decoder shifts
-  8-bit monochrome samples by one byte. An independent pydicom decode reproduces
-  the expected samples from the static fixture.
-- `builtin/static-jpeg-extended`: the registered JPEG Extended syntax does not
-  decode the fixture's 12-bit samples.
+- dicom-rs RLE Lossless placed samples at the wrong byte: 8-bit monochrome samples
+  shifted by one byte, and 16-bit RGB samples had their bytes swapped.
+- jpeg-decoder did not decode 12-bit JPEG Extended. The patch adds 12-bit
+  single-component DCT decoding; 12-bit color remains unsupported.
 
-These are installation findings, not skipped tests. The suite retains the correct
-expected values and reports failed codec coverage. The repository's characterization
-test records this exact failure set so new failures cannot pass unnoticed. When the
-underlying codecs are repaired, update that test to require success; do not relax
-the fixture expectations. Applications must decide how to handle a failed report.
+A Rust consumer of this crate must apply the same `[patch.crates-io]` entries in
+its own workspace; Cargo ignores patches from dependencies. Without them,
+`verify_runtime()` reports the affected cases as failed. If a case fails, repair
+the decoder; do not relax the fixture expectations. Applications must decide how
+to handle a failed report.
 
 ## Add a shared-library fixture
 
@@ -196,8 +196,10 @@ to 256 characters; callers must keep them free of sensitive data.
 The embedded corpus covers implicit/explicit little endian, big endian, dataset
 deflate, encapsulated native pixels, frame deflate, RLE, JPEG baseline/extended/
 lossless, JPEG 2000, and HTJ2K. JPEG 2000 Part 2 cases exercise the compatible
-single-component subset, not every Part 2 transform. Generated cases add signed
-16-bit data, interleaved/planar RGB, and multiframe native/RLE/JPEG data.
+single-component subset, not every Part 2 transform. JPEG Extended covers 12-bit
+single-block and multi-block images with partial edge blocks. Generated cases add
+signed 16-bit data, interleaved/planar RGB, unsigned 16-bit monochrome and RGB RLE,
+and multiframe native/RLE/JPEG data.
 
 Preprocessing checks use independent sample expectations for display conversion,
 caller-selected flips, nearest-neighbor resize, centered zero padding, frame order,

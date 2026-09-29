@@ -56,9 +56,22 @@ members = [".", "bindings/node"]
 resolver = "2"
 
 [patch.crates-io]
-# Temporary pin for restart-boundary lossless JPEG decoding fix.
-# Switch back to crates.io once image-rs/jpeg-decoder#287 lands in a stable release.
-jpeg-decoder = { git = "https://github.com/TidalPaladin/jpeg-decoder.git", branch = "fix/lossless-restart-boundary-286" }
+# Temporary decoder patches (#128). Switch back to crates.io once upstream releases include them.
+# Restart-boundary lossless JPEG fix (image-rs/jpeg-decoder#287) plus 12-bit single-component DCT decoding.
+jpeg-decoder = { git = "https://github.com/medcognetics/jpeg-decoder.git", branch = "dicom-12bit-extended" }
+# dicom-rs v0.10.0 with the RLE Lossless sample byte position fix. Patch every dicom-rs crate
+# so that the encoding traits and transfer syntax registry stay a single crate instance.
+dicom = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-core = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-dictionary-std = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-dump = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-encoding = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-json = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-object = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-parser = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-pixeldata = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-transfer-syntax-registry = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
+dicom-ul = { git = "https://github.com/medcognetics/dicom-rs.git", branch = "fix/rle-sample-offset-v0.10" }
 
 [profile.release]
 codegen-units = 1

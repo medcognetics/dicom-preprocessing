@@ -96,7 +96,7 @@ def fixture(name, uid, pixels, compressed=None, tolerance=0):
     ds.PhotometricInterpretation = "MONOCHROME2"
     ds.NumberOfFrames = "1"
     ds.BitsAllocated = pixels.dtype.itemsize * 8
-    ds.BitsStored = 12 if name == "jpeg-extended" else ds.BitsAllocated
+    ds.BitsStored = 12 if name.startswith("jpeg-extended") else ds.BitsAllocated
     ds.HighBit = ds.BitsStored - 1
     ds.PixelRepresentation = int(pixels.dtype.kind == "i")
     ds.PixelSpacing = ["0.5", "0.75"]
@@ -161,6 +161,11 @@ def main():
     add("jpeg-baseline", ".4.50", compressed=imagecodecs.jpeg8_encode(pixels, level=95), tolerance=3)
     extended = pixels.astype(np.uint16) * 16
     add("jpeg-extended", ".4.51", extended, imagecodecs.jpeg8_encode(extended, level=100, bitspersample=12), 3)
+    # 5 x 3 blocks, including partial edge blocks, exercise DC prediction and cropping.
+    # libjpeg-turbo's own decode differs from these samples by at most 8.
+    y, x = np.mgrid[0:23, 0:37]
+    blocks = (x * 53 + y * 89 + (x * y) % 7 * 5).astype(np.uint16)
+    add("jpeg-extended-37x23", ".4.51", blocks, imagecodecs.jpeg8_encode(blocks, level=95, bitspersample=12), 9)
     restart, restart_pixels = lossless_restart()
     add("jpeg-lossless", ".4.57", restart_pixels, restart)
     add("jpeg-lossless-sv1", ".4.70", restart_pixels, restart)

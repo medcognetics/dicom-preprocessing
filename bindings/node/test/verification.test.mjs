@@ -52,6 +52,19 @@ test('invalid declarations fail before callbacks', () => {
   assert.equal(called, false)
 })
 
+test('unknown option names fail before reading cases or invoking callbacks', () => {
+  for (const key of ['test', 'case', 'codec', 'unexpected']) {
+    let accessed = false
+    const options = {
+      [key]: [],
+      get cases() { accessed = true; return [] },
+      tests: [{ id: 'example/callback', run: () => { accessed = true; return [] } }],
+    }
+    assert.throws(() => verifyRuntime(options), /Invalid verification configuration/)
+    assert.equal(accessed, false)
+  }
+})
+
 test('wrong pixels and malformed bytes are report failures', () => {
   for (const corrupt of [false, true]) {
     const fixture = fixtureCase()

@@ -81,6 +81,13 @@ pub fn verify_runtime<'env>(env: &'env Env, options: Option<Object<'env>>) -> Re
     let mut ids = Vec::new();
     let mut callbacks = Vec::new();
     if let Some(options) = options {
+        let keys = options.get_property_names()?;
+        for index in 0..keys.get_array_length()? {
+            let key: String = keys.get_element(index)?;
+            if !matches!(key.as_str(), "cases" | "codecs" | "tests") {
+                return Err(invalid());
+            }
+        }
         for case in options.get::<Vec<Object>>("cases")?.unwrap_or_default() {
             let bytes: Uint8Array = required(&case, "dicomBytes")?;
             let value = serde_json::json!({

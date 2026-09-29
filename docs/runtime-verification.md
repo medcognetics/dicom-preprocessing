@@ -185,7 +185,8 @@ production-decoder inventory.
 Invalid declarations fail before any checks run: Rust returns
 `VerificationConfigurationError`; bindings raise an argument/type exception.
 Test failures are report data. Ordinary callback exceptions become generic failure
-entries and do not stop later callbacks. Python interruption exceptions propagate;
+entries and do not stop later callbacks. Node rejects unknown enumerable top-level
+option names before reading fixtures or running callbacks. Python interruption exceptions propagate;
 Node Promise results fail and rejected promises are consumed to avoid an unhandled
 rejection. Rust callbacks must not panic. Explicit callback diagnostics are limited
 to 256 characters; callers must keep them free of sensitive data.

@@ -273,6 +273,9 @@ def test_linux_jobs_cover_current_and_minimum_runtime_boundaries() -> None:
     assert "make test-rust" in minimum_job
     assert "make test-python-ci" in minimum_job
     assert "make test-node-direct" in minimum_job
+    # Rust 1.89 links with GNU ld, not rust-lld. Bound link memory on beryl slots.
+    assert 'CARGO_PROFILE_DEV_DEBUG: "0"' in minimum_job
+    assert 'CARGO_BUILD_JOBS: "2"' in minimum_job
 
     for job_name in ALL_LINUX_JOBS:
         job = github_job_definition(config, job_name)

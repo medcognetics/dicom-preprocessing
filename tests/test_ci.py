@@ -2,6 +2,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 REPOSITORY_ROOT = Path(__file__).parents[1]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 LINUX_CI_PATH = WORKFLOW_DIRECTORY / "linux-ci.yml"
@@ -29,6 +31,9 @@ MINIMUM_SAFE_JS_YAML_VERSION = (4, 3, 1)
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
 JOB_KEY_PATTERN = re.compile(r"^  ([a-zA-Z0-9_-]+):$")
+PULL_REQUEST_TRIGGER_PATTERN = re.compile(r"^(?:on:.*\bpull_request\b|  (?:- )?pull_request(?::.*)?$)", re.MULTILINE)
+PULL_REQUEST_TARGET_PATTERN = re.compile(r"\bpull_request_target\b")
+HOSTED_RUNS_ON_PATTERN = re.compile(r"    runs-on: (?:ubuntu|windows|macos)-[0-9a-z.-]+")
 TRUSTED_BERYL_RUNS_ON = (
     "    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04\n"
     "      ${{ fromJSON((github.event_name != 'pull_request' || "
@@ -83,6 +88,28 @@ def runs_on_definition(job: str) -> str:
     raise AssertionError("Job has no runs-on definition")
 
 
+def discovered_workflow_paths() -> list[Path]:
+    return sorted((*WORKFLOW_DIRECTORY.glob("*.yml"), *WORKFLOW_DIRECTORY.glob("*.yaml")))
+
+
+def requires_trusted_beryl_routing(config: str) -> bool:
+    return PULL_REQUEST_TRIGGER_PATTERN.search(config) is not None
+
+
+def pull_request_target_runner_violations(config: str) -> list[str]:
+    # TRUSTED_BERYL_RUNS_ON selects beryl for every pull_request_target event, including fork pull requests.
+    # Any mention of the trigger fails closed, whatever the trigger syntax.
+    if PULL_REQUEST_TARGET_PATTERN.search(config) is None:
+        return []
+    return [
+        job_name
+        for job_name in github_job_names(config)
+        if not any(
+            HOSTED_RUNS_ON_PATTERN.fullmatch(line) for line in github_job_definition(config, job_name).splitlines()
+        )
+    ]
+
+
 def action_references(config: str) -> list[str]:
     return [
         line.strip().removeprefix("- uses: ").split(" #", maxsplit=1)[0]
@@ -113,9 +140,8 @@ def test_linux_workflow_defines_expected_jobs_and_timeouts() -> None:
 
 
 def test_pull_request_workflows_use_hosted_runners_only_for_forks() -> None:
-    workflow_paths = sorted((*WORKFLOW_DIRECTORY.glob("*.yml"), *WORKFLOW_DIRECTORY.glob("*.yaml")))
     pull_request_workflow_paths = [
-        path for path in workflow_paths if re.search(r"^  pull_request(?:_target)?:", path.read_text(), re.MULTILINE)
+        path for path in discovered_workflow_paths() if requires_trusted_beryl_routing(path.read_text())
     ]
 
     assert LINUX_CI_PATH in pull_request_workflow_paths
@@ -126,6 +152,62 @@ def test_pull_request_workflows_use_hosted_runners_only_for_forks() -> None:
         for job_name in job_names:
             runs_on = runs_on_definition(github_job_definition(config, job_name))
             assert runs_on == TRUSTED_BERYL_RUNS_ON, f"{workflow_path.name}: {job_name}"
+
+
+def synthetic_workflow(triggers: str, runs_on: str) -> str:
+    return f"name: Synthetic\n\n{triggers}\n\njobs:\n  build:\n{runs_on}\n    steps:\n      - run: true\n"
+
+
+@pytest.mark.parametrize(
+    ("triggers", "expected"),
+    [
+        pytest.param("on:\n  pull_request:\n    branches: [master]", True, id="pull_request-mapping"),
+        pytest.param("on: [push, pull_request]", True, id="pull_request-inline"),
+        pytest.param("on:\n  - push\n  - pull_request", True, id="pull_request-list"),
+        pytest.param("on:\n  pull_request_target:\n    branches: [master]", False, id="pull_request_target-mapping"),
+        pytest.param("on: [push, pull_request_target]", False, id="pull_request_target-inline"),
+        pytest.param("on:\n  push:\n    branches: [master]", False, id="push"),
+    ],
+)
+def test_trusted_beryl_routing_applies_only_to_pull_request_trigger(triggers: str, expected: bool) -> None:
+    assert requires_trusted_beryl_routing(synthetic_workflow(triggers, TRUSTED_BERYL_RUNS_ON)) is expected
+
+
+@pytest.mark.parametrize(
+    "triggers",
+    [
+        pytest.param("on:\n  pull_request_target:\n    branches: [master]", id="mapping"),
+        pytest.param("on: pull_request_target", id="scalar"),
+        pytest.param("on: [push, pull_request_target]", id="inline"),
+        pytest.param("on:\n  - push\n  - pull_request_target", id="list"),
+        pytest.param("on:\n  pull_request:\n  pull_request_target:", id="with-pull_request"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("runs_on", "expected_violations"),
+    [
+        pytest.param(TRUSTED_BERYL_RUNS_ON, ["build"], id="trusted-beryl-expression"),
+        pytest.param("    runs-on: [self-hosted, linux, x64, beryl]", ["build"], id="beryl-labels"),
+        pytest.param("    runs-on: ${{ vars.RUNNER }}", ["build"], id="runner-expression"),
+        pytest.param("    uses: ./.github/workflows/reusable.yml", ["build"], id="reusable-workflow"),
+        pytest.param("    runs-on: ubuntu-24.04", [], id="hosted-label"),
+    ],
+)
+def test_pull_request_target_jobs_require_literal_hosted_runners(
+    triggers: str, runs_on: str, expected_violations: list[str]
+) -> None:
+    assert pull_request_target_runner_violations(synthetic_workflow(triggers, runs_on)) == expected_violations
+
+
+def test_pull_request_target_runner_check_ignores_other_triggers() -> None:
+    config = synthetic_workflow("on:\n  push:\n    branches: [master]", TRUSTED_BERYL_RUNS_ON)
+
+    assert pull_request_target_runner_violations(config) == []
+
+
+def test_pull_request_target_workflows_never_use_beryl() -> None:
+    for workflow_path in discovered_workflow_paths():
+        assert pull_request_target_runner_violations(workflow_path.read_text()) == [], workflow_path.name
 
 
 def test_beryl_jobs_bootstrap_rustup_and_select_linked_python() -> None:

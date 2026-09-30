@@ -57,6 +57,7 @@ Python style is formatter-driven:
 - Linux CI runs for pull requests targeting `master`, pushes to `master`, exact semantic-version tags, and manual dispatches. Pull-request jobs test GitHub's synthetic merge result.
 - Same-repository Linux jobs use the `[self-hosted, linux, x64, beryl]` runner labels. `beryl` provisions one Ubuntu x64 CPU node at a time, assigns exactly one job, and destroys the node and local storage afterward. Jobs must install every toolchain and dependency they use and must not rely on prior runner state.
 - Fork pull requests use `ubuntu-24.04` instead of `beryl`, preserving the same required-check names without exposing self-hosted infrastructure.
+- The `beryl` routing expression recognizes only `pull_request` events. Workflows that mention `pull_request_target` must use literal GitHub-hosted runner labels in every job, because the expression selects `beryl` for fork-originated `pull_request_target` events.
 - Required Linux checks must use `beryl` for trusted events. GitHub-hosted jobs cannot start when the organization has no Actions credits, so a hosted-only required check blocks every pull request.
 - `Linux / Python`, `Linux / Node`, and `Linux / Minimum versions` require `Linux / Rust`. After Rust passes, the three jobs queue independently for `beryl` capacity.
 - `Linux / Rust` uses Rust 1.97.1 and runs `make quality-rust` and `make test-rust`. `Linux / Python` tests Python 3.14 with NumPy 2.4.6. `Linux / Node` tests Node 24.18 and 26.5, with quality checks on Node 26.5.

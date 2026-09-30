@@ -5,7 +5,7 @@ use clap::Parser;
 use dicom::dictionary_std::tags;
 use dicom::object::open_file;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
+use dicom_pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
 use dicom_preprocessing::DicomColorType;
 use indicatif::ProgressFinish;
 use rayon::prelude::*;

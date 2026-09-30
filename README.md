@@ -8,7 +8,15 @@ Use `verify_runtime()` in Rust/Python or `verifyRuntime()` in Node to run an off
 installation check of tag parsing, pixel decoding, and preprocessing. Applications
 can add fixtures, custom tests, and codec coverage declarations. See
 [the runtime verification guide](docs/runtime-verification.md) for examples and
-current decoder findings. A failed report must not be treated as a successful check.
+the JPEG and RLE decoders. A failed report must not be treated as a successful check.
+
+### Build Requirements
+
+Building from source requires Rust 1.89.0 or newer, a C compiler, and CMake 3.x or
+newer: the JPEG reader compiles the bundled libjpeg-turbo source. NASM is optional on
+x86_64; when present, libjpeg-turbo uses its SIMD code, which produces the same samples.
+Rust consumers that want this crate's JPEG and RLE readers must not enable
+`dicom-pixeldata`'s `native`, `jpeg`, or `rle` features; see the runtime verification guide.
 
 ### Building Distributable Artifacts
 
@@ -344,7 +352,7 @@ npm install --omit=optional
 
 After removing `node_modules`, the generated lockfile can reproduce the installation with `npm ci --omit=optional`.
 
-npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and a supported Node release: Node 22.13 or newer in the Node 22 line, Node 24, or Node 26. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows.
+npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and a supported Node release: Node 22.13 or newer in the Node 22 line, Node 24, or Node 26. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows, plus CMake 3.x or newer for the bundled libjpeg-turbo.
 
 Supported hosts are Linux x64 GNU, macOS arm64, and Windows x64 MSVC.
 

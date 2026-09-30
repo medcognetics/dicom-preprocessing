@@ -140,7 +140,7 @@ test-python-wheel:
 	trap 'rm -rf "$$test_env"' EXIT; \
 	$(UV) venv --python $(PYTHON_BUILD_VERSION) "$$test_env"; \
 	$(UV) pip install --python "$$test_env/bin/python" "$$wheel"; \
-	cd "$$test_env" && "$$test_env/bin/python" -c 'import dicom_preprocessing as dp; r = dp.verify_runtime(); assert r["schema_version"] == 1; assert len(r["cases"]) >= 25; assert r == dp.verify_runtime()'
+	cd "$$test_env" && "$$test_env/bin/python" -c 'import dicom_preprocessing as dp; r = dp.verify_runtime(); assert r["schema_version"] == 1; assert len(r["cases"]) >= 25; assert r["passed"]; assert r == dp.verify_runtime()'
 
 # Docs image generation recipe.
 # NOTE: The lesion crop coordinates were manually determined for the specific source DICOM

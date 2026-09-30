@@ -1,24 +1,18 @@
 use super::*;
 
 #[test]
-fn builtin_suite_detects_pinned_decoder_defects_and_is_repeatable() {
+fn builtin_suite_passes_and_is_repeatable() {
     let first = verify_runtime();
-    // Do not hide known decoder defects or change independent pixel oracles.
+    // Fix failures in the decoders; never change independent pixel oracles to match them.
     let failures: Vec<_> = first
         .cases
         .iter()
         .filter(|case| !case.passed)
         .map(|case| case.id.as_str())
         .collect();
-    assert_eq!(
-        failures,
-        vec![
-            "builtin/static-rle",
-            "builtin/static-jpeg-extended",
-            "builtin/generated-rle"
-        ]
-    );
-    assert!(!first.passed);
+    assert_eq!(failures, Vec::<&str>::new());
+    assert!(first.passed);
+    assert!(first.codecs.iter().all(|codec| codec.passed));
     assert_eq!(first, verify_runtime());
 }
 

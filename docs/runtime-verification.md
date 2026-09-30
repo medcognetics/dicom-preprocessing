@@ -34,21 +34,32 @@ Calls are synchronous and uncached. Python releases the GIL for shared Rust chec
 and reacquires it for callbacks. Node applications can run verification in a worker.
 The report omits timestamps and durations so repeated runs can be compared directly.
 
-## Current decoder findings
+## Decoders
 
-With the pinned dependencies, the suite reports `passed: false` for three cases:
+With the pinned dependencies, the default report passes. This crate supplies its
+own readers for two families of transfer syntaxes, because the dicom-rs built-in
+readers decode some inputs incorrectly (#128):
 
-- `builtin/static-rle` and `builtin/generated-rle`: the upstream decoder shifts
-  8-bit monochrome samples by one byte. An independent pydicom decode reproduces
-  the expected samples from the static fixture.
-- `builtin/static-jpeg-extended`: the registered JPEG Extended syntax does not
-  decode the fixture's 12-bit samples.
+- JPEG Baseline, Extended, and Lossless (`.4.50`, `.4.51`, `.4.57`, `.4.70`) use
+  libjpeg-turbo 3.1 through `turbojpeg-sys`: 8-bit and 12-bit DCT (grayscale and
+  color) and 2-16-bit lossless with all predictors. Three-component images are
+  converted to RGB. Corrupt-data warnings are errors. A lossless restart interval
+  that is not a whole number of rows is rejected, as ITU-T T.81 requires.
+- RLE Lossless (`1.2.840.10008.1.2.5`) uses an in-crate reader with bounds-checked
+  segments. The dicom-rs reader shifted 8-bit monochrome samples by one byte and
+  swapped the bytes of 16-bit RGB samples.
 
-These are installation findings, not skipped tests. The suite retains the correct
-expected values and reports failed codec coverage. The repository's characterization
-test records this exact failure set so new failures cannot pass unnoticed. When the
-underlying codecs are repaired, update that test to require success; do not relax
-the fixture expectations. Applications must decide how to handle a failed report.
+These readers are registered with the dicom-rs transfer syntax registry, which only
+lets a submission replace a stub. This crate therefore builds `dicom-pixeldata`
+without its `native`, `jpeg`, and `rle` features. A consumer whose dependency graph
+enables any of them, for example through `dicom-pixeldata` default features or the
+`dicom` crate's `image`, `ndarray`, or `pixeldata` features, keeps the built-in
+readers. The `builtin/decoder-registration` case then fails, and each overridden
+transfer syntax's codec coverage fails with it. Rust consumers should depend on
+`dicom-pixeldata` with `default-features = false`.
+
+If a case fails, repair the decoder or the dependency features; do not relax the
+fixture expectations. Applications must decide how to handle a failed report.
 
 ## Add a shared-library fixture
 
@@ -196,8 +207,10 @@ to 256 characters; callers must keep them free of sensitive data.
 The embedded corpus covers implicit/explicit little endian, big endian, dataset
 deflate, encapsulated native pixels, frame deflate, RLE, JPEG baseline/extended/
 lossless, JPEG 2000, and HTJ2K. JPEG 2000 Part 2 cases exercise the compatible
-single-component subset, not every Part 2 transform. Generated cases add signed
-16-bit data, interleaved/planar RGB, and multiframe native/RLE/JPEG data.
+single-component subset, not every Part 2 transform. JPEG Extended covers 12-bit
+single-block and multi-block images with partial edge blocks. Generated cases add
+signed 16-bit data, interleaved/planar RGB, unsigned 16-bit monochrome and RGB RLE,
+and multiframe native/RLE/JPEG data.
 
 Preprocessing checks use independent sample expectations for display conversion,
 caller-selected flips, nearest-neighbor resize, centered zero padding, frame order,

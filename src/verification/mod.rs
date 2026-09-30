@@ -381,7 +381,7 @@ impl VerificationRun {
             .collect::<Vec<_>>();
         VerificationReport {
             schema_version: 1,
-            suite_version: "1".into(),
+            suite_version: "2".into(),
             library_version: env!("CARGO_PKG_VERSION").into(),
             passed: self.cases.iter().all(|case| case.passed)
                 && codecs.iter().all(|codec| codec.passed),

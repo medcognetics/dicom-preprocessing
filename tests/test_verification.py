@@ -41,6 +41,7 @@ def test_default_report_is_repeatable_and_offline(monkeypatch, tmp_path):
     assert len(first["cases"]) >= 25
     assert all(codec["required_cases"] for codec in first["codecs"])
     assert first["passed"] == all(case["passed"] for case in first["cases"])
+    assert first["passed"], [case["id"] for case in first["cases"] if not case["passed"]]
     with ThreadPoolExecutor(max_workers=2) as pool:
         assert all(report == first for report in pool.map(lambda _: dp.verify_runtime(), range(2)))
     assert list(tmp_path.iterdir()) == []

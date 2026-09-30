@@ -14,7 +14,7 @@ use crate::transform::{Crop, Flip, FlipOptions, Padding, PaddingDirection, Resiz
 use crate::volume::DEFAULT_INTERPOLATE_TARGET_FRAMES;
 use dicom::dictionary_std::tags;
 use dicom::object::{from_reader, open_file, FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
+use dicom_pixeldata::{ConvertOptions, VoiLutOption, WindowLevel};
 use ndarray::Array4;
 use num::Zero;
 use numpy::Element;

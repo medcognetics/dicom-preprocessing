@@ -1,3 +1,4 @@
+pub mod codec;
 pub mod color;
 pub mod errors;
 pub mod file;
@@ -11,6 +12,7 @@ pub mod transform;
 pub mod validation;
 pub mod viewer;
 
+pub use codec::{decoder_registrations, DecoderRegistration};
 pub use color::*;
 pub use errors::*;
 pub use file::*;

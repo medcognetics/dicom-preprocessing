@@ -1,10 +1,11 @@
 //! Pixel data readers registered with the dicom-rs transfer syntax registry.
 //!
-//! dicom-rs ships JPEG and RLE readers that decode some inputs incorrectly (#128). This crate
-//! builds `dicom-pixeldata` without its `jpeg` and `rle` features, so those transfer syntaxes are
-//! registry stubs, and submits its own readers here. A submission only replaces a stub: if any
-//! crate in the final dependency graph enables `dicom-pixeldata`'s `native`, `jpeg`, or `rle`
-//! features, the built-in readers stay in place. [`decoder_registrations`] reports which reader
+//! dicom-rs ships JPEG and RLE readers that decode some inputs incorrectly (#128), and a JPEG 2000
+//! reader that decodes each frame on a single thread. This crate builds `dicom-pixeldata` without
+//! its `jpeg`, `rle`, and `openjpeg-sys` features, so those transfer syntaxes are registry stubs,
+//! and submits its own readers here. A submission only replaces a stub: if any crate in the final
+//! dependency graph enables `dicom-pixeldata`'s `native`, `jpeg`, `rle`, `openjpeg-sys`, or
+//! `openjp2` features, the built-in readers stay in place. [`decoder_registrations`] reports which reader
 //! is active, so applications can reject a build in which one is not ours.
 use std::borrow::Cow;
 
@@ -14,9 +15,11 @@ use dicom::encoding::{submit_ele_transfer_syntax, Codec, NeverAdapter, NeverPixe
 use dicom::transfer_syntax::{TransferSyntaxIndex, TransferSyntaxRegistry};
 
 mod jpeg;
+mod jpeg2000;
 mod rle;
 
 pub use jpeg::TurboJpegAdapter;
+pub use jpeg2000::{jpeg2000_threads, set_jpeg2000_threads, OpenJpegAdapter, JPEG2000_THREADS_ENV};
 pub use rle::RleAdapter;
 
 /// Marker included in the name of every transfer syntax whose reader this crate provides.
@@ -41,35 +44,95 @@ pub const OVERRIDDEN_TRANSFER_SYNTAXES: &[(&str, &str)] = &[
         "JPEG Lossless, Non-Hierarchical, First-Order Prediction [dicom-preprocessing] libjpeg-turbo",
     ),
     ("1.2.840.10008.1.2.5", "RLE Lossless [dicom-preprocessing]"),
+    (
+        "1.2.840.10008.1.2.4.90",
+        "JPEG 2000 Image Compression (Lossless Only) [dicom-preprocessing] OpenJPEG",
+    ),
+    (
+        "1.2.840.10008.1.2.4.91",
+        "JPEG 2000 Image Compression [dicom-preprocessing] OpenJPEG",
+    ),
+    (
+        "1.2.840.10008.1.2.4.92",
+        "JPEG 2000 Part 2 Multi-component Image Compression (Lossless Only) [dicom-preprocessing] OpenJPEG",
+    ),
+    (
+        "1.2.840.10008.1.2.4.93",
+        "JPEG 2000 Part 2 Multi-component Image Compression [dicom-preprocessing] OpenJPEG",
+    ),
+    (
+        "1.2.840.10008.1.2.4.201",
+        "High-Throughput JPEG 2000 Image Compression (Lossless Only) [dicom-preprocessing] OpenJPEG",
+    ),
+    (
+        "1.2.840.10008.1.2.4.202",
+        "High-Throughput JPEG 2000 with RPCL Options Image Compression (Lossless Only) [dicom-preprocessing] OpenJPEG",
+    ),
+    (
+        "1.2.840.10008.1.2.4.203",
+        "High-Throughput JPEG 2000 Image Compression [dicom-preprocessing] OpenJPEG",
+    ),
 ];
 
 type JpegCodec = Codec<NeverAdapter, TurboJpegAdapter, NeverPixelAdapter>;
 type RleCodec = Codec<NeverAdapter, RleAdapter, NeverPixelAdapter>;
+type Jpeg2000Codec = Codec<NeverAdapter, OpenJpegAdapter, NeverPixelAdapter>;
 
-submit_ele_transfer_syntax!(
-    OVERRIDDEN_TRANSFER_SYNTAXES[0].0,
-    OVERRIDDEN_TRANSFER_SYNTAXES[0].1,
+/// Submits the reader for `OVERRIDDEN_TRANSFER_SYNTAXES[$index]`.
+macro_rules! submit {
+    ($index:literal, $codec:expr) => {
+        submit_ele_transfer_syntax!(
+            OVERRIDDEN_TRANSFER_SYNTAXES[$index].0,
+            OVERRIDDEN_TRANSFER_SYNTAXES[$index].1,
+            $codec
+        );
+    };
+}
+
+submit!(
+    0,
     JpegCodec::EncapsulatedPixelData(Some(TurboJpegAdapter), None)
 );
-submit_ele_transfer_syntax!(
-    OVERRIDDEN_TRANSFER_SYNTAXES[1].0,
-    OVERRIDDEN_TRANSFER_SYNTAXES[1].1,
+submit!(
+    1,
     JpegCodec::EncapsulatedPixelData(Some(TurboJpegAdapter), None)
 );
-submit_ele_transfer_syntax!(
-    OVERRIDDEN_TRANSFER_SYNTAXES[2].0,
-    OVERRIDDEN_TRANSFER_SYNTAXES[2].1,
+submit!(
+    2,
     JpegCodec::EncapsulatedPixelData(Some(TurboJpegAdapter), None)
 );
-submit_ele_transfer_syntax!(
-    OVERRIDDEN_TRANSFER_SYNTAXES[3].0,
-    OVERRIDDEN_TRANSFER_SYNTAXES[3].1,
+submit!(
+    3,
     JpegCodec::EncapsulatedPixelData(Some(TurboJpegAdapter), None)
 );
-submit_ele_transfer_syntax!(
-    OVERRIDDEN_TRANSFER_SYNTAXES[4].0,
-    OVERRIDDEN_TRANSFER_SYNTAXES[4].1,
-    RleCodec::EncapsulatedPixelData(Some(RleAdapter), None)
+submit!(4, RleCodec::EncapsulatedPixelData(Some(RleAdapter), None));
+submit!(
+    5,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
+);
+submit!(
+    6,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
+);
+submit!(
+    7,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
+);
+submit!(
+    8,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
+);
+submit!(
+    9,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
+);
+submit!(
+    10,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
+);
+submit!(
+    11,
+    Jpeg2000Codec::EncapsulatedPixelData(Some(OpenJpegAdapter), None)
 );
 
 /// The registered reader for one overridden transfer syntax.
@@ -274,6 +337,50 @@ mod tests {
             let difference = (sum as f64 - reference_sum as f64).abs() / samples.len() as f64;
             assert!(difference <= 0.02, "{name}: mean differs by {difference}");
         }
+    }
+
+    /// Lossless files, and lossy files whose reference is their own uncompressed decode, must
+    /// match the uncompressed reference exactly. `MR_small` is signed 16-bit, and `emri_small`
+    /// has 10 frames.
+    #[rstest]
+    #[case::j2k_lossless_16_bit("pydicom/693_J2KR.dcm", "pydicom/693_UNCR.dcm")]
+    #[case::j2k_lossless_rgb("pydicom/US1_J2KR.dcm", "pydicom/US1_UNCR.dcm")]
+    #[case::j2k_lossless_signed("pydicom/MR_small_jp2klossless.dcm", "pydicom/MR_small.dcm")]
+    #[case::j2k_lossless_multiframe(
+        "pydicom/emri_small_jpeg_2k_lossless.dcm",
+        "pydicom/emri_small.dcm"
+    )]
+    #[case::j2k_lossy("pydicom/693_J2KI.dcm", "pydicom/693_UNCI.dcm")]
+    #[case::j2k_lossy_single_layer("pydicom/JPEG2000.dcm", "pydicom/JPEG2000_UNC.dcm")]
+    #[case::rle_signed("pydicom/MR_small_RLE.dcm", "pydicom/MR_small.dcm")]
+    #[case::rle_multiframe("pydicom/emri_small_RLE.dcm", "pydicom/emri_small.dcm")]
+    fn public_samples_match_uncompressed_references(#[case] name: &str, #[case] reference: &str) {
+        let open = |name| dicom::object::open_file(dicom_test_files::path(name).unwrap()).unwrap();
+        let (object, reference) = (open(name), open(reference));
+        let decoded = object.decode_pixel_data().unwrap();
+        let expected = reference.decode_pixel_data().unwrap();
+        assert_eq!(
+            decoded.number_of_frames(),
+            expected.number_of_frames(),
+            "{name}"
+        );
+        assert!(
+            decoded.data() == expected.data(),
+            "{name} differs from its reference"
+        );
+    }
+
+    #[test]
+    fn jpeg2000_output_does_not_depend_on_the_thread_count() {
+        let object =
+            dicom::object::open_file(dicom_test_files::path("pydicom/693_J2KR.dcm").unwrap())
+                .unwrap();
+        super::set_jpeg2000_threads(1);
+        let single = object.decode_pixel_data().unwrap().data().to_vec();
+        super::set_jpeg2000_threads(4);
+        let multi = object.decode_pixel_data().unwrap().data().to_vec();
+        super::set_jpeg2000_threads(0);
+        assert!(single == multi);
     }
 
     #[test]

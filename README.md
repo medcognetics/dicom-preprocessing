@@ -8,10 +8,11 @@ Building from source requires Rust 1.89.0 or newer, a C compiler, and CMake 3.x 
 newer: the JPEG reader compiles the bundled libjpeg-turbo source. NASM is optional on
 x86_64; when present, libjpeg-turbo uses its SIMD code, which produces the same samples.
 
-### JPEG and RLE Decoding
+### JPEG, JPEG 2000, and RLE Decoding
 
-This crate supplies its own readers for two families of DICOM transfer syntaxes,
-because the dicom-rs built-in readers decode some inputs incorrectly (#128):
+This crate supplies its own readers for three families of DICOM transfer syntaxes.
+The dicom-rs built-in JPEG and RLE readers decode some inputs incorrectly (#128), and
+its JPEG 2000 reader decodes each frame on a single thread:
 
 - JPEG Baseline, Extended, and Lossless (`1.2.840.10008.1.2.4.50`, `.4.51`, `.4.57`,
   `.4.70`) use libjpeg-turbo 3.1 through `turbojpeg-sys`: 8-bit and 12-bit DCT
@@ -21,11 +22,18 @@ because the dicom-rs built-in readers decode some inputs incorrectly (#128):
 - RLE Lossless (`1.2.840.10008.1.2.5`) uses an in-crate reader with bounds-checked
   segments. The dicom-rs reader shifted 8-bit monochrome samples by one byte and
   swapped the bytes of 16-bit RGB samples.
+- JPEG 2000 and High-Throughput JPEG 2000 (`1.2.840.10008.1.2.4.90` to `.4.93`,
+  `.4.201` to `.4.203`) use OpenJPEG 2.5.3 with multithreaded code-block decoding.
+  Each frame uses up to 8 threads by default; set another count with
+  `dicom_preprocessing::codec::set_jpeg2000_threads` or the
+  `DICOM_PREPROCESSING_JPEG2000_THREADS` environment variable (1 disables threading).
+  The decoded samples do not depend on the thread count. A 3328 x 4096 lossless
+  mammogram decodes in 176 ms instead of 1088 ms; see `benches/decoder_comparison`.
 
 The readers are registered with the dicom-rs transfer syntax registry, which only lets
 a submission replace a stub. This crate therefore builds `dicom-pixeldata` without its
-`native`, `jpeg`, and `rle` features. A Rust consumer whose dependency graph enables
-any of them, for example through `dicom-pixeldata` default features or the `dicom`
+`native`, `jpeg`, `rle`, `openjpeg-sys`, and `openjp2` features. A Rust consumer whose
+dependency graph enables any of them, for example through `dicom-pixeldata` default features or the `dicom`
 crate's `image`, `ndarray`, or `pixeldata` features, keeps the built-in readers.
 Depend on `dicom-pixeldata` with `default-features = false`, and check
 `dicom_preprocessing::decoder_registrations()` at startup: every entry must be active.

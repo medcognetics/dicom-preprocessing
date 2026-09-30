@@ -1060,6 +1060,7 @@ dependencies = [
  "ndarray",
  "num",
  "numpy",
+ "openjpeg-sys",
  "parquet",
  "pyo3",
  "rand 0.10.1",
@@ -1115,7 +1116,6 @@ dependencies = [
  "flate2",
  "jpeg-decoder",
  "jpeg-encoder",
- "jpeg2k",
  "jxl-oxide",
  "lazy_static",
  "tracing",
@@ -1870,18 +1870,6 @@ name = "jpeg-encoder"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b454d911ac55068f53495488d8ccd0646eaa540c033a28ee15b07838afafb01f"
-
-[[package]]
-name = "jpeg2k"
-version = "0.10.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be2982db6b9f254c9df44d89bcfdc758924d538f576d9649f5b10008150f2a60"
-dependencies = [
- "anyhow",
- "log",
- "openjpeg-sys",
- "thiserror 1.0.69",
-]
 
 [[package]]
 name = "js-sys"

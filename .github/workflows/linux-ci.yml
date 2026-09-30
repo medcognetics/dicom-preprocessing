@@ -45,6 +45,20 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
+      - name: Install CMake 3.31.6
+        shell: bash
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            archive="cmake-3.31.6-linux-x86_64"
+            curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/$archive.tar.gz" \
+              "https://github.com/Kitware/CMake/releases/download/v3.31.6/$archive.tar.gz"
+            echo "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf  $RUNNER_TEMP/$archive.tar.gz" |
+              sha256sum -c -
+            tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/$archive/bin:$PATH"
+          fi
+          cmake --version
       - name: Run Rust quality checks
         run: make quality-rust
       - name: Run Rust tests
@@ -88,6 +102,20 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
+      - name: Install CMake 3.31.6
+        shell: bash
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            archive="cmake-3.31.6-linux-x86_64"
+            curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/$archive.tar.gz" \
+              "https://github.com/Kitware/CMake/releases/download/v3.31.6/$archive.tar.gz"
+            echo "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf  $RUNNER_TEMP/$archive.tar.gz" |
+              sha256sum -c -
+            tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/$archive/bin:$PATH"
+          fi
+          cmake --version
       - name: Install Python dependencies
         run: make init-no-project
       - name: Verify Python dependency boundary
@@ -123,6 +151,20 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
+      - name: Install CMake 3.31.6
+        shell: bash
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            archive="cmake-3.31.6-linux-x86_64"
+            curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/$archive.tar.gz" \
+              "https://github.com/Kitware/CMake/releases/download/v3.31.6/$archive.tar.gz"
+            echo "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf  $RUNNER_TEMP/$archive.tar.gz" |
+              sha256sum -c -
+            tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/$archive/bin:$PATH"
+          fi
+          cmake --version
       # actions/setup-node v7.0.0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -180,6 +222,20 @@ jobs:
           rustup default 1.89.0
           rustc --version
           cargo --version
+      - name: Install CMake 3.31.6
+        shell: bash
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            archive="cmake-3.31.6-linux-x86_64"
+            curl --proto '=https' --tlsv1.2 -sSfL -o "$RUNNER_TEMP/$archive.tar.gz" \
+              "https://github.com/Kitware/CMake/releases/download/v3.31.6/$archive.tar.gz"
+            echo "5a1133ff103c71eb5120e2cc3de922733e7d8a26a98ae716397e8676adb367bf  $RUNNER_TEMP/$archive.tar.gz" |
+              sha256sum -c -
+            tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+            echo "$RUNNER_TEMP/$archive/bin" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/$archive/bin:$PATH"
+          fi
+          cmake --version
       - name: Run minimum Rust tests
         run: |
           export LIBRARY_PATH="${pythonLocation}/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"

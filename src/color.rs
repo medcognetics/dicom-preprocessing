@@ -1,7 +1,7 @@
 use crate::errors::{dicom::CastValueSnafu, DicomError, TiffError};
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::PhotometricInterpretation;
+use dicom_pixeldata::PhotometricInterpretation;
 use snafu::ResultExt;
 use std::io::{Read, Seek};
 use tiff::decoder::Decoder;

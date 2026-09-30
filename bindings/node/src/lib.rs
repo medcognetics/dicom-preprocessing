@@ -1,7 +1,7 @@
 use std::io::Cursor;
 
 use dicom::object::from_reader;
-use dicom::pixeldata::{ConvertOptions, PlanarConfiguration};
+use dicom_pixeldata::{ConvertOptions, PlanarConfiguration};
 use dicom_preprocessing::{
     metadata::pixel_spacing_mm, CoordinateTransform, DicomError, Flip, FlipOptions,
     FrameOrderStrategy, PixelDimensions, PixelRect, ViewerDicom, ViewerOptions, VolumeFrameSource,

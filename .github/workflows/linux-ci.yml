@@ -143,10 +143,15 @@ jobs:
   minimum_versions:
     name: Linux / Minimum versions
     needs: rust
-    runs-on: ubuntu-24.04
+    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04
+      ${{ fromJSON((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","beryl"]' || '["ubuntu-24.04"]') }}
     timeout-minutes: 30
     env:
       UV_PYTHON: "3.10"
+      # Rust 1.89 links with GNU ld, not rust-lld. Drop debug info and limit
+      # parallel links to stay within the beryl slot memory limit.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_BUILD_JOBS: "2"
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -165,6 +170,12 @@ jobs:
       - name: Install Rust 1.89.0
         shell: bash
         run: |
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --profile minimal --default-toolchain none
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
           rustup toolchain install 1.89.0 --profile minimal
           rustup default 1.89.0
           rustc --version

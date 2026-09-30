@@ -2,7 +2,9 @@
 //! DICOM objects, decoding every frame through `PixelDataReader::decode_frame`.
 use dicom_encoding::adapters::PixelDataReader;
 use dicom_encoding::Codec;
-use dicom_preprocessing::codec::{RleAdapter, TurboJpegAdapter};
+use dicom_preprocessing::codec::{
+    jpeg2000_threads, set_jpeg2000_threads, OpenJpegAdapter, RleAdapter, TurboJpegAdapter,
+};
 use dicom_transfer_syntax_registry::entries;
 use std::time::Instant;
 
@@ -72,6 +74,23 @@ fn main() {
     let Codec::EncapsulatedPixelData(Some(builtin_rle), _) = entries::RLE_LOSSLESS.codec() else {
         panic!()
     };
+    let Codec::EncapsulatedPixelData(Some(builtin_jpeg2000), _) =
+        entries::JPEG_2000_IMAGE_COMPRESSION.codec()
+    else {
+        panic!()
+    };
+    // Built-in and our readers for a transfer syntax, and whether ours is JPEG 2000.
+    let readers = |ts: &str| -> (&dyn PixelDataReader, &dyn PixelDataReader, bool) {
+        match ts {
+            "1.2.840.10008.1.2.5" => (builtin_rle, &RleAdapter, false),
+            ts if ts.starts_with("1.2.840.10008.1.2.4.9")
+                || ts.starts_with("1.2.840.10008.1.2.4.20") =>
+            {
+                (builtin_jpeg2000, &OpenJpegAdapter, true)
+            }
+            _ => (builtin_jpeg, &TurboJpegAdapter, false),
+        }
+    };
     if std::env::var_os("CHECKSUMS").is_some() {
         let mut names: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
@@ -90,11 +109,7 @@ fn main() {
                 .ok()
                 .and_then(|e| e.to_int().ok())
                 .unwrap_or(1);
-            let ours: &dyn PixelDataReader = if ts == "1.2.840.10008.1.2.5" {
-                &RleAdapter
-            } else {
-                &TurboJpegAdapter
-            };
+            let (_, ours, _) = readers(&ts);
             let out = decode_all(ours, &object, frames).unwrap();
             let hash = out.iter().fold(0xcbf29ce484222325u64, |h, &b| {
                 (h ^ b as u64).wrapping_mul(0x100000001b3)
@@ -132,31 +147,36 @@ fn main() {
             .to_int::<u16>()
             .unwrap()
             == 16;
-        let (builtin, ours): (&dyn PixelDataReader, &dyn PixelDataReader) =
-            if ts == "1.2.840.10008.1.2.5" {
-                (builtin_rle, &RleAdapter)
-            } else {
-                (builtin_jpeg, &TurboJpegAdapter)
-            };
+        let (builtin, ours, jpeg2000) = readers(&ts);
         let name = path.file_stem().unwrap().to_string_lossy().to_string();
         let b = time(builtin, &object, frames, runs);
-        let o = time(ours, &object, frames, runs).expect("our reader failed");
-        match b {
-            Ok((bm, bmin, bout)) => {
-                let diff = max_difference(&o.2, &bout, wide)
-                    .map(|d| d.to_string())
-                    .unwrap_or("length differs".into());
-                println!(
-                    "| {name} | {frames} | {bm:.1} ({bmin:.1}) | {:.1} ({:.1}) | {:.2}x | {diff} |",
-                    o.0,
-                    o.1,
-                    o.0 / bm
-                );
+        // JPEG 2000 runs once on a single thread and once with the default thread count.
+        let thread_counts: &[usize] = if jpeg2000 { &[1, 0] } else { &[0] };
+        for &threads in thread_counts {
+            set_jpeg2000_threads(threads);
+            let label = if jpeg2000 {
+                format!("{name} ({} threads)", jpeg2000_threads())
+            } else {
+                name.clone()
+            };
+            let o = time(ours, &object, frames, runs).expect("our reader failed");
+            match &b {
+                Ok((bm, bmin, bout)) => {
+                    let diff = max_difference(&o.2, bout, wide)
+                        .map(|d| d.to_string())
+                        .unwrap_or("length differs".into());
+                    println!(
+                        "| {label} | {frames} | {bm:.1} ({bmin:.1}) | {:.1} ({:.1}) | {:.2}x | {diff} |",
+                        o.0,
+                        o.1,
+                        o.0 / bm
+                    );
+                }
+                Err(e) => println!(
+                    "| {label} | {frames} | fails: {e} | {:.1} ({:.1}) | n/a | n/a |",
+                    o.0, o.1
+                ),
             }
-            Err(e) => println!(
-                "| {name} | {frames} | fails: {e} | {:.1} ({:.1}) | n/a | n/a |",
-                o.0, o.1
-            ),
         }
     }
 }

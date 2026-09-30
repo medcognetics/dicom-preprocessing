@@ -11,11 +11,13 @@ path = "src/lib.rs"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-# dicom-pixeldata's `native`/`jpeg`/`rle` features are deliberately off: this crate registers its
-# own JPEG (libjpeg-turbo) and RLE readers for those transfer syntaxes (#128).
+# dicom-pixeldata's `native`/`jpeg`/`rle`/`openjpeg-sys` features are deliberately off: this crate
+# registers its own JPEG (libjpeg-turbo), RLE, and JPEG 2000 (multithreaded OpenJPEG) readers.
 dicom = { version = "0.10.0", default-features = false, features = ["inventory-registry"] }
-dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["deflate", "image", "ndarray", "openjpeg-sys", "rayon"] }
+dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["deflate", "image", "ndarray", "rayon"] }
 turbojpeg-sys = { version = "=1.2.0", default-features = false, features = ["cmake"] }
+# OpenJPEG 2.5.3, built from bundled source with thread support.
+openjpeg-sys = { version = "=1.0.12", default-features = false, features = ["threads"] }
 indicatif = { version= "0.18.4", features= ["rayon"] }
 clap = { version = "4.6.1", features = ["derive"] }
 rayon = "1.12"

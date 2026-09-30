@@ -1,6 +1,8 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["pydicom==3.0.2", "numpy==2.4.6", "pylibjpeg==2.1.0", "pylibjpeg-rle==2.2.0"]
+# dependencies = [
+#     "pydicom==3.0.2", "numpy==2.4.6", "pylibjpeg==2.1.0", "pylibjpeg-rle==2.2.0", "imagecodecs==2026.3.6"
+# ]
 # ///
 """Generate synthetic DICOM inputs for the decoder comparison. Requires libjpeg-turbo `cjpeg`.
 
@@ -12,6 +14,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import imagecodecs
 import numpy as np
 from pydicom.dataset import Dataset, FileMetaDataset
 from pydicom.encaps import encapsulate
@@ -116,3 +119,44 @@ for name, arr, bits in [("mammo-rle-16bit", m, 12), ("mammo-rle-8bit", m8, 8)]:
     ds.compress(RLELossless, encoding_plugin="pylibjpeg")
     ds.save_as(OUTPUT / f"{name}.dcm", enforce_file_format=True)
     print(name)
+
+
+def save_codestreams(name, streams, rows, cols, ts):
+    ds = dataset(rows, cols, 1, 16, 12, len(streams), ts, "MONOCHROME2")
+    ds.PixelData = encapsulate(streams)
+    ds["PixelData"].VR = "OB"
+    ds["PixelData"].is_undefined_length = True
+    ds.save_as(OUTPUT / f"{name}.dcm", enforce_file_format=True)
+    print(name)
+
+
+# JPEG 2000 (OpenJPEG encoder, 6 resolutions) and HTJ2K (OpenJPH encoder).
+j2k = dict(codecformat="J2K", bitspersample=12, numthreads=1)
+save_codestreams(
+    "mammo-j2k-lossless-12bit",
+    [imagecodecs.jpeg2k_encode(m, level=0, reversible=True, **j2k)],
+    *m.shape,
+    "1.2.840.10008.1.2.4.90",
+)
+# Level is a PSNR target; 50 gives about 15:1 on this image.
+save_codestreams(
+    "mammo-j2k-lossy-12bit",
+    [imagecodecs.jpeg2k_encode(m, level=50, reversible=False, **j2k)],
+    *m.shape,
+    "1.2.840.10008.1.2.4.91",
+)
+save_codestreams(
+    "mammo-htj2k-lossless-12bit",
+    [imagecodecs.htj2k_encode(m, reversible=True)],
+    *m.shape,
+    "1.2.840.10008.1.2.4.201",
+)
+# DBT-like: 30 lossless 1024 x 1024 frames.
+dbt = [m[1000 + 20 * i : 2024 + 20 * i, 500:1524].copy() for i in range(30)]
+save_codestreams(
+    "dbt-j2k-lossless-30f",
+    [imagecodecs.jpeg2k_encode(frame, level=0, reversible=True, **j2k) for frame in dbt],
+    1024,
+    1024,
+    "1.2.840.10008.1.2.4.90",
+)

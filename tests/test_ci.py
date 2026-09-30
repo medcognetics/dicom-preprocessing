@@ -28,6 +28,14 @@ DEPENDENCY_HEALTH_CRON = '"17 7 * * 1"'
 MINIMUM_SAFE_JS_YAML_VERSION = (4, 3, 1)
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
+JOB_KEY_PATTERN = re.compile(r"^  ([a-zA-Z0-9_-]+):$")
+TRUSTED_BERYL_RUNS_ON = (
+    "    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04\n"
+    "      ${{ fromJSON((github.event_name != 'pull_request' || "
+    "github.event.pull_request.head.repo.full_name == github.repository) && "
+    '\'["self-hosted","linux","x64","beryl"]\' || \'["ubuntu-24.04"]\') }}'
+)
+RUSTUP_BOOTSTRAP = "if ! command -v rustup >/dev/null 2>&1; then"
 
 
 def mapping_definition(config: str, key: str, indentation: int) -> str:
@@ -54,6 +62,27 @@ def github_job_definition(config: str, job_name: str) -> str:
     return mapping_definition(jobs, job_name, 2)
 
 
+def github_job_names(config: str) -> list[str]:
+    jobs = config.split("\njobs:\n", maxsplit=1)[1]
+    return [match.group(1) for line in jobs.splitlines() if (match := JOB_KEY_PATTERN.fullmatch(line))]
+
+
+def runs_on_definition(job: str) -> str:
+    lines = job.splitlines()
+    for index, line in enumerate(lines):
+        if not line.startswith("    runs-on:"):
+            continue
+
+        definition_lines = [line]
+        for continuation in lines[index + 1 :]:
+            if continuation.strip() and len(continuation) - len(continuation.lstrip()) <= 4:
+                break
+            definition_lines.append(continuation)
+        return "\n".join(definition_lines).rstrip()
+
+    raise AssertionError("Job has no runs-on definition")
+
+
 def action_references(config: str) -> list[str]:
     return [
         line.strip().removeprefix("- uses: ").split(" #", maxsplit=1)[0]
@@ -74,23 +103,51 @@ def test_linux_workflow_uses_expected_triggers_and_concurrency() -> None:
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in config
 
 
-def test_linux_jobs_route_forks_away_from_ephemeral_beryl() -> None:
+def test_linux_workflow_defines_expected_jobs_and_timeouts() -> None:
     config = LINUX_CI_PATH.read_text()
 
+    assert github_job_names(config) == list(ALL_LINUX_JOBS)
     for job_name in LINUX_JOBS:
-        job = github_job_definition(config, job_name)
-        assert "fromJSON" in job
-        assert "github.event.pull_request.head.repo.full_name == github.repository" in job
-        assert '["self-hosted","linux","x64","beryl"]' in job
-        assert '["ubuntu-24.04"]' in job
-        assert "zizmor: ignore[self-hosted-runner]" in job
-        assert "one-job ephemeral" in job
-        assert "timeout-minutes: 20" in job
+        assert "timeout-minutes: 20" in github_job_definition(config, job_name)
+    assert "timeout-minutes: 30" in github_job_definition(config, "minimum_versions")
 
-    minimum_job = github_job_definition(config, "minimum_versions")
-    assert "runs-on: ubuntu-24.04" in minimum_job
-    assert "self-hosted" not in minimum_job
-    assert "timeout-minutes: 30" in minimum_job
+
+def test_pull_request_workflows_use_hosted_runners_only_for_forks() -> None:
+    workflow_paths = sorted((*WORKFLOW_DIRECTORY.glob("*.yml"), *WORKFLOW_DIRECTORY.glob("*.yaml")))
+    pull_request_workflow_paths = [
+        path for path in workflow_paths if re.search(r"^  pull_request(?:_target)?:", path.read_text(), re.MULTILINE)
+    ]
+
+    assert LINUX_CI_PATH in pull_request_workflow_paths
+    for workflow_path in pull_request_workflow_paths:
+        config = workflow_path.read_text()
+        job_names = github_job_names(config)
+        assert job_names, workflow_path.name
+        for job_name in job_names:
+            runs_on = runs_on_definition(github_job_definition(config, job_name))
+            assert runs_on == TRUSTED_BERYL_RUNS_ON, f"{workflow_path.name}: {job_name}"
+
+
+def test_beryl_jobs_bootstrap_rustup_and_select_linked_python() -> None:
+    beryl_jobs = {
+        (workflow_path.name, job_name): github_job_definition(config, job_name)
+        for workflow_path, config in ((path, path.read_text()) for path in ALL_WORKFLOW_PATHS)
+        for job_name in github_job_names(config)
+        if "beryl" in runs_on_definition(github_job_definition(config, job_name))
+    }
+
+    assert set(beryl_jobs) == {
+        *((LINUX_CI_PATH.name, job_name) for job_name in ALL_LINUX_JOBS),
+        (NIGHTLY_BUILD_PATH.name, "build"),
+    }
+    for job in beryl_jobs.values():
+        if "rustup toolchain install" in job:
+            assert RUSTUP_BOOTSTRAP in job
+            assert "https://sh.rustup.rs" in job
+            assert job.index(RUSTUP_BOOTSTRAP) < job.index("rustup toolchain install")
+        if "${pythonLocation}" in job:
+            assert "uses: actions/setup-python@" in job
+            assert job.index("uses: actions/setup-python@") < job.index("${pythonLocation}")
 
 
 def test_linux_jobs_preserve_names_and_rust_gate() -> None:

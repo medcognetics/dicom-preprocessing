@@ -256,37 +256,77 @@ fn decode_jpeg(data: &[u8], info: ImageInfo) -> Result<Vec<u8>, String> {
 /// warnings signal corrupt data. Normalizing them keeps every other warning fatal without
 /// changing the decoded samples.
 fn normalize_sequential_scans(data: &[u8]) -> Cow<'_, [u8]> {
-    let Some(sof) = data.windows(2).position(|pair| {
-        pair[0] == 0xFF
-            && (0xC0..=0xCF).contains(&pair[1])
-            && ![0xC4, 0xC8, 0xCC].contains(&pair[1])
-    }) else {
-        return Cow::Borrowed(data);
-    };
-    if !matches!(data[sof + 1], 0xC0 | 0xC1) {
-        return Cow::Borrowed(data);
-    }
     let mut data = Cow::Borrowed(data);
-    let mut position = sof;
-    // 0xFF 0xDA only occurs as the SOS marker: entropy-coded 0xFF bytes are followed by 0x00.
-    while let Some(offset) = data[position..]
-        .windows(2)
-        .position(|pair| pair == [0xFF, 0xDA])
-    {
-        let sos = position + offset;
-        let Some(&components) = data.get(sos + 4) else {
-            break;
-        };
-        let fields = sos + 5 + 2 * usize::from(components);
-        if fields + 3 > data.len() {
-            break;
-        }
-        if data[fields..fields + 3] != [0, 63, 0] {
-            data.to_mut()[fields..fields + 3].copy_from_slice(&[0, 63, 0]);
-        }
-        position = fields + 3;
+    let mut sequential = false;
+    // Walk marker segments by their declared lengths, so bytes inside APPn, COM, or table
+    // payloads are never mistaken for markers. Malformed streams are left to libjpeg-turbo.
+    if !data.starts_with(&[0xFF, 0xD8]) {
+        return data;
     }
-    data
+    let mut position = 2;
+    loop {
+        // Skip fill bytes before a marker (T.81 B.1.1.2).
+        while data.get(position) == Some(&0xFF) && data.get(position + 1) == Some(&0xFF) {
+            position += 1;
+        }
+        let (Some(&0xFF), Some(&marker)) = (data.get(position), data.get(position + 1)) else {
+            return data;
+        };
+        position += 2;
+        match marker {
+            // Markers without a segment.
+            0x01 | 0xD0..=0xD8 => continue,
+            0xD9 => return data,
+            _ => {}
+        }
+        let Some(length) = data
+            .get(position..position + 2)
+            .map(|bytes| usize::from(u16::from_be_bytes([bytes[0], bytes[1]])))
+            .filter(|&length| length >= 2 && position + length <= data.len())
+        else {
+            return data;
+        };
+        let segment = position + 2..position + length;
+        position += length;
+        match marker {
+            // SOFn; 0xC4 (DHT), 0xC8 (JPG), and 0xCC (DAC) share the range. Only sequential
+            // DCT frames are normalized: progressive and lossless scans use these fields.
+            0xC0..=0xCF if ![0xC4, 0xC8, 0xCC].contains(&marker) => {
+                if sequential || !matches!(marker, 0xC0 | 0xC1) {
+                    return data;
+                }
+                sequential = true;
+            }
+            0xDA => {
+                if !sequential || segment.is_empty() {
+                    return data;
+                }
+                // Ns, then Ns component selectors of 2 bytes, then Ss, Se, and Ah/Al.
+                let components = usize::from(data[segment.start]);
+                let fields = segment.start + 1 + 2 * components;
+                if fields + 3 != segment.end {
+                    return data;
+                }
+                if data[fields..fields + 3] != [0, 63, 0] {
+                    data.to_mut()[fields..fields + 3].copy_from_slice(&[0, 63, 0]);
+                }
+                // Skip entropy-coded data up to the next marker. Inside it, 0xFF is followed by
+                // 0x00 (stuffing) or a restart marker.
+                loop {
+                    match (data.get(position), data.get(position + 1)) {
+                        (Some(&0xFF), Some(&next))
+                            if next != 0x00 && !(0xD0..=0xD7).contains(&next) =>
+                        {
+                            break
+                        }
+                        (Some(_), Some(_)) => position += 1,
+                        _ => return data,
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -425,6 +465,76 @@ mod tests {
         let lossless = lossless_stream(&LOSSLESS_VALUES, 4, 4);
         assert!(matches!(
             normalize_sequential_scans(&lossless),
+            Cow::Borrowed(_)
+        ));
+    }
+
+    /// Inserts an APP15 segment right after SOI.
+    fn with_app_segment(stream: &[u8], payload: &[u8]) -> Vec<u8> {
+        let mut result = stream[..2].to_vec();
+        result.extend([0xFF, 0xEF]);
+        result.extend((payload.len() as u16 + 2).to_be_bytes());
+        result.extend_from_slice(payload);
+        result.extend_from_slice(&stream[2..]);
+        result
+    }
+
+    /// SOS look-alike: Ns 1, selector 1/0, then Ss 5, Se 6, Ah/Al 7.
+    const MARKER_LOOKALIKES: [u8; 12] = [
+        0xFF, 0xC0, 0xFF, 0xDA, 0x00, 0x08, 0x01, 0x01, 0x00, 0x05, 0x06, 0x07,
+    ];
+
+    #[test]
+    fn marker_bytes_inside_segment_payloads_are_ignored() {
+        // SOF0 and SOS byte patterns inside an APP payload must not make a lossless stream look
+        // sequential, and its predictor fields must stay untouched.
+        let lossless =
+            with_app_segment(&lossless_stream(&LOSSLESS_VALUES, 4, 4), &MARKER_LOOKALIKES);
+        assert!(matches!(
+            normalize_sequential_scans(&lossless),
+            Cow::Borrowed(_)
+        ));
+        let decoded = decode_jpeg(&lossless, gray16(3, 4)).unwrap();
+        assert_eq!(as_u16(&decoded), LOSSLESS_VALUES);
+
+        // In a sequential stream, only the real SOS changes, not the look-alike in the payload.
+        let mut sequential = vec![0xFF, 0xD8, 0xFF, 0xC1, 0, 11, 12, 0, 1, 0, 1, 1, 1, 0x11, 0];
+        let sos = sequential.len();
+        sequential.extend([0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 0, 0]);
+        sequential.extend([0x12, 0xFF, 0x00, 0x34, 0xFF, 0xD9]);
+        let with_app = with_app_segment(&sequential, &MARKER_LOOKALIKES);
+        let offset = 4 + MARKER_LOOKALIKES.len();
+        let mut expected = with_app.clone();
+        expected[offset + sos + 7..offset + sos + 10].copy_from_slice(&[0, 63, 0]);
+        assert_eq!(*normalize_sequential_scans(&with_app), expected[..]);
+    }
+
+    #[test]
+    fn every_scan_of_a_multi_scan_sequential_stream_is_normalized() {
+        // Two scans separated by entropy data with a stuffed 0xFF and a restart marker.
+        let mut stream = vec![0xFF, 0xD8];
+        stream.extend([0xFF, 0xC0, 0, 14, 8, 0, 1, 0, 1, 2, 1, 0x11, 0, 2, 0x11, 0]);
+        let first = stream.len();
+        stream.extend([0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 0, 0]);
+        stream.extend([0x12, 0xFF, 0x00, 0x34, 0xFF, 0xD0, 0x56]);
+        let second = stream.len();
+        stream.extend([0xFF, 0xDA, 0, 8, 1, 2, 0, 1, 2, 3, 0x78, 0xFF, 0xD9]);
+        let mut expected = stream.clone();
+        expected[first + 7..first + 10].copy_from_slice(&[0, 63, 0]);
+        expected[second + 7..second + 10].copy_from_slice(&[0, 63, 0]);
+        assert_eq!(*normalize_sequential_scans(&stream), expected[..]);
+    }
+
+    #[test]
+    fn truncated_segments_are_left_unchanged() {
+        let mut stream = vec![0xFF, 0xD8, 0xFF, 0xC1, 0, 11, 12, 0, 1, 0, 1, 1, 1, 0x11, 0];
+        stream.extend([0xFF, 0xDA, 0, 8, 1, 1, 0, 0]);
+        assert!(matches!(
+            normalize_sequential_scans(&stream),
+            Cow::Borrowed(_)
+        ));
+        assert!(matches!(
+            normalize_sequential_scans(&[0xFF, 0xD8, 0xFF, 0xE0, 0x10, 0x00]),
             Cow::Borrowed(_)
         ));
     }

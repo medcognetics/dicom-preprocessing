@@ -80,29 +80,40 @@ fn decode_rle_frame(
 
     let stride = expected;
     let mut output = vec![0u8; pixels * stride];
+    // A single segment is the output itself; otherwise each segment is unpacked, then scattered.
+    let mut plane = if stride == 1 {
+        Vec::new()
+    } else {
+        vec![0u8; pixels]
+    };
     for segment in 0..segments {
-        let sample = segment / bytes_per_sample;
-        // Segments hold the most significant byte first; output samples are little endian.
-        let byte = sample * bytes_per_sample + (bytes_per_sample - 1 - segment % bytes_per_sample);
-        unpack_segment(
-            &data[bounds[segment]..bounds[segment + 1]],
-            pixels,
-            |index, value| output[index * stride + byte] = value,
-        )
-        .map_err(|message| format!("segment {segment}: {message}"))?;
+        let source = &data[bounds[segment]..bounds[segment + 1]];
+        let unpacked = if stride == 1 {
+            &mut output[..]
+        } else {
+            &mut plane[..]
+        };
+        unpack_segment(source, unpacked)
+            .map_err(|message| format!("segment {segment}: {message}"))?;
+        if stride > 1 {
+            let sample = segment / bytes_per_sample;
+            // Segments hold the most significant byte first; output samples are little endian.
+            let byte =
+                sample * bytes_per_sample + (bytes_per_sample - 1 - segment % bytes_per_sample);
+            for (pixel, &value) in output[byte..].iter_mut().step_by(stride).zip(&plane) {
+                *pixel = value;
+            }
+        }
     }
     Ok(output)
 }
 
-/// Expands a PackBits segment, calling `write` for each of the first `count` bytes.
+/// Expands a PackBits segment until `output` is full.
 ///
-/// Bytes beyond `count` (such as even-length padding) are ignored. A segment that ends before
-/// `count` bytes, or a run that crosses the end of the segment, is an error.
-fn unpack_segment(
-    segment: &[u8],
-    count: usize,
-    mut write: impl FnMut(usize, u8),
-) -> Result<(), String> {
+/// Bytes beyond the output length (such as even-length padding) are ignored. A segment that ends
+/// before the output is full, or a run that crosses the end of the segment, is an error.
+fn unpack_segment(segment: &[u8], output: &mut [u8]) -> Result<(), String> {
+    let count = output.len();
     let mut written = 0;
     let mut position = 0;
     while written < count {
@@ -117,10 +128,9 @@ fn unpack_segment(
                 let Some(literal) = segment.get(position..position + length) else {
                     return Err("literal run crosses the end of the segment".to_owned());
                 };
-                for &value in literal.iter().take(count - written) {
-                    write(written, value);
-                    written += 1;
-                }
+                let take = length.min(count - written);
+                output[written..written + take].copy_from_slice(&literal[..take]);
+                written += take;
                 position += length;
             }
             // No operation.
@@ -131,11 +141,9 @@ fn unpack_segment(
                     return Err("replicate run crosses the end of the segment".to_owned());
                 };
                 position += 1;
-                let length = (1 - i16::from(negative)) as usize;
-                for _ in 0..length.min(count - written) {
-                    write(written, value);
-                    written += 1;
-                }
+                let take = ((1 - i16::from(negative)) as usize).min(count - written);
+                output[written..written + take].fill(value);
+                written += take;
             }
         }
     }

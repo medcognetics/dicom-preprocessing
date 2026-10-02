@@ -81,6 +81,32 @@ export interface RenderedFrame extends FrameMetadata {
   coordinateTransform: CoordinateTransform
   data: Buffer
 }
+
+export interface VerificationCheck {
+  name: string
+  passed: boolean
+  diagnostic: string | null
+}
+export interface VerificationCaseResult {
+  id: string
+  source: 'embedded_fixture' | 'builtin'
+  transferSyntaxUid: string | null
+  passed: boolean
+  checks: VerificationCheck[]
+}
+export interface VerificationCodecResult {
+  transferSyntaxUid: string
+  requiredCases: string[]
+  passed: boolean
+}
+export interface VerificationReport {
+  schemaVersion: number
+  suiteVersion: string
+  libraryVersion: string
+  passed: boolean
+  cases: VerificationCaseResult[]
+  codecs: VerificationCodecResult[]
+}
 export declare class PreparedDicom {
   get framePlan(): FramePlan
   renderFrame(frameIndex: number): RenderedFrame
@@ -142,3 +168,6 @@ export declare function prepareDicom(input: DicomInput, options?: PrepareOptions
 export declare function renderDisplayFrame(prepared: PreparedDicom, frameIndex: number): RenderedFrame
 
 export declare function renderFrame(prepared: PreparedDicom, frameIndex: number): RenderedFrame
+
+/** Runs the built-in runtime self-test synchronously. Failures are report data. */
+export declare function verifyRuntime(): VerificationReport

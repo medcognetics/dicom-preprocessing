@@ -60,6 +60,8 @@ jobs:
           }
           $rustTarget = $rustTargetLine.Line.Substring(6)
           cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort --target $rustTarget
+      - name: Test runtime verification
+        run: cargo test -p dicom-preprocessing --lib verification
       - name: Test commit-pinned Git installation
         env:
           DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git
@@ -100,6 +102,8 @@ jobs:
           cache-bin: false
       - name: Install Node dependencies
         run: npm ci --ignore-scripts
+      - name: Test runtime verification
+        run: cargo test -p dicom-preprocessing --lib verification
       - name: Test commit-pinned Git installation
         env:
           DICOM_PREPROCESSING_GIT_URL: git+https://github.com/${{ github.repository }}.git

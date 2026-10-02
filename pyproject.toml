@@ -23,7 +23,7 @@ target-version = "py310"
 select = ["I"]
 
 [tool.basedpyright]
-include = ["dicom_preprocessing.pyi", "tests", "examples"]
+include = ["dicom_preprocessing.pyi", "tests", "examples", "src/python/verification_types.py"]
 pythonVersion = "3.10"
 typeCheckingMode = "basic"
 reportMissingModuleSource = "none"

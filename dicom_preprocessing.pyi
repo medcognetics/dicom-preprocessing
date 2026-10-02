@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Literal, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, Iterator, List, Literal, Optional, Sequence, Tuple, TypedDict, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -1001,5 +1001,39 @@ def load_tiff_f32_batched(
 
     Yields:
         A batch of TIFF files as 32-bit floating-point numpy arrays
+    """
+    ...
+
+# Runtime verification report.
+class VerificationCheck(TypedDict):
+    name: str
+    passed: bool
+    diagnostic: Optional[str]
+
+class VerificationCaseResult(TypedDict):
+    id: str
+    source: Literal["embedded_fixture", "builtin"]
+    transfer_syntax_uid: Optional[str]
+    passed: bool
+    checks: List[VerificationCheck]
+
+class VerificationCodecResult(TypedDict):
+    transfer_syntax_uid: str
+    required_cases: List[str]
+    passed: bool
+
+class VerificationReport(TypedDict):
+    schema_version: int
+    suite_version: str
+    library_version: str
+    passed: bool
+    cases: List[VerificationCaseResult]
+    codecs: List[VerificationCodecResult]
+
+def verify_runtime() -> VerificationReport:
+    """Run the built-in offline self-test of DICOM parsing, decoding, and preprocessing.
+
+    Decodes embedded synthetic DICOM files for every enabled transfer syntax. The GIL is
+    released while it runs. A failed check is reported with `passed` False, not raised.
     """
     ...

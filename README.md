@@ -30,6 +30,14 @@ crate's `image`, `ndarray`, or `pixeldata` features, keeps the built-in readers.
 Depend on `dicom-pixeldata` with `default-features = false`, and check
 `dicom_preprocessing::decoder_registrations()` at startup: every entry must be active.
 
+### Runtime Verification
+
+Call `verify_runtime()` in Rust or Python, or `verifyRuntime()` in Node, to run an
+offline self-test of tag parsing, pixel decoding, and preprocessing in the installed
+build. It decodes small embedded synthetic DICOM files for every enabled transfer
+syntax and returns a report; treat `passed: false` as a failed check. See
+[the runtime verification guide](docs/runtime-verification.md).
+
 ### Building Distributable Artifacts
 
 Run `make build` to create release artifacts for all supported Linux package surfaces:

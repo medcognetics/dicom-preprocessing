@@ -121,6 +121,13 @@ const binaries = readdirSync(join(packageRoot, 'bindings', 'node'))
 
 assert.equal(typeof api.prepareDicom, 'function')
 assert.equal(typeof api.renderDisplayFrame, 'function')
+assert.equal(typeof api.verifyRuntime, 'function')
+const report = api.verifyRuntime()
+assert.equal(report.schemaVersion, 1)
+assert.ok(report.cases.length >= 25)
+assert.equal(report.passed, true)
+assert.ok(report.codecs.every(codec => codec.requiredCases.length > 0))
+assert.deepEqual(report, api.verifyRuntime())
 assert.deepEqual(binaries, [expectedBinary])
 console.log(JSON.stringify({ packageRoot, binary: binaries[0], platform: process.platform, arch: process.arch }))
 `

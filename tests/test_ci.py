@@ -323,5 +323,6 @@ def test_node_validation_uses_debug_builds() -> None:
 
     assert package["scripts"]["typecheck"] == "tsc --noEmit --project bindings/node/tsconfig.json"
     assert package["scripts"]["test"] == (
-        "npm run build:debug && npm run typecheck && node --test bindings/node/test/api.test.mjs"
+        "npm run build:debug && npm run typecheck && node --test bindings/node/test/api.test.mjs "
+        "bindings/node/test/verification.test.mjs"
     )

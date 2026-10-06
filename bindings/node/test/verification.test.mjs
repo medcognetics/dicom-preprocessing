@@ -17,5 +17,7 @@ test('report keys are camelCase and every check is named', () => {
   const report = verifyRuntime()
   assert.ok('transferSyntaxUid' in report.cases[0])
   assert.ok(report.cases.every(result => result.checks.length > 0 && result.checks.every(check => check.name)))
-  assert.ok(report.cases.some(result => result.id === 'builtin/decoder-registration' && result.source === 'builtin'))
+  const registrations = report.cases.filter(result => result.id.startsWith('builtin/decoder-registration/'))
+  assert.equal(registrations.length, 5)
+  assert.ok(registrations.every(result => result.source === 'builtin' && result.id.endsWith(`/${result.transferSyntaxUid}`)))
 })

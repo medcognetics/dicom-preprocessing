@@ -44,12 +44,15 @@ if (!report.passed) {
 - **`builtin/preprocessing`**: display conversion, caller-selected flips,
   nearest-neighbor resize, centered padding, frame order, maximum-intensity projection,
   and serial/parallel repeatability, on the three-frame fixture.
-- **`builtin/decoder-registration`**: this crate's JPEG and RLE readers are the ones
+- **`builtin/decoder-registration/<transfer syntax UID>`**: one case for each JPEG and RLE
+  syntax that this crate's readers replace, checking that this crate's reader is the one
   registered. A Rust consumer that enables `dicom-pixeldata`'s `native`, `jpeg`, or `rle`
-  features silently keeps the dicom-rs built-in readers, and this case fails. See
-  "JPEG and RLE Decoding" in the README.
+  features silently keeps the dicom-rs built-in readers, and the affected cases fail.
+  Enabling only `rle`, for example, fails only the RLE case. See "JPEG and RLE Decoding"
+  in the README.
 - **Codec coverage** (`codecs`): every transfer syntax the registry can decode needs at
-  least one passing fixture. A newly linked decoder without a fixture fails coverage.
+  least one passing fixture. A newly linked decoder without a fixture fails coverage. A
+  syntax whose reader this crate replaces also needs its own registration case.
 
 `passed` is true only if every case and every coverage entry passes. Failures are report
 data, not exceptions. Applications decide what a failure means for them and keep their

@@ -7,7 +7,12 @@ use dicom_pixeldata::{ConvertOptions, ModalityLutOption};
 
 const MANIFEST: &str = include_str!("../../fixtures/verification/manifest.json");
 const PREPROCESSING_FIXTURE: &str = "builtin/static-multiframe-native";
-const DECODER_REGISTRATION: &str = "builtin/decoder-registration";
+const DECODER_REGISTRATION: &str = "builtin/decoder-registration/";
+
+/// Case ID of the registration check for one overridden transfer syntax.
+pub(super) fn registration_id(uid: &str) -> String {
+    format!("{DECODER_REGISTRATION}{uid}")
+}
 
 macro_rules! fixtures {
     ($($name:literal),* $(,)?) => {
@@ -139,7 +144,7 @@ pub(super) fn run() -> (Vec<VerificationCaseResult>, Vec<CodecCoverageResult>) {
     let cases = static_cases();
     let mut results: Vec<_> = cases.iter().map(run_case).collect();
     results.push(preprocessing(&cases));
-    results.push(decoder_registration());
+    results.extend(decoder_registrations());
     let codecs = coverage(&results, decodable_transfer_syntaxes());
     (results, codecs)
 }
@@ -153,8 +158,8 @@ fn decodable_transfer_syntaxes() -> Vec<String> {
         .collect()
 }
 
-/// Requires a passing fixture for every decodable syntax, and the registration case for every
-/// syntax whose reader this crate provides.
+/// Requires a passing fixture for every decodable syntax, and that syntax's own registration case
+/// for every syntax whose reader this crate provides.
 pub(super) fn coverage(
     results: &[VerificationCaseResult],
     decodable: Vec<String>,
@@ -173,12 +178,12 @@ pub(super) fn coverage(
         required
             .entry(uid.into())
             .or_default()
-            .push(DECODER_REGISTRATION.into());
+            .push(registration_id(uid));
     }
     required
         .into_iter()
         .map(|(uid, ids)| {
-            let passed = ids.iter().any(|id| id != DECODER_REGISTRATION)
+            let passed = ids.iter().any(|id| !id.starts_with(DECODER_REGISTRATION))
                 && ids.iter().all(|id| {
                     results
                         .iter()
@@ -193,27 +198,29 @@ pub(super) fn coverage(
         .collect()
 }
 
-/// Checks that this crate's JPEG and RLE readers, not dicom-rs's built-in ones, are registered.
+/// Checks, per transfer syntax, that this crate's JPEG and RLE readers, not dicom-rs's built-in
+/// ones, are registered.
 ///
 /// A consumer that enables `dicom-pixeldata`'s `native`, `jpeg`, or `rle` features keeps the
-/// built-in readers, which decode some inputs incorrectly (#128).
-fn decoder_registration() -> VerificationCaseResult {
-    let checks = crate::codec::decoder_registrations()
+/// built-in readers, which decode some inputs incorrectly (#128). Enabling only `rle` fails
+/// only the RLE case.
+fn decoder_registrations() -> Vec<VerificationCaseResult> {
+    crate::codec::decoder_registrations()
         .into_iter()
         .map(|registration| {
-            let name = format!("reader_{}", registration.transfer_syntax_uid);
-            if registration.active {
-                VerificationCheck::new(name, true)
+            let uid = registration.transfer_syntax_uid;
+            let check = if registration.active {
+                VerificationCheck::new("reader", true)
             } else {
                 VerificationCheck::failure(
-                    name,
+                    "reader",
                     "the dicom-rs built-in reader is registered; disable dicom-pixeldata's \
                      native, jpeg, and rle features",
                 )
-            }
+            };
+            result(&registration_id(uid), "builtin", Some(uid), vec![check])
         })
-        .collect();
-    result(DECODER_REGISTRATION, "builtin", None, checks)
+        .collect()
 }
 
 /// Display conversion, caller-selected flips, nearest-neighbor resize, centered padding,

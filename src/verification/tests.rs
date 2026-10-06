@@ -125,6 +125,45 @@ fn a_decoder_without_a_fixture_fails_coverage() {
 }
 
 #[test]
+fn a_failed_registration_fails_only_its_own_transfer_syntax() {
+    // For example, a consumer that enables only `dicom-pixeldata/rle`.
+    let rle = "1.2.840.10008.1.2.5";
+    let mut cases = verify_runtime().cases;
+    let registration = cases
+        .iter_mut()
+        .find(|case| case.id == builtin::registration_id(rle))
+        .unwrap();
+    assert_eq!(registration.transfer_syntax_uid.as_deref(), Some(rle));
+    registration.passed = false;
+    registration.checks[0].passed = false;
+
+    let decodable = verify_runtime()
+        .codecs
+        .into_iter()
+        .map(|codec| codec.transfer_syntax_uid)
+        .collect();
+    let coverage = builtin::coverage(&cases, decodable);
+    let failed: Vec<_> = coverage
+        .iter()
+        .filter(|codec| !codec.passed)
+        .map(|codec| codec.transfer_syntax_uid.as_str())
+        .collect();
+    assert_eq!(failed, vec![rle]);
+    for &(uid, _) in crate::codec::OVERRIDDEN_TRANSFER_SYNTAXES {
+        let codec = coverage
+            .iter()
+            .find(|codec| codec.transfer_syntax_uid == uid)
+            .unwrap();
+        let registrations: Vec<_> = codec
+            .required_cases
+            .iter()
+            .filter(|id| id.starts_with("builtin/decoder-registration/"))
+            .collect();
+        assert_eq!(registrations, vec![&builtin::registration_id(uid)]);
+    }
+}
+
+#[test]
 fn embedded_corpus_stays_within_budget() {
     let embedded = builtin::embedded_len();
     assert!(

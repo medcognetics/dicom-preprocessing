@@ -30,7 +30,25 @@ MINIMUM_SAFE_JS_YAML_VERSION = (4, 3, 1)
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
 JOB_KEY_PATTERN = re.compile(r"^  ([a-zA-Z0-9_-]+):$")
-HOSTED_RUNS_ON_PATTERN = re.compile(r"    runs-on: (?:ubuntu|windows|macos)-[0-9a-z.-]+")
+# Self-hosted runners can carry any custom label, such as `ubuntu-private`, so match exact
+# GitHub-hosted labels, not a name pattern.
+GITHUB_HOSTED_RUNNER_LABELS = frozenset(
+    {
+        "ubuntu-latest",
+        "ubuntu-24.04",
+        "ubuntu-22.04",
+        "ubuntu-24.04-arm",
+        "ubuntu-22.04-arm",
+        "windows-latest",
+        "windows-2025",
+        "windows-2022",
+        "windows-11-arm",
+        "macos-latest",
+        "macos-15",
+        "macos-15-intel",
+        "macos-14",
+    }
+)
 RUSTUP_BOOTSTRAP = "if ! command -v rustup >/dev/null 2>&1; then"
 
 
@@ -74,7 +92,8 @@ def self_hosted_runner_violations(config: str) -> list[str]:
         job_name
         for job_name in github_job_names(config)
         if not any(
-            HOSTED_RUNS_ON_PATTERN.fullmatch(line) for line in github_job_definition(config, job_name).splitlines()
+            line.startswith("    runs-on: ") and line.removeprefix("    runs-on: ") in GITHUB_HOSTED_RUNNER_LABELS
+            for line in github_job_definition(config, job_name).splitlines()
         )
     ]
 
@@ -139,6 +158,7 @@ def synthetic_workflow(triggers: str, runs_on: str) -> str:
         ),
         pytest.param("    runs-on: ${{ vars.RUNNER }}", ["build"], id="runner-variable"),
         pytest.param("    uses: ./.github/workflows/reusable.yml", ["build"], id="reusable-workflow"),
+        pytest.param("    runs-on: ubuntu-private", ["build"], id="custom-hosted-like-label"),
         pytest.param("    runs-on: ubuntu-24.04", [], id="hosted-label"),
     ],
 )

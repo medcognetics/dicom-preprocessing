@@ -10,7 +10,6 @@ LINUX_CI_PATH = WORKFLOW_DIRECTORY / "linux-ci.yml"
 NIGHTLY_BUILD_PATH = WORKFLOW_DIRECTORY / "nightly-build.yml"
 CROSS_PLATFORM_PATH = WORKFLOW_DIRECTORY / "weekly-cross-platform.yml"
 DEPENDENCY_HEALTH_PATH = WORKFLOW_DIRECTORY / "dependency-health.yml"
-ACTIONLINT_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "actionlint.yaml"
 CARGO_AUDIT_CONFIG_PATH = REPOSITORY_ROOT / ".cargo" / "audit.toml"
 CIRCLECI_CONFIG_PATH = REPOSITORY_ROOT / ".circleci" / "config.yml"
 MAKEFILE_PATH = REPOSITORY_ROOT / "Makefile"
@@ -31,15 +30,7 @@ MINIMUM_SAFE_JS_YAML_VERSION = (4, 3, 1)
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
 JOB_KEY_PATTERN = re.compile(r"^  ([a-zA-Z0-9_-]+):$")
-PULL_REQUEST_TRIGGER_PATTERN = re.compile(r"^(?:on:.*\bpull_request\b|  (?:- )?pull_request(?::.*)?$)", re.MULTILINE)
-PULL_REQUEST_TARGET_PATTERN = re.compile(r"\bpull_request_target\b")
 HOSTED_RUNS_ON_PATTERN = re.compile(r"    runs-on: (?:ubuntu|windows|macos)-[0-9a-z.-]+")
-TRUSTED_BERYL_RUNS_ON = (
-    "    runs-on: >- # zizmor: ignore[self-hosted-runner] one-job ephemeral; fork pull requests use ubuntu-24.04\n"
-    "      ${{ fromJSON((github.event_name != 'pull_request' || "
-    "github.event.pull_request.head.repo.full_name == github.repository) && "
-    '\'["self-hosted","linux","x64","beryl"]\' || \'["ubuntu-24.04"]\') }}'
-)
 RUSTUP_BOOTSTRAP = "if ! command -v rustup >/dev/null 2>&1; then"
 
 
@@ -72,35 +63,13 @@ def github_job_names(config: str) -> list[str]:
     return [match.group(1) for line in jobs.splitlines() if (match := JOB_KEY_PATTERN.fullmatch(line))]
 
 
-def runs_on_definition(job: str) -> str:
-    lines = job.splitlines()
-    for index, line in enumerate(lines):
-        if not line.startswith("    runs-on:"):
-            continue
-
-        definition_lines = [line]
-        for continuation in lines[index + 1 :]:
-            if continuation.strip() and len(continuation) - len(continuation.lstrip()) <= 4:
-                break
-            definition_lines.append(continuation)
-        return "\n".join(definition_lines).rstrip()
-
-    raise AssertionError("Job has no runs-on definition")
-
-
 def discovered_workflow_paths() -> list[Path]:
     return sorted((*WORKFLOW_DIRECTORY.glob("*.yml"), *WORKFLOW_DIRECTORY.glob("*.yaml")))
 
 
-def requires_trusted_beryl_routing(config: str) -> bool:
-    return PULL_REQUEST_TRIGGER_PATTERN.search(config) is not None
-
-
-def pull_request_target_runner_violations(config: str) -> list[str]:
-    # TRUSTED_BERYL_RUNS_ON selects beryl for every pull_request_target event, including fork pull requests.
-    # Any mention of the trigger fails closed, whatever the trigger syntax.
-    if PULL_REQUEST_TARGET_PATTERN.search(config) is None:
-        return []
+def self_hosted_runner_violations(config: str) -> list[str]:
+    # This repository is public. A fork pull request can edit any runs-on expression, so every job
+    # must use a literal GitHub-hosted label and never reach self-hosted infrastructure.
     return [
         job_name
         for job_name in github_job_names(config)
@@ -139,19 +108,11 @@ def test_linux_workflow_defines_expected_jobs_and_timeouts() -> None:
     assert "timeout-minutes: 30" in github_job_definition(config, "minimum_versions")
 
 
-def test_pull_request_workflows_use_hosted_runners_only_for_forks() -> None:
-    pull_request_workflow_paths = [
-        path for path in discovered_workflow_paths() if requires_trusted_beryl_routing(path.read_text())
-    ]
-
-    assert LINUX_CI_PATH in pull_request_workflow_paths
-    for workflow_path in pull_request_workflow_paths:
+def test_workflows_use_github_hosted_runners_only() -> None:
+    for workflow_path in discovered_workflow_paths():
         config = workflow_path.read_text()
-        job_names = github_job_names(config)
-        assert job_names, workflow_path.name
-        for job_name in job_names:
-            runs_on = runs_on_definition(github_job_definition(config, job_name))
-            assert runs_on == TRUSTED_BERYL_RUNS_ON, f"{workflow_path.name}: {job_name}"
+        assert github_job_names(config), workflow_path.name
+        assert self_hosted_runner_violations(config) == [], workflow_path.name
 
 
 def synthetic_workflow(triggers: str, runs_on: str) -> str:
@@ -159,70 +120,41 @@ def synthetic_workflow(triggers: str, runs_on: str) -> str:
 
 
 @pytest.mark.parametrize(
-    ("triggers", "expected"),
-    [
-        pytest.param("on:\n  pull_request:\n    branches: [master]", True, id="pull_request-mapping"),
-        pytest.param("on: [push, pull_request]", True, id="pull_request-inline"),
-        pytest.param("on:\n  - push\n  - pull_request", True, id="pull_request-list"),
-        pytest.param("on:\n  pull_request_target:\n    branches: [master]", False, id="pull_request_target-mapping"),
-        pytest.param("on: [push, pull_request_target]", False, id="pull_request_target-inline"),
-        pytest.param("on:\n  push:\n    branches: [master]", False, id="push"),
-    ],
-)
-def test_trusted_beryl_routing_applies_only_to_pull_request_trigger(triggers: str, expected: bool) -> None:
-    assert requires_trusted_beryl_routing(synthetic_workflow(triggers, TRUSTED_BERYL_RUNS_ON)) is expected
-
-
-@pytest.mark.parametrize(
     "triggers",
     [
-        pytest.param("on:\n  pull_request_target:\n    branches: [master]", id="mapping"),
-        pytest.param("on: pull_request_target", id="scalar"),
-        pytest.param("on: [push, pull_request_target]", id="inline"),
-        pytest.param("on:\n  - push\n  - pull_request_target", id="list"),
-        pytest.param("on:\n  pull_request:\n  pull_request_target:", id="with-pull_request"),
+        pytest.param("on:\n  pull_request:\n    branches: [master]", id="pull_request"),
+        pytest.param("on: [push, pull_request_target]", id="pull_request_target"),
+        pytest.param("on:\n  push:\n    branches: [master]", id="push"),
+        pytest.param('on:\n  schedule:\n    - cron: "0 0 * * *"', id="schedule"),
     ],
 )
 @pytest.mark.parametrize(
     ("runs_on", "expected_violations"),
     [
-        pytest.param(TRUSTED_BERYL_RUNS_ON, ["build"], id="trusted-beryl-expression"),
-        pytest.param("    runs-on: [self-hosted, linux, x64, beryl]", ["build"], id="beryl-labels"),
-        pytest.param("    runs-on: ${{ vars.RUNNER }}", ["build"], id="runner-expression"),
+        pytest.param("    runs-on: [self-hosted, linux, x64, beryl]", ["build"], id="self-hosted-labels"),
+        pytest.param(
+            "    runs-on: ${{ fromJSON(github.event_name == 'push' && '[\"self-hosted\"]' || '[\"ubuntu-24.04\"]') }}",
+            ["build"],
+            id="routing-expression",
+        ),
+        pytest.param("    runs-on: ${{ vars.RUNNER }}", ["build"], id="runner-variable"),
         pytest.param("    uses: ./.github/workflows/reusable.yml", ["build"], id="reusable-workflow"),
         pytest.param("    runs-on: ubuntu-24.04", [], id="hosted-label"),
     ],
 )
-def test_pull_request_target_jobs_require_literal_hosted_runners(
-    triggers: str, runs_on: str, expected_violations: list[str]
-) -> None:
-    assert pull_request_target_runner_violations(synthetic_workflow(triggers, runs_on)) == expected_violations
+def test_jobs_require_literal_hosted_runners(triggers: str, runs_on: str, expected_violations: list[str]) -> None:
+    assert self_hosted_runner_violations(synthetic_workflow(triggers, runs_on)) == expected_violations
 
 
-def test_pull_request_target_runner_check_ignores_other_triggers() -> None:
-    config = synthetic_workflow("on:\n  push:\n    branches: [master]", TRUSTED_BERYL_RUNS_ON)
-
-    assert pull_request_target_runner_violations(config) == []
-
-
-def test_pull_request_target_workflows_never_use_beryl() -> None:
-    for workflow_path in discovered_workflow_paths():
-        assert pull_request_target_runner_violations(workflow_path.read_text()) == [], workflow_path.name
-
-
-def test_beryl_jobs_bootstrap_rustup_and_select_linked_python() -> None:
-    beryl_jobs = {
-        (workflow_path.name, job_name): github_job_definition(config, job_name)
-        for workflow_path, config in ((path, path.read_text()) for path in ALL_WORKFLOW_PATHS)
-        for job_name in github_job_names(config)
-        if "beryl" in runs_on_definition(github_job_definition(config, job_name))
+def test_linux_jobs_bootstrap_rustup_and_select_linked_python() -> None:
+    linux_jobs = {
+        (LINUX_CI_PATH.name, job_name): github_job_definition(LINUX_CI_PATH.read_text(), job_name)
+        for job_name in ALL_LINUX_JOBS
     }
+    linux_jobs[(NIGHTLY_BUILD_PATH.name, "build")] = github_job_definition(NIGHTLY_BUILD_PATH.read_text(), "build")
 
-    assert set(beryl_jobs) == {
-        *((LINUX_CI_PATH.name, job_name) for job_name in ALL_LINUX_JOBS),
-        (NIGHTLY_BUILD_PATH.name, "build"),
-    }
-    for job in beryl_jobs.values():
+    for job in linux_jobs.values():
+        assert "runs-on: ubuntu-24.04" in job
         if "rustup toolchain install" in job:
             assert RUSTUP_BOOTSTRAP in job
             assert "https://sh.rustup.rs" in job
@@ -273,7 +205,7 @@ def test_linux_jobs_cover_current_and_minimum_runtime_boundaries() -> None:
     assert "make test-rust" in minimum_job
     assert "make test-python-ci" in minimum_job
     assert "make test-node-direct" in minimum_job
-    # Rust 1.89 links with GNU ld, not rust-lld. Bound link memory on beryl slots.
+    # Rust 1.89 links with GNU ld, not rust-lld. Bound link memory on the hosted runner.
     assert 'CARGO_PROFILE_DEV_DEBUG: "0"' in minimum_job
     assert 'CARGO_BUILD_JOBS: "2"' in minimum_job
 
@@ -296,8 +228,7 @@ def test_nightly_build_is_ephemeral_release_validation() -> None:
     assert f"      - {VERSION_TAG_FILTER}" in config
     assert "  workflow_dispatch:" in config
     assert "name: Nightly / Build and install" in job
-    assert "runs-on: [self-hosted, linux, x64, beryl]" in job
-    assert "zizmor: ignore[self-hosted-runner]" in job
+    assert "runs-on: ubuntu-24.04" in job
     assert "timeout-minutes: 60" in job
     assert "rustup toolchain install 1.97.1" in job
     assert 'python-version: "3.14"' in job
@@ -404,14 +335,6 @@ def test_workflows_pin_actions_and_disable_checkout_credentials() -> None:
         assert all(SHA_PINNED_ACTION_PATTERN.fullmatch(reference) for reference in references)
         assert config.count("persist-credentials: false") == config.count("actions/checkout@")
         assert config.count("clean: true") == config.count("actions/checkout@")
-
-
-def test_actionlint_knows_custom_runner_label() -> None:
-    config = ACTIONLINT_CONFIG_PATH.read_text()
-
-    assert "self-hosted-runner:" in config
-    assert "labels:" in config
-    assert "- beryl" in config
 
 
 def test_circleci_is_retired() -> None:

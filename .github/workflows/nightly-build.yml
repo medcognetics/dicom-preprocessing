@@ -18,7 +18,7 @@ concurrency:
 jobs:
   build:
     name: Nightly / Build and install
-    runs-on: [self-hosted, linux, x64, beryl] # zizmor: ignore[self-hosted-runner] one-job ephemeral trusted events only
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       UV_PYTHON: "3.14"

@@ -10,7 +10,7 @@ Run `make build` to create release artifacts for all supported Linux package sur
 - a Python wheel under `dist/python/`
 - a Node package tarball under `dist/node/`
 
-Run `make test-build` afterward to smoke-test the Rust binaries, install the Python wheel and Node tarball in clean environments, and verify the full commit-pinned Node Git-install pathway. GitHub Actions performs this complete build nightly on the `beryl` self-hosted runner and retains the verified artifacts for 14 days.
+Run `make test-build` afterward to smoke-test the Rust binaries, install the Python wheel and Node tarball in clean environments, and verify the full commit-pinned Node Git-install pathway. GitHub Actions performs this complete build nightly on a GitHub-hosted `ubuntu-24.04` runner.
 
 ### Transformation Sequence
 

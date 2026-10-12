@@ -242,7 +242,7 @@ pub fn load_frames_as_dynamic_images<R: Read + Seek>(
 mod tests {
     use super::*;
     use dicom::object::open_file;
-    use dicom::pixeldata::ConvertOptions;
+    use dicom_pixeldata::ConvertOptions;
     use std::fs::File;
     use std::io::BufReader;
     use tempfile;

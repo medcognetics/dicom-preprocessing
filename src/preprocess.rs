@@ -3,7 +3,7 @@ use image::{DynamicImage, GenericImageView};
 
 use dicom::dictionary_std::tags;
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::ConvertOptions;
+use dicom_pixeldata::ConvertOptions;
 use rayon::prelude::*;
 
 use crate::errors::DicomError;
@@ -736,7 +736,7 @@ mod tests {
     use crate::volume::InterpolateVolume;
     use dicom::core::{DataElement, PrimitiveValue, Tag, VR};
     use dicom::dictionary_std::{tags, uids};
-    use dicom::pixeldata::WindowLevel;
+    use dicom_pixeldata::WindowLevel;
 
     use dicom::object::open_file;
 
@@ -1337,7 +1337,7 @@ mod tests {
     #[case(
         "pydicom/CT_small.dcm",
         ConvertOptions::default(),
-        ConvertOptions::default().with_voi_lut(dicom::pixeldata::VoiLutOption::Custom(WindowLevel { center: 0.0, width: 1.0 }))
+        ConvertOptions::default().with_voi_lut(dicom_pixeldata::VoiLutOption::Custom(WindowLevel { center: 0.0, width: 1.0 }))
     )]
     fn test_different_convert_options_produce_different_outputs(
         #[case] dicom_file_path: &str,

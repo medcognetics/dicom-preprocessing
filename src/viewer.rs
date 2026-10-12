@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use dicom::object::{open_file, FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{ConvertOptions, PixelDecoder};
+use dicom_pixeldata::{ConvertOptions, PixelDecoder};
 use image::DynamicImage;
 use snafu::ResultExt;
 

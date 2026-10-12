@@ -32,7 +32,7 @@
 use crate::errors::{dicom::PixelDataSnafu, DicomError};
 use crate::metadata::{resolve_frame_order, FrameOrderPlan, FrameOrderStrategy};
 use dicom::object::{FileDicomObject, InMemDicomObject};
-use dicom::pixeldata::{ConvertOptions, PixelDecoder, PixelRepresentation, PlanarConfiguration};
+use dicom_pixeldata::{ConvertOptions, PixelDecoder, PixelRepresentation, PlanarConfiguration};
 use image::DynamicImage;
 use image::GenericImageView;
 use rayon::prelude::*;
@@ -428,7 +428,7 @@ fn decode_stored_frame_raw(
         .context(PixelDataSnafu)?
         .first()
         .copied()
-        .unwrap_or(dicom::pixeldata::Rescale {
+        .unwrap_or(dicom_pixeldata::Rescale {
             slope: 1.0,
             intercept: 0.0,
         });
@@ -1898,7 +1898,7 @@ mod tests {
     use dicom::core::{DataElement, PrimitiveValue, VR};
     use dicom::dictionary_std::tags;
     use dicom::object::open_file;
-    use dicom::pixeldata::VoiLutOption;
+    use dicom_pixeldata::VoiLutOption;
     use image::{ImageBuffer, Luma, Rgb};
     use rstest::rstest;
 

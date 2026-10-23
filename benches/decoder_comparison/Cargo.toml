@@ -1,0 +1,20 @@
+# Standalone comparison of this crate's JPEG and RLE readers with the dicom-rs built-in readers.
+# It is not a workspace member: enabling the built-in readers here must not affect the library.
+[package]
+name = "decoder-comparison"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+dicom-preprocessing = { path = "../.." }
+dicom-object = "=0.10.0"
+dicom-encoding = "=0.10.0"
+dicom-transfer-syntax-registry = { version = "=0.10.0", default-features = false, features = ["jpeg", "rle", "rayon"] }
+jpeg-decoder = "=0.3.2"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+[workspace]

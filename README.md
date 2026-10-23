@@ -2,6 +2,34 @@
 
 Implements a tool that preprocesses DICOM files into TIFF images. The primary motivation is to prepare DICOM images for use in computer vision tasks, with a focus on efficient storage and minimization of decode processing time.
 
+### Build Requirements
+
+Building from source requires Rust 1.89.0 or newer, a C compiler, and CMake 3.x or
+newer: the JPEG reader compiles the bundled libjpeg-turbo source. NASM is optional on
+x86_64; when present, libjpeg-turbo uses its SIMD code, which produces the same samples.
+
+### JPEG and RLE Decoding
+
+This crate supplies its own readers for two families of DICOM transfer syntaxes,
+because the dicom-rs built-in readers decode some inputs incorrectly (#128):
+
+- JPEG Baseline, Extended, and Lossless (`1.2.840.10008.1.2.4.50`, `.4.51`, `.4.57`,
+  `.4.70`) use libjpeg-turbo 3.1 through `turbojpeg-sys`: 8-bit and 12-bit DCT
+  (grayscale and color) and 2-16-bit lossless with every predictor. Three-component
+  images are converted to RGB. Corrupt-data warnings are errors. A lossless restart
+  interval that is not a whole number of rows is rejected, as ITU-T T.81 requires.
+- RLE Lossless (`1.2.840.10008.1.2.5`) uses an in-crate reader with bounds-checked
+  segments. The dicom-rs reader shifted 8-bit monochrome samples by one byte and
+  swapped the bytes of 16-bit RGB samples.
+
+The readers are registered with the dicom-rs transfer syntax registry, which only lets
+a submission replace a stub. This crate therefore builds `dicom-pixeldata` without its
+`native`, `jpeg`, and `rle` features. A Rust consumer whose dependency graph enables
+any of them, for example through `dicom-pixeldata` default features or the `dicom`
+crate's `image`, `ndarray`, or `pixeldata` features, keeps the built-in readers.
+Depend on `dicom-pixeldata` with `default-features = false`, and check
+`dicom_preprocessing::decoder_registrations()` at startup: every entry must be active.
+
 ### Building Distributable Artifacts
 
 Run `make build` to create release artifacts for all supported Linux package surfaces:
@@ -336,7 +364,7 @@ npm install --omit=optional
 
 After removing `node_modules`, the generated lockfile can reproduce the installation with `npm ci --omit=optional`.
 
-npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and a supported Node release: Node 22.13 or newer in the Node 22 line, Node 24, or Node 26. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows.
+npm records the full commit SHA in `package-lock.json`. During a Git install, the package `prepare` script compiles the N-API module for the host and packs the generated JavaScript, declarations, and local `.node` binary. The source build requires Git, npm 10 or newer, Rust and Cargo 1.89.0 or newer, and a supported Node release: Node 22.13 or newer in the Node 22 line, Node 24, or Node 26. A native toolchain is also required: GNU build tools on Linux, Xcode command-line tools on macOS, or MSVC Build Tools on Windows, plus CMake 3.x or newer for the bundled libjpeg-turbo.
 
 Supported hosts are Linux x64 GNU, macOS arm64, and Windows x64 MSVC.
 

@@ -1,4 +1,4 @@
-use dicom::pixeldata::PixelDecoder;
+use dicom_pixeldata::PixelDecoder;
 use dicom_preprocessing::errors::dicom::{PixelDataSnafu, ReadSnafu};
 use dicom_preprocessing::errors::DicomError;
 use snafu::ResultExt;

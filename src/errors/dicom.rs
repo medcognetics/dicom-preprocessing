@@ -1,6 +1,6 @@
 use dicom::core::value::{CastValueError, ConvertValueError};
 use dicom::object::ReadError;
-use dicom::pixeldata::PhotometricInterpretation;
+use dicom_pixeldata::PhotometricInterpretation;
 pub use snafu::{Snafu, Whatever};
 
 #[derive(Debug, Snafu)]
@@ -40,8 +40,8 @@ pub enum DicomError {
 
     #[snafu(display("error processing DICOM pixel data: {:?}", source))]
     PixelDataError {
-        #[snafu(source(from(dicom::pixeldata::Error, Box::new)))]
-        source: Box<dicom::pixeldata::Error>,
+        #[snafu(source(from(dicom_pixeldata::Error, Box::new)))]
+        source: Box<dicom_pixeldata::Error>,
     },
 
     #[snafu(display(

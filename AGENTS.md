@@ -3,7 +3,7 @@
 ## Project Structure & Module Organization
 Core Rust code lives in `src/`.
 - CLI entry points: `src/main.rs` (`dicom-preprocess`) and `src/bin/*.rs` (manifest, combine, stats, trace, resize).
-- Library modules: `src/transform/`, `src/metadata/`, `src/python/`, `src/errors/`.
+- Library modules: `src/transform/`, `src/metadata/`, `src/python/`, `src/errors/`, and `src/codec/` (libjpeg-turbo JPEG and in-crate RLE readers registered with dicom-rs).
 - Python typing stub: `dicom_preprocessing.pyi`.
 - Node package metadata and its lockfile: root `package.json` and `package-lock.json`; NAPI-RS source and generated entry points: `bindings/node/`.
 - Dependency-health command and parsers: `scripts/ci/dependency_health.py`.
@@ -44,6 +44,8 @@ Run binaries with `cargo run --release --bin <name> -- ...`:
 
 ## Coding Style & Naming Conventions
 Use Rust 2021 defaults and keep code `rustfmt`/`clippy` clean (`-D warnings` in CI). Prefer snake_case for functions/modules and descriptive CLI flag names.
+
+Keep `dicom-pixeldata` (and `dicom`) without default features, and never enable `dicom-pixeldata`'s `native`, `jpeg`, or `rle` features: the `src/codec/` readers replace only registry stubs, and `decoder_registrations()` reports the built-in readers otherwise. Builds need CMake for the bundled libjpeg-turbo.
 
 Keep orientation policy outside this repository. Preprocessing may apply caller-selected horizontal or vertical flips and must report them in transformation metadata, but DICOM metadata must not implicitly select a flip.
 

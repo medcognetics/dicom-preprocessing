@@ -10,7 +10,8 @@ name = "dicom_preprocessing_node"
 crate-type = ["cdylib"]
 
 [dependencies]
-dicom = { version = "0.10.0", features = ["image", "ndarray"] }
+dicom = { version = "0.10.0", default-features = false }
+dicom-pixeldata = { version = "0.10.0", default-features = false }
 dicom-preprocessing = { path = "../.." }
 napi = "3.10.3"
 napi-derive = "3.5.9"

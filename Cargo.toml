@@ -11,8 +11,11 @@ path = "src/lib.rs"
 crate-type = ["lib", "cdylib"]
 
 [dependencies]
-dicom = { version = "0.10.0", features = ["image", "ndarray"]}
-dicom-pixeldata = { version = "0.10.0", features = ["openjpeg-sys", "rayon"]}
+# dicom-pixeldata's `native`/`jpeg`/`rle` features are deliberately off: this crate registers its
+# own JPEG (libjpeg-turbo) and RLE readers for those transfer syntaxes (#128).
+dicom = { version = "0.10.0", default-features = false, features = ["inventory-registry"] }
+dicom-pixeldata = { version = "0.10.0", default-features = false, features = ["deflate", "image", "ndarray", "openjpeg-sys", "rayon"] }
+turbojpeg-sys = { version = "=1.2.0", default-features = false, features = ["cmake"] }
 indicatif = { version= "0.18.4", features= ["rayon"] }
 clap = { version = "4.6.1", features = ["derive"] }
 rayon = "1.12"
@@ -54,11 +57,6 @@ criterion = "0.8"
 [workspace]
 members = [".", "bindings/node"]
 resolver = "2"
-
-[patch.crates-io]
-# Temporary pin for restart-boundary lossless JPEG decoding fix.
-# Switch back to crates.io once image-rs/jpeg-decoder#287 lands in a stable release.
-jpeg-decoder = { git = "https://github.com/TidalPaladin/jpeg-decoder.git", branch = "fix/lossless-restart-boundary-286" }
 
 [profile.release]
 codegen-units = 1

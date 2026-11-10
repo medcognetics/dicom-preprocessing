@@ -145,3 +145,5 @@ coverage.xml
 
 *.parquet
 *.csv
+# Synthetic, embedded runtime-verification corpus (no patient data).
+!/fixtures/verification/*.dcm

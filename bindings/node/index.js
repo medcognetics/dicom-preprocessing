@@ -575,3 +575,4 @@ module.exports.PreparedDicom = nativeBinding.PreparedDicom
 module.exports.prepareDicom = nativeBinding.prepareDicom
 module.exports.renderDisplayFrame = nativeBinding.renderDisplayFrame
 module.exports.renderFrame = nativeBinding.renderFrame
+module.exports.verifyRuntime = nativeBinding.verifyRuntime

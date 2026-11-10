@@ -81,3 +81,29 @@ export interface RenderedFrame extends FrameMetadata {
   coordinateTransform: CoordinateTransform
   data: Buffer
 }
+
+export interface VerificationCheck {
+  name: string
+  passed: boolean
+  diagnostic: string | null
+}
+export interface VerificationCaseResult {
+  id: string
+  source: 'embedded_fixture' | 'builtin'
+  transferSyntaxUid: string | null
+  passed: boolean
+  checks: VerificationCheck[]
+}
+export interface VerificationCodecResult {
+  transferSyntaxUid: string
+  requiredCases: string[]
+  passed: boolean
+}
+export interface VerificationReport {
+  schemaVersion: number
+  suiteVersion: string
+  libraryVersion: string
+  passed: boolean
+  cases: VerificationCaseResult[]
+  codecs: VerificationCodecResult[]
+}

@@ -2,13 +2,14 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 REPOSITORY_ROOT = Path(__file__).parents[1]
 WORKFLOW_DIRECTORY = REPOSITORY_ROOT / ".github" / "workflows"
 LINUX_CI_PATH = WORKFLOW_DIRECTORY / "linux-ci.yml"
 NIGHTLY_BUILD_PATH = WORKFLOW_DIRECTORY / "nightly-build.yml"
 CROSS_PLATFORM_PATH = WORKFLOW_DIRECTORY / "weekly-cross-platform.yml"
 DEPENDENCY_HEALTH_PATH = WORKFLOW_DIRECTORY / "dependency-health.yml"
-ACTIONLINT_CONFIG_PATH = REPOSITORY_ROOT / ".github" / "actionlint.yaml"
 CARGO_AUDIT_CONFIG_PATH = REPOSITORY_ROOT / ".cargo" / "audit.toml"
 CIRCLECI_CONFIG_PATH = REPOSITORY_ROOT / ".circleci" / "config.yml"
 MAKEFILE_PATH = REPOSITORY_ROOT / "Makefile"
@@ -28,6 +29,27 @@ DEPENDENCY_HEALTH_CRON = '"17 7 * * 1"'
 MINIMUM_SAFE_JS_YAML_VERSION = (4, 3, 1)
 WINDOWS_INODE_TEST_COMMAND = "cargo test -p dicom-preprocessing --lib file::tests::test_inode_sort"
 SHA_PINNED_ACTION_PATTERN = re.compile(r"^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+@[0-9a-f]{40}$")
+JOB_KEY_PATTERN = re.compile(r"^  ([a-zA-Z0-9_-]+):$")
+# Self-hosted runners can carry any custom label, such as `ubuntu-private`, so match exact
+# GitHub-hosted labels, not a name pattern.
+GITHUB_HOSTED_RUNNER_LABELS = frozenset(
+    {
+        "ubuntu-latest",
+        "ubuntu-24.04",
+        "ubuntu-22.04",
+        "ubuntu-24.04-arm",
+        "ubuntu-22.04-arm",
+        "windows-latest",
+        "windows-2025",
+        "windows-2022",
+        "windows-11-arm",
+        "macos-latest",
+        "macos-15",
+        "macos-15-intel",
+        "macos-14",
+    }
+)
+RUSTUP_BOOTSTRAP = "if ! command -v rustup >/dev/null 2>&1; then"
 
 
 def mapping_definition(config: str, key: str, indentation: int) -> str:
@@ -54,6 +76,28 @@ def github_job_definition(config: str, job_name: str) -> str:
     return mapping_definition(jobs, job_name, 2)
 
 
+def github_job_names(config: str) -> list[str]:
+    jobs = config.split("\njobs:\n", maxsplit=1)[1]
+    return [match.group(1) for line in jobs.splitlines() if (match := JOB_KEY_PATTERN.fullmatch(line))]
+
+
+def discovered_workflow_paths() -> list[Path]:
+    return sorted((*WORKFLOW_DIRECTORY.glob("*.yml"), *WORKFLOW_DIRECTORY.glob("*.yaml")))
+
+
+def self_hosted_runner_violations(config: str) -> list[str]:
+    # This repository is public. A fork pull request can edit any runs-on expression, so every job
+    # must use a literal GitHub-hosted label and never reach self-hosted infrastructure.
+    return [
+        job_name
+        for job_name in github_job_names(config)
+        if not any(
+            line.startswith("    runs-on: ") and line.removeprefix("    runs-on: ") in GITHUB_HOSTED_RUNNER_LABELS
+            for line in github_job_definition(config, job_name).splitlines()
+        )
+    ]
+
+
 def action_references(config: str) -> list[str]:
     return [
         line.strip().removeprefix("- uses: ").split(" #", maxsplit=1)[0]
@@ -74,23 +118,70 @@ def test_linux_workflow_uses_expected_triggers_and_concurrency() -> None:
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in config
 
 
-def test_linux_jobs_route_forks_away_from_ephemeral_beryl() -> None:
+def test_linux_workflow_defines_expected_jobs_and_timeouts() -> None:
     config = LINUX_CI_PATH.read_text()
 
+    assert github_job_names(config) == list(ALL_LINUX_JOBS)
     for job_name in LINUX_JOBS:
-        job = github_job_definition(config, job_name)
-        assert "fromJSON" in job
-        assert "github.event.pull_request.head.repo.full_name == github.repository" in job
-        assert '["self-hosted","linux","x64","beryl"]' in job
-        assert '["ubuntu-24.04"]' in job
-        assert "zizmor: ignore[self-hosted-runner]" in job
-        assert "one-job ephemeral" in job
-        assert "timeout-minutes: 20" in job
+        assert "timeout-minutes: 20" in github_job_definition(config, job_name)
+    assert "timeout-minutes: 30" in github_job_definition(config, "minimum_versions")
 
-    minimum_job = github_job_definition(config, "minimum_versions")
-    assert "runs-on: ubuntu-24.04" in minimum_job
-    assert "self-hosted" not in minimum_job
-    assert "timeout-minutes: 30" in minimum_job
+
+def test_workflows_use_github_hosted_runners_only() -> None:
+    for workflow_path in discovered_workflow_paths():
+        config = workflow_path.read_text()
+        assert github_job_names(config), workflow_path.name
+        assert self_hosted_runner_violations(config) == [], workflow_path.name
+
+
+def synthetic_workflow(triggers: str, runs_on: str) -> str:
+    return f"name: Synthetic\n\n{triggers}\n\njobs:\n  build:\n{runs_on}\n    steps:\n      - run: true\n"
+
+
+@pytest.mark.parametrize(
+    "triggers",
+    [
+        pytest.param("on:\n  pull_request:\n    branches: [master]", id="pull_request"),
+        pytest.param("on: [push, pull_request_target]", id="pull_request_target"),
+        pytest.param("on:\n  push:\n    branches: [master]", id="push"),
+        pytest.param('on:\n  schedule:\n    - cron: "0 0 * * *"', id="schedule"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("runs_on", "expected_violations"),
+    [
+        pytest.param("    runs-on: [self-hosted, linux, x64, beryl]", ["build"], id="self-hosted-labels"),
+        pytest.param(
+            "    runs-on: ${{ fromJSON(github.event_name == 'push' && '[\"self-hosted\"]' || '[\"ubuntu-24.04\"]') }}",
+            ["build"],
+            id="routing-expression",
+        ),
+        pytest.param("    runs-on: ${{ vars.RUNNER }}", ["build"], id="runner-variable"),
+        pytest.param("    uses: ./.github/workflows/reusable.yml", ["build"], id="reusable-workflow"),
+        pytest.param("    runs-on: ubuntu-private", ["build"], id="custom-hosted-like-label"),
+        pytest.param("    runs-on: ubuntu-24.04", [], id="hosted-label"),
+    ],
+)
+def test_jobs_require_literal_hosted_runners(triggers: str, runs_on: str, expected_violations: list[str]) -> None:
+    assert self_hosted_runner_violations(synthetic_workflow(triggers, runs_on)) == expected_violations
+
+
+def test_linux_jobs_bootstrap_rustup_and_select_linked_python() -> None:
+    linux_jobs = {
+        (LINUX_CI_PATH.name, job_name): github_job_definition(LINUX_CI_PATH.read_text(), job_name)
+        for job_name in ALL_LINUX_JOBS
+    }
+    linux_jobs[(NIGHTLY_BUILD_PATH.name, "build")] = github_job_definition(NIGHTLY_BUILD_PATH.read_text(), "build")
+
+    for job in linux_jobs.values():
+        assert "runs-on: ubuntu-24.04" in job
+        if "rustup toolchain install" in job:
+            assert RUSTUP_BOOTSTRAP in job
+            assert "https://sh.rustup.rs" in job
+            assert job.index(RUSTUP_BOOTSTRAP) < job.index("rustup toolchain install")
+        if "${pythonLocation}" in job:
+            assert "uses: actions/setup-python@" in job
+            assert job.index("uses: actions/setup-python@") < job.index("${pythonLocation}")
 
 
 def test_linux_jobs_preserve_names_and_rust_gate() -> None:
@@ -134,6 +225,9 @@ def test_linux_jobs_cover_current_and_minimum_runtime_boundaries() -> None:
     assert "make test-rust" in minimum_job
     assert "make test-python-ci" in minimum_job
     assert "make test-node-direct" in minimum_job
+    # Rust 1.89 links with GNU ld, not rust-lld. Bound link memory on the hosted runner.
+    assert 'CARGO_PROFILE_DEV_DEBUG: "0"' in minimum_job
+    assert 'CARGO_BUILD_JOBS: "2"' in minimum_job
 
     for job_name in ALL_LINUX_JOBS:
         job = github_job_definition(config, job_name)
@@ -154,8 +248,7 @@ def test_nightly_build_is_ephemeral_release_validation() -> None:
     assert f"      - {VERSION_TAG_FILTER}" in config
     assert "  workflow_dispatch:" in config
     assert "name: Nightly / Build and install" in job
-    assert "runs-on: [self-hosted, linux, x64, beryl]" in job
-    assert "zizmor: ignore[self-hosted-runner]" in job
+    assert "runs-on: ubuntu-24.04" in job
     assert "timeout-minutes: 60" in job
     assert "rustup toolchain install 1.97.1" in job
     assert 'python-version: "3.14"' in job
@@ -262,14 +355,6 @@ def test_workflows_pin_actions_and_disable_checkout_credentials() -> None:
         assert all(SHA_PINNED_ACTION_PATTERN.fullmatch(reference) for reference in references)
         assert config.count("persist-credentials: false") == config.count("actions/checkout@")
         assert config.count("clean: true") == config.count("actions/checkout@")
-
-
-def test_actionlint_knows_custom_runner_label() -> None:
-    config = ACTIONLINT_CONFIG_PATH.read_text()
-
-    assert "self-hosted-runner:" in config
-    assert "labels:" in config
-    assert "- beryl" in config
 
 
 def test_circleci_is_retired() -> None:

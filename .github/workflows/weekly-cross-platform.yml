@@ -72,6 +72,14 @@ jobs:
     name: Cross-platform / macOS arm64
     runs-on: macos-15
     timeout-minutes: 30
+    env:
+      # .cargo/config.toml builds with target-cpu=native. On the virtualized
+      # macos-15 runner, native resolves to a CPU without the AES and SHA-2
+      # features that ring requires at compile time on aarch64-apple-darwin,
+      # so ring fails to build. apple-m1 is the target's default CPU and the
+      # baseline for every Apple silicon Mac. RUSTFLAGS replaces the
+      # config.toml rustflags for this job.
+      RUSTFLAGS: "-C target-cpu=apple-m1"
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -93,6 +101,13 @@ jobs:
           rustup default 1.97.1
           rustc --version
           cargo --version
+      - name: Report CPU target resolution
+        run: |
+          rustc --print target-cpus | head -2
+          echo "native features:"
+          rustc --print cfg -C target-cpu=native | grep target_feature | tr '\n' ' '; echo
+          echo "build features ($RUSTFLAGS):"
+          rustc --print cfg $RUSTFLAGS | grep target_feature | tr '\n' ' '; echo
       # Swatinem/rust-cache v2.9.1
       - name: Cache trusted Cargo downloads
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # zizmor: ignore[cache-poisoning] schedule, tag, and manual events only
